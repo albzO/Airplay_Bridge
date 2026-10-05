@@ -1,28 +1,84 @@
-# 第三方源码记录
+# 第三方依赖与来源
 
-第三方源码通过 `upstream/airplay-cli` 子模块引用，不作为普通文件纳入本仓库。`libraop` 和 `crosstools` 是其固定版本的嵌套依赖，初始化方式见 [构建指南](docs/building.md)。本地编译仍需下载这些源码，并保留原有版权与许可证声明。
+本文件记录 AirPlay Hub 使用的第三方源码、依赖包、参考资料和本地适配。它是来源清单，不是对第三方代码的重新授权，也不是完整的传递依赖许可证清单。
 
-这是一份本机开发测试目录，不是完成许可证审查的发布包。
+## 依赖获取与归属
 
-| 来源 | 固定版本 | 用途 |
-|---|---|---|
-| music-assistant/airplay-cli | `8e79242996b7ef52352ee49d390e6db434bf88a6` | HAP/SRP、加密 RTSP、session SETUP、PTP/NTP |
-| philippe44/libraop | `81c2182649da8645ac2a58b78e9f370c79a4165b` | bplist 实现 |
-| libraop/crosstools | `41544c653760a205cbf6cebfdeda4a9394cc6455` | 日志及平台声明 |
-| mdns-sd | `0.21.4`，Rust 依赖见 Cargo.lock | Rust mDNS 发现 |
-| Microsoft windows-rs | `windows 0.62.2`，依赖见 Cargo.lock | WASAPI 共享采集与 COM API 绑定 |
-| rubato | `5.0.1`，依赖见 Cargo.lock | Rust sinc 重采样 |
-| audioadapter-buffers | `5.2.0`，依赖见 Cargo.lock | 交错双声道采样缓冲适配 |
-| Tauri / WebView2 | Rust 依赖见 `desktop/src-tauri/Cargo.lock` | Windows 窗口、前端资源与 Rust IPC |
-| Vue / Vite / TypeScript | 依赖见 `desktop/pnpm-lock.yaml` | 桌面界面与构建工具 |
-| OpenSSL、GCC runtime、winpthreads | 本机 MSYS2 UCRT64 安装版本 | 密码学及 Windows 运行时 DLL |
+第三方源码通过 `upstream/airplay-cli` Git 子模块引用，由原作者仓库提供。主仓库保存地址和固定提交，不把第三方源码作为普通文件维护。`libraop` 和 `crosstools` 是固定的嵌套子模块，获取步骤见 [构建指南](docs/building.md)。
 
-airplay-cli 仓库根 LICENSE 为 GPLv3，所选 AP2 文件的文件头标注 Apache-2.0；保留原文件头，不把整个组合程序概括为 Apache-2.0。libraop 的 bplist 文件引用 LICENSE，但这个检出版本根目录没有对应文件。crosstools 标注 MIT。正式分发前需要核对这些来源及全部依赖的许可证要求。
+保留上游的版权文件头、许可证和声明文件。子模块引用方式不改变第三方代码的授权条件；本地生成的适配版本也应保留原始归属。历史提交曾包含源码快照，转换为子模块不会自动清除旧提交。
 
-`probe/select_upstream.py` 从固定源文件生成 Windows 编译视图，保留协议主体；改动包括 socket 类型、Windows I/O、排除 buffered TCP/MRP/共享守护进程、诊断标记及错误响应体脱敏。音频路径选用上游 realtime SETUP、加密 RTP、时钟锚点和重传函数，以及 alac_ext.cpp 中的 16 位双声道 raw ALAC 帧封装；后者增加参数及分配失败检查。生成结果位于 `build/probe-native/generated`，不能在该目录手改。
+## 原生协议源码
 
-上游源文件保留在 `upstream/`，本地改动保留在 `probe/`。Rust 库的确切版本及校验值保留在 `tester/Cargo.lock`。构建脚本将现有上游和部分运行时许可证复制到 `dist/licenses/`；该动作不代表正式发布所需材料已经齐全。
+| 来源 | 固定提交 | 本项目实际用途 | 可核实的许可证信息 |
+|---|---|---|---|
+| [music-assistant/airplay-cli](https://github.com/music-assistant/airplay-cli) | `8e79242996b7ef52352ee49d390e6db434bf88a6` | HAP/SRP、加密 RTSP、realtime 会话、PTP/NTP、事件相关协议与 raw ALAC 帧封装 | 所选 AP2 文件及 `alac_ext.cpp` 文件头为 Apache-2.0；上游根 LICENSE 为 GPLv3，上游完整发行版包含其他许可证组件 |
+| [philippe44/libraop](https://github.com/philippe44/libraop) | `81c2182649da8645ac2a58b78e9f370c79a4165b` | `src/bplist.cpp`、`src/bplist.h` 二进制 plist 读写 | 固定提交缺少被文件头引用的许可证；当前公开分支已有 MIT 声明，历史版本适用范围待确认，见下文 |
+| [philippe44/crosstools](https://github.com/philippe44/crosstools) | `41544c653760a205cbf6cebfdeda4a9394cc6455` | 平台与日志接口声明；本地提供日志实现 | 固定提交的 `LICENSE` 为 MIT |
 
-事件通道：本地 `events_entry.inc` 参考固定 `ap2_mrp.c` 的反向事件处理流程，采用已有 HAP AEAD 和 bplist 字符串读取器；没有引入完整 MRP data-channel 或播放器控制实现。生成的 HAP 视图新增事件方向密钥，在原配对控制密钥派生处同时派生事件密钥，并创建独立上下文。完整 SRP 密钥和方向交换核对 [pyatv transient pairing](https://github.com/postlund/pyatv/blob/master/pyatv/protocols/airplay/auth/hap_transient.py) 及 [事件通道说明](https://github.com/postlund/pyatv/blob/master/docs/documentation/protocols.md#event-channel)；未复制 pyatv 代码，也未新增运行时依赖。
+这些提交对应当前构建输入；版本更新需同时修改子模块引用、源码哈希检查及此表。本项目不构建上游完整 CLI，也不使用其全部 RAOP、MRP、编解码器及其他嵌套组件。具体编译范围以 `airplay-backend/CMakeLists.txt` 和 `airplay-backend/select_upstream.py` 为准。
 
-长时实时发送的本地修正：生成视图将上游绑定 16 位 RTP 序号的 nonce 改为独立 64 位小端计数，序号回绕不再重复 nonce；`audio_nonce.c` 提供计数和自检。AP2 后缀承载完整 8 字节 nonce，独立接收端实现参照 https://github.com/mikebrady/shairport-sync/blob/master/rtp.c 的 decipher_player_put_packet；没有复制其代码。
+### 哪一部分的授权尚未确认
+
+待确认对象是 **libraop 固定提交中的 `src/bplist.cpp` 和 `src/bplist.h`**，不是整个 C/C++ 后端，也不是所有第三方依赖。
+
+证据与范围：
+
+1. 两个文件头保留 Philippe 的版权信息，并写有 `See LICENSE`。
+2. 当前固定提交 `81c2182649da8645ac2a58b78e9f370c79a4165b` 的根目录没有该许可证文件。
+3. 固定版本 airplay-cli 的 [第三方记录](https://github.com/music-assistant/airplay-cli/blob/8e79242996b7ef52352ee49d390e6db434bf88a6/THIRD_PARTY_NOTICES.md) 也将其 bplist 授权列为未明确。
+4. 2026-10-05 查阅时，libraop 当前公开分支的 [LICENSE.txt](https://github.com/philippe44/libraop/blob/master/LICENSE.txt) 已声明其自身代码采用 MIT，并区分其他第三方组件的授权条件。该链接指向可变化的分支，不是本项目已固定版本的许可证文件。
+
+因此，不应继续描述为“libraop 完全没有许可证”，也不能仅凭其他同作者库采用 MIT 就推定历史版本的授权。后续可核实新声明对所用旧版文件的适用范围，或审查并升级至带有明确声明的固定版本。本次文档整理不升级依赖，也不替上游作者补发许可证。
+
+### 本地适配与修改
+
+`airplay-backend/` 是本项目的入口和适配代码，协议基础仍来自上游：
+
+- `select_upstream.py` 校验固定源码，提取所需协议函数并生成 Windows 编译视图。
+- `windows_port.c/.h`、`windows_io.inc` 适配 Winsock、超时、部分读写及平台接口。
+- `auth_auto.inc` 增加按需密码、认证错误分类与配对限流处理。
+- `probe_entry.inc`、`audio_entry.inc` 组织会话、音频发送和清理流程，调用上游协议函数。
+- `events_entry.inc` 增加独立事件通道、密钥上下文、消息组装、解析和回应。
+- `volume_entry.inc` 增加设备音量查询、设置和反馈处理。
+- `pcm_source.c` 增加 PCM 文件/管道输入及预读缓冲。
+- `audio_nonce.c` 将音频 nonce 与 16 位 RTP 序号分离；重传仍复用原密文。
+- `raw_codec.c` 包装上游 raw ALAC 实现。生成的 `raw_alac.c` 选自上游 `alac_ext.cpp`，增加参数和分配失败检查，不作为本项目原创编码算法声明。
+
+生成源码位于 `build/airplay-backend/generated/`，不提交仓库，不应直接编辑。修改记录由生成脚本、本地适配文件及 Git 历史共同维护。
+
+## Rust 与前端依赖
+
+| 组件 | 版本记录 | 用途 | 已核实范围 |
+|---|---|---|---|
+| [mdns-sd](https://github.com/keepsimple1/mdns-sd) | `0.21.4` | mDNS 发现 | 该版本 Cargo 元数据：Apache-2.0 OR MIT |
+| [windows-rs](https://github.com/microsoft/windows-rs) | `windows 0.62.2` | WASAPI、COM 和 Windows API 绑定 | 该版本 Cargo 元数据：MIT OR Apache-2.0 |
+| [rubato](https://github.com/HEnquist/rubato) | `5.0.1` | 有状态 sinc 重采样 | 该版本 Cargo 元数据：MIT OR Apache-2.0 |
+| [audioadapter-buffers](https://github.com/HEnquist/audioadapter-buffers-rs) | `5.2.0` | 音频缓冲适配 | 该版本 Cargo 元数据：MIT OR Apache-2.0 |
+| Tauri、单实例插件、Serde 等 | Rust manifests 与 Cargo.lock | 桌面应用、序列化与会话管理 | 以各具体版本的许可证文件及元数据为准 |
+| Vue、Vite、TypeScript、Tauri JS API 等 | `airplay-frontend/package.json` 与 `airplay-frontend/pnpm-lock.yaml` | 界面与前端构建 | 以各具体版本的许可证文件及元数据为准 |
+
+Rust 精确版本与校验值位于 `airplay-core/Cargo.lock` 和 `airplay-frontend/src-tauri/Cargo.lock`；前端依赖位于 `airplay-frontend/pnpm-lock.yaml`。锁文件提供版本记录，不替代许可证文本、版权归属或传递依赖清单。
+
+## 原生运行时与构建工具
+
+原生后端链接 MSYS2 UCRT64 的 OpenSSL Crypto 和 winpthreads，并依赖所需 GCC 运行时 DLL。当前构建脚本递归检查 DLL 导入并复制运行时；依赖集合随工具链安装版本变化，不使用上游自带 OpenSSL 的版本描述代替本机实际版本。
+
+已在当前构建环境核实：OpenSSL 所附 LICENSE 为 Apache-2.0 文本；winpthreads 附带自己的 COPYING。其他 DLL、GCC 运行时的许可证及例外条款应按实际打包版本核实。Python、CMake、Ninja、GCC/G++、Rust、Node.js 和 pnpm 是构建工具，不代表全部会被打包进应用。
+
+`scripts/build-backend.ps1` 目前复制部分许可证到 `dist/licenses/`。这一步尚未生成完整的 Rust、前端及原生运行时第三方声明集合；不能据此认定发布包已经完成许可证材料整理。
+
+## 实现参考资料
+
+以下项目用于核对协议行为，未作为运行时依赖引入；已有记录表明未复制其实现代码：
+
+- [pyatv transient pairing](https://github.com/postlund/pyatv/blob/master/pyatv/protocols/airplay/auth/hap_transient.py) 与 [事件通道说明](https://github.com/postlund/pyatv/blob/master/docs/documentation/protocols.md#event-channel)：核对 SRP 密钥长度、方向密钥及事件通道。
+- [Shairport Sync RTP 实现](https://github.com/mikebrady/shairport-sync/blob/master/rtp.c)：核对音频 nonce 的传输格式与接收端处理。
+
+这些分支链接用于阅读参考，不是本项目固定依赖版本。后续若复制或改编参考代码，应另行记录来源、版本、授权及修改。
+
+## 授权与发布状态
+
+本项目原创贡献及可授权的本地修改采用 [Apache License 2.0](LICENSE)，归属说明见 [NOTICE](NOTICE)。第三方代码保持各自原有授权，不因项目根目录 LICENSE 改为 Apache-2.0；子模块引用或版本标签不会替代授权要求。
+
+详细的已确认事项、未完成事项和发布材料清单见 [许可证状态](docs/licensing.md)。本文件不宣称完成整个组合程序的许可证兼容性审查，也不把上游完整发行版的 GPL 结论直接套用于本项目选取的全部文件。

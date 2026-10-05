@@ -1,0 +1,14 @@
+AirPlay Hub
+Copyright 2026 AirPlay Hub contributors
+
+Original project contributions are licensed under the Apache License,
+Version 2.0. See LICENSE for the full license text.
+
+This project builds upon Music Assistant airplay-cli and uses components
+from philippe44/libraop and philippe44/crosstools. Third-party components
+retain their original copyrights, notices, and applicable license terms.
+
+This notice does not relicense third-party code or resolve missing or
+ambiguous license grants. Dependency versions, selected source files,
+local adaptations, and outstanding licensing questions are documented
+in THIRD_PARTY.md and docs/licensing.md.

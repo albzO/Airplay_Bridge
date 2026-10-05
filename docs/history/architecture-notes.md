@@ -2,7 +2,7 @@
 
 > 历史开发记录：保留当时的实现与实机测试过程，部分描述已过时。当前架构见 [架构说明](../architecture.md)，使用命令从仓库根目录执行。
 
-日期：2026-10-04。Rust 测试工具 + Windows C/C++ 后端已实施；真实 HomePod 密码控制会话、固定音频、B3 录音回放和 30 秒实时流均通过，用户确认无杂音。B3 原生 48 kHz / 双声道 / float32 经 rubato 转为 44.1 kHz / 双声道 / 16 位 PCM。已加入可调延迟、QPC 时间线水位 PI 控制和独立 64 位音频 nonce：8 项普通 Rust 测试、21 项协议模拟测试、真实 B3 与按时钟消费模拟器的 30 秒漂移控制通过。两小时漂移验证为控制器模拟，HomePod 长时运行及较低延迟仍待实测。命令和状态见 README.md。
+日期：2026-10-04。Rust 测试工具 + Windows C/C++ 后端已实施；真实 HomePod 密码控制会话、固定音频、所选采集端点 录音回放和 30 秒实时流均通过，用户确认无杂音。所选采集端点 原生 48 kHz / 双声道 / float32 经 rubato 转为 44.1 kHz / 双声道 / 16 位 PCM。已加入可调延迟、QPC 时间线水位 PI 控制和独立 64 位音频 nonce：8 项普通 Rust 测试、21 项协议模拟测试、真实 所选采集端点 与按时钟消费模拟器的 30 秒漂移控制通过。两小时漂移验证为控制器模拟，HomePod 长时运行及较低延迟仍待实测。命令和状态见 README.md。
 
 ## 决定
 
@@ -11,7 +11,7 @@
 最终进程边界：
 
 ```text
-Windows Apps → Voicemeeter → B3 recording endpoint（B1 留给麦克风 loop）
+Windows Apps → 音频路由软件 → 所选采集端点 recording endpoint（麦克风使用独立录音端点）
                                     ↓
                        Bridge：WASAPI Capture / 格式转换
                                     ↓ binary PCM stdin
@@ -24,7 +24,7 @@ PCM 格式必须显式约定采样率、位深、声道、字节序和交错方�
 
 Bridge 采用 Rust，GUI 框架留待音频链路成功后决定。有限回放通过 PCM 文件交接；短时实时桥接已通过有界队列、写入线程和二进制 stdin 传输 PCM。后端握手完成后发出 PCM_READY 才开始采集，EOF 请求尾部静音和 TEARDOWN。Ctrl+C 由 Rust 处理，C 后端完成清理。当前不引入跨语言 DLL API，后端进程退出不会直接拖垮未来的采集或 GUI。
 
-长期漂移：发送端按 QPC 定速消耗 44.1 kHz PCM，Rust 根据产生帧数与同一 QPC 时间线计算全管道水位。慢 PI 控制每秒调整 rubato 比例，预热 5 秒，限制 ±800 ppm 及 20 ppm/s；比例块内平滑变化。接收端按 PTP/NTP 锚点安排播放，播放提前量独立于重采样比例，不通过移动锚点修正采集时钟差。歌词时间线需要播放器配合，当前 Voicemeeter/B3 路径没有向播放器回报 HomePod 延迟的接口。
+长期漂移：发送端按 QPC 定速消耗 44.1 kHz PCM，Rust 根据产生帧数与同一 QPC 时间线计算全管道水位。慢 PI 控制每秒调整 rubato 比例，预热 5 秒，限制 ±800 ppm 及 20 ppm/s；比例块内平滑变化。接收端按 PTP/NTP 锚点安排播放，播放提前量独立于重采样比例，不通过移动锚点修正采集时钟差。歌词时间线需要播放器配合，当前 音频路由软件／采集端点 路径没有向播放器回报 HomePod 延迟的接口。
 
 音量：实时流中 Rust 公告 DACP HTTP 回传服务，将经过目标 IP/Active-Remote 校验的音量命令经独立 localhost TCP 连接送给 C 后端。C 的反馈线程处理 GET_PARAMETER 查询、SET_PARAMETER 设置和设备报告，不将文字控制命令混入 PCM，也不改 PCM 增益。设备报告不自动回写，百分比请求使用 AirPlay 的 -30..0 dB 曲线及 -144 dB 静音值。用户已确认真实 HomePod 顶部按钮可控制音量。
 
@@ -118,7 +118,7 @@ mDNS 用于获得真实端口及 TXT，不能假定所有设备都使用固定�
 4. **验证密码认证与加密往返**：真实密码、错误密码、未提供密码，记录认证分支与 HTTP/TLV 结果。密钥派生不等于加密通信已经有效。
 5. **验证真实 session SETUP**：按设备能力选择 timing，HomePod 路径优先保留 PTP；NTP 只作明确标记的诊断/上游兼容选择，不预设它必然适用。200 后检查响应、event connection，保持短暂会话并清理。分别报告 pairing、session 接受和稳定性结果。
 6. **测试固定 PCM**：只有第一阶段完成后才加 RECORD、stream SETUP、ALAC、RTP/timing 播放验证。验收是 HomePod 实际出声，而非发送包成功。
-7. **接入 Voicemeeter**：枚举 recording endpoints，通过持久 endpoint ID 选择 B1/B2/B3，WASAPI capture，按后端格式转换，使用有界缓冲和二进制 stdin。Voicemeeter 管路由/混音，Bridge 管采集与传输。验收含长时间稳定性、断线、采样率差异和缓冲漂移。
+7. **接入 音频路由软件**：枚举 recording endpoints，通过持久 endpoint ID 选择 录音端点，WASAPI capture，按后端格式转换，使用有界缓冲和二进制 stdin。音频路由软件 管路由/混音，Bridge 管采集与传输。验收含长时间稳定性、断线、采样率差异和缓冲漂移。
 8. **GUI**：设备、音源、密码、连接状态和脱敏日志；框架此时再决定。
 
 第一阶段通过条件：记录设备身份和实际密码要求；SRP/所选 HAP 路径成功；至少一次有效加密响应；session SETUP 200；事件连接如适用；短暂控制会话保持和退出结果明确。输出 `SESSION_ACCEPTED`，不声称已经能够播放音频。
@@ -127,7 +127,7 @@ mDNS 用于获得真实端口及 TXT，不能假定所有设备都使用固定�
 
 ```powershell
 .\dist\homepod-test.exe discover
-.\dist\homepod-test.exe test --device 黑球
+.\dist\homepod-test.exe test --device "Receiver A"
 ```
 
 保留 `--password <password>` 兼容入口；交互测试推荐隐藏输入。日志不输出密码、长期凭据、共享 secret 或派生密钥，认证响应体做敏感字段脱敏。构建成功后依据真实 `--help` 提供可执行命令。
@@ -148,4 +148,4 @@ mDNS 用于获得真实端口及 TXT，不能假定所有设备都使用固定�
 
 ## GUI 持续采集（2026-10-05）
 
-桌面界面由 Vue + Tauri 承载。`tester/src/source.rs` 独占一个持续 WASAPI 采集器，同一来源的电平预览和串流共享数据；GUI 开始/停止串流只订阅/解除发送分支。CLI 仍可独立采集。订阅后新建转采样、漂移控制、有界 PCM 队列和原生发送会话，避免把认证期间的旧音频送出。短且可信的录音缺口补静音并计数；严重异常明确终止。输入映射与扬声器位置分开保存，日志和窗口关闭行为集中在设置页。逐包诊断滚动保留最近四个片段，故障时保留最新现场。
+桌面界面由 Vue + Tauri 承载。`airplay-core/src/source.rs` 独占一个持续 WASAPI 采集器，同一来源的电平预览和串流共享数据；GUI 开始/停止串流只订阅/解除发送分支。CLI 仍可独立采集。订阅后新建转采样、漂移控制、有界 PCM 队列和原生发送会话，避免把认证期间的旧音频送出。短且可信的录音缺口补静音并计数；严重异常明确终止。输入映射与扬声器位置分开保存，日志和窗口关闭行为集中在设置页。逐包诊断滚动保留最近四个片段，故障时保留最新现场。

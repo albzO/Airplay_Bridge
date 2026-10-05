@@ -47,7 +47,7 @@ git -C upstream/airplay-cli/libraop submodule update --init -- crosstools
 .\dist\airplay-bridge.exe
 ```
 
-保留完整 `dist/` 目录，包括 `cliairplay-probe.exe` 和所需 DLL；仅复制 GUI exe 无法完成音频串流。
+保留完整 `dist/` 目录，包括 `runtime/airplay-backend.exe` 和同目录的所需 DLL；仅复制 GUI exe 无法完成音频串流。
 
 ### 自定义后端工具路径
 
@@ -60,3 +60,9 @@ git -C upstream/airplay-cli/libraop submodule update --init -- crosstools
 ```
 
 `-SkipBackend` 要求 `dist/` 中已有可用的后端及 DLL。
+
+## 发行目录
+
+`dist/airplay-bridge.exe` 为主入口，原生后端和 DLL 位于 `dist/runtime/`，诊断工具位于 `dist/tools/`，说明位于 `dist/docs/`，许可证位于 `dist/licenses/` 和根目录 LICENSE、NOTICE。构建脚本会持续输出这一布局。
+
+不将设备清单、日志、录音或界面检查输出加入发行包。GUI 数据位于 `%APPDATA%\AirPlay Hub`，CLI 数据位于其 `cli/` 子目录。

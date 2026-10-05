@@ -6,8 +6,8 @@
 /.local/
 target/
 node_modules/
-/desktop/dist/
-/desktop/src-tauri/gen/schemas/
+/airplay-frontend/dist/
+/airplay-frontend/src-tauri/gen/schemas/
 __pycache__/
 *.py[cod]
 .pytest_cache/
@@ -16,6 +16,11 @@ __pycache__/
 *.a
 *.lib
 *.pdb
+*.exe
+*.dll
+*.ilk
+*.exp
+*.tsbuildinfo
 
 # Local editor configuration and operating-system files
 .vscode/
@@ -29,18 +34,27 @@ Desktop.ini
 
 # Runtime logs, local device data, and UI check output
 logs/
+captures/
 *.log
 *.log.*
-/desktop/checks/inputs.json
-/desktop/checks/devices.json
-/desktop/checks/*.png
+*.jsonl
+*.jsonl.*
+capture-*.wav
+capture-*.pcm
+*.pcm.wav
+*.pcm.json
+/airplay-frontend/checks/*.png
 instance-smoke.json
 ui-smoke.json
-/devices.json
-/inputs.json
-/settings.json
-/auth-policy.json
-/auth-policy.pending.json
+devices.json
+inputs.json
+audio-inputs.json
+settings.json
+auth-policy.json
+auth-policy.pending.json
+# These two files contain fictional UI fixtures, not local device data.
+!/airplay-frontend/checks/devices.json
+!/airplay-frontend/checks/inputs.json
 
 # Local environment secrets; allow documented examples
 .env

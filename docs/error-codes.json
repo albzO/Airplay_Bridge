@@ -1,0 +1,523 @@
+[
+  {
+    "code": "BACKEND_FAILED",
+    "exit": 1,
+    "message": "后端操作失败。",
+    "action": "查看 phase、HTTP/HRESULT 和故障上下文；不能据此断定密码错误。",
+    "patterns": []
+  },
+  {
+    "code": "BACKEND_USAGE_ERROR",
+    "exit": 2,
+    "message": "后端命令参数无效。",
+    "action": "核对参数、文件格式和命令帮助。",
+    "patterns": []
+  },
+  {
+    "code": "PASSWORD_REJECTED",
+    "exit": 10,
+    "message": "设备拒绝了输入的 AirPlay 密码。",
+    "action": "核对密码后重试；只有明确的 M4 secret 拒绝才使用此码。",
+    "patterns": []
+  },
+  {
+    "code": "PASSWORD_REQUIRED",
+    "exit": 11,
+    "message": "设备要求输入 AirPlay 密码。",
+    "action": "提示输入密码；这也是认证流程中的正常挑战。",
+    "patterns": []
+  },
+  {
+    "code": "PAIRING_BACKOFF",
+    "exit": 12,
+    "message": "设备要求延迟配对重试。",
+    "action": "停止连续尝试，按设备的等待要求稍后重试。",
+    "patterns": []
+  },
+  {
+    "code": "AUTH_REJECTED",
+    "exit": 13,
+    "message": "设备认证失败，无法确认是密码错误。",
+    "action": "核对访问权限、认证方式及证明校验结果。",
+    "patterns": []
+  },
+  {
+    "code": "PAIRING_REQUIRED",
+    "exit": 14,
+    "message": "设备要求完整配对或有效配对凭据。",
+    "action": "仅提供 AirPlay 访问密码可能不足以完成授权。",
+    "patterns": []
+  },
+  {
+    "code": "ACCESS_DENIED",
+    "exit": 15,
+    "message": "设备拒绝了访问权限。",
+    "action": "核对设备访问设置；不自动提示更换密码。",
+    "patterns": []
+  },
+  {
+    "code": "PAIRING_MAX_TRIES",
+    "exit": 16,
+    "message": "设备已达到认证尝试次数上限。",
+    "action": "停止重试，按设备的配对恢复流程处理；不保证等待即可恢复。",
+    "patterns": []
+  },
+  {
+    "code": "PAIRING_MAX_PEERS",
+    "exit": 17,
+    "message": "设备已达到配对数量上限。",
+    "action": "检查并清理不再使用的设备配对记录。",
+    "patterns": []
+  },
+  {
+    "code": "PAIRING_UNAVAILABLE",
+    "exit": 18,
+    "message": "设备当前不提供此配对方式。",
+    "action": "核对设备配对状态与兼容性。",
+    "patterns": []
+  },
+  {
+    "code": "PAIRING_BUSY",
+    "exit": 19,
+    "message": "设备正在处理其他配对请求。",
+    "action": "结束其他配对过程后再试。",
+    "patterns": []
+  },
+  {
+    "code": "INVALID_ARGUMENT",
+    "exit": 2,
+    "message": "参数无效或超出支持范围。",
+    "action": "检查必填参数、缓冲、声道映射、音量及输入文件。",
+    "patterns": [
+      "请指定",
+      "超出范围",
+      "超出了",
+      "应为",
+      "应在",
+      "未知窗口",
+      "未知音频来源类型",
+      "未知窗口关闭",
+      "缓冲或提前量超出",
+      "播放提前量为",
+      "密码或设备无效",
+      "PCM 格式报告或文件长度",
+      "声道超出",
+      "声道映射超出",
+      "输入声道超出设备范围"
+    ]
+  },
+  {
+    "code": "BACKEND_MISSING",
+    "exit": 1,
+    "message": "缺少音频传输后端。",
+    "action": "从完整发布目录启动。",
+    "patterns": [
+      "缺少 airplay-backend"
+    ]
+  },
+  {
+    "code": "DEVICE_NOT_FOUND",
+    "exit": 1,
+    "message": "接收端未发现或名称不唯一。",
+    "action": "刷新设备，使用完整名称。",
+    "patterns": [
+      "设备名称不唯一",
+      "设备名称不唯一或未发现",
+      "名称匹配到",
+      "立体声需要两个不同"
+    ]
+  },
+  {
+    "code": "DEVICE_SELECTION_INVALID",
+    "exit": 2,
+    "message": "请选择接收端。",
+    "action": "选择一台设备或一个立体声对。",
+    "patterns": [
+      "请选择一台设备或一个立体声对"
+    ]
+  },
+  {
+    "code": "DEVICE_ADDRESS_MISSING",
+    "exit": 1,
+    "message": "接收端没有可用 IPv4 地址。",
+    "action": "检查网络及设备发现。",
+    "patterns": [
+      "没有 IPv4 地址"
+    ]
+  },
+  {
+    "code": "STEREO_PAIR_INVALID",
+    "exit": 1,
+    "message": "所选设备不属于同一立体声对。",
+    "action": "检查设备组信息并重新发现。",
+    "patterns": [
+      "不是同一个立体声对",
+      "没有相同的立体声组",
+      "仅立体声对可"
+    ]
+  },
+  {
+    "code": "OPERATION_BUSY",
+    "exit": 1,
+    "message": "当前操作与已有会话冲突。",
+    "action": "停止串流或等待当前发现操作完成。",
+    "patterns": [
+      "已有会话或正在发现",
+      "正在发现设备",
+      "请停止串流",
+      "请先停止串流",
+      "串流时不能更换",
+      "已有串流使用"
+    ]
+  },
+  {
+    "code": "SOURCE_NOT_SELECTED",
+    "exit": 1,
+    "message": "未选择音频来源。",
+    "action": "选择有效来源。",
+    "patterns": [
+      "未选择音频来源",
+      "请选择有效的音频来源",
+      "无有效采集设备"
+    ]
+  },
+  {
+    "code": "SOURCE_UNAVAILABLE",
+    "exit": 1,
+    "message": "所选音频来源不可用。",
+    "action": "检查设备是否存在、启用并支持共享采集。",
+    "patterns": [
+      "个匹配的音频端点",
+      "枚举采集设备失败",
+      "不支持此采集格式",
+      "采集设备超过 1 秒"
+    ]
+  },
+  {
+    "code": "CAPTURE_QUEUE_FULL",
+    "exit": 1,
+    "message": "采集分支队列已满。",
+    "action": "检查处理速度、设备时钟及调度；不等同于内存泄漏。",
+    "patterns": [
+      "持续采集分支队列已满"
+    ]
+  },
+  {
+    "code": "PCM_QUEUE_FULL",
+    "exit": 1,
+    "message": "PCM 队列已满。",
+    "action": "检查发送阻塞、处理速度和时钟漂移。",
+    "patterns": [
+      "PCM 队列已满"
+    ]
+  },
+  {
+    "code": "CAPTURE_UNSTABLE",
+    "exit": 1,
+    "message": "采集管线未能在期限内稳定。",
+    "action": "检查来源后重试；正常静音本身不是故障。",
+    "patterns": [
+      "采集管线未能稳定"
+    ]
+  },
+  {
+    "code": "CAPTURE_TIMESTAMP_INVALID",
+    "exit": 1,
+    "message": "采集时间戳无效或倒退。",
+    "action": "检查驱动及设备时钟，保留诊断日志。",
+    "patterns": [
+      "时间戳无效",
+      "时间戳超出",
+      "时间戳倒退",
+      "时间戳不递增"
+    ]
+  },
+  {
+    "code": "CAPTURE_POSITION_INVALID",
+    "exit": 1,
+    "message": "采集位置倒退或重复。",
+    "action": "重新开启采集并检查驱动。",
+    "patterns": [
+      "采集设备位置倒退",
+      "采集时钟与设备位置"
+    ]
+  },
+  {
+    "code": "CAPTURE_GAP_EXCESSIVE",
+    "exit": 1,
+    "message": "采集缺口超过恢复上限。",
+    "action": "检查睡眠恢复、驱动或系统调度。",
+    "patterns": [
+      "采集缺口频繁",
+      "采集缺口过大",
+      "设备位置与时间戳",
+      "采集缺口超过",
+      "设备位置与时间戳不一致"
+    ]
+  },
+  {
+    "code": "CAPTURE_ENDED",
+    "exit": 1,
+    "message": "采集器已结束。",
+    "action": "重新开启采集或查看具体初始化错误。",
+    "patterns": [
+      "持续采集器已结束",
+      "采集器已结束"
+    ]
+  },
+  {
+    "code": "STREAM_START_TIMEOUT",
+    "exit": 1,
+    "message": "串流启动或密码等待超时。",
+    "action": "检查设备响应和密码输入。",
+    "patterns": [
+      "建立流或等待密码超过"
+    ]
+  },
+  {
+    "code": "STREAM_STOP_TIMEOUT",
+    "exit": 1,
+    "message": "后端未在停止期限内退出。",
+    "action": "查看停止阶段日志。",
+    "patterns": [
+      "后端停止超过"
+    ]
+  },
+  {
+    "code": "STREAM_INTERRUPTED",
+    "exit": 1,
+    "message": "后端或发送管道中断。",
+    "action": "查看最早的故障，而非随后出现的队列错误。",
+    "patterns": [
+      "后端串流中断",
+      "后端在音频流准备完成前退出",
+      "后端连接失败",
+      "持续流发送失败",
+      "PCM 管道已关闭"
+    ]
+  },
+  {
+    "code": "SESSION_ENDED",
+    "exit": 1,
+    "message": "会话已经结束。",
+    "action": "重新开始连接。",
+    "patterns": [
+      "会话已结束",
+      "密码请求已结束",
+      "尚未连接"
+    ]
+  },
+  {
+    "code": "VOLUME_UNAVAILABLE",
+    "exit": 1,
+    "message": "音量控制通道尚未就绪或已关闭。",
+    "action": "等待连接完成或重连。",
+    "patterns": [
+      "音量通道尚未建立",
+      "音量通道繁忙"
+    ]
+  },
+  {
+    "code": "AWAKE_FAILED",
+    "exit": 1,
+    "message": "系统唤醒请求失败。",
+    "action": "检查 Windows 返回错误。",
+    "patterns": [
+      "系统唤醒请求失败",
+      "启用系统唤醒失败",
+      "释放系统唤醒请求失败"
+    ]
+  },
+  {
+    "code": "AUTH_CACHE_FAILED",
+    "exit": 1,
+    "message": "认证方式记录读写失败。",
+    "action": "检查应用数据目录权限。",
+    "patterns": [
+      "认证方式记录保存失败"
+    ]
+  },
+  {
+    "code": "APP_EXITING",
+    "exit": 1,
+    "message": "应用正在退出。",
+    "action": "等待退出完成。",
+    "patterns": [
+      "应用正在退出"
+    ]
+  },
+  {
+    "code": "CANCELLED",
+    "exit": 1,
+    "message": "操作已取消。",
+    "action": "用户取消不应显示为串流故障。",
+    "patterns": [
+      "已取消建立流",
+      "启动采集已取消"
+    ]
+  },
+  {
+    "code": "CAPTURE_INIT_FAILED",
+    "exit": 1,
+    "message": "音频采集初始化失败。",
+    "action": "检查来源、驱动以及 Windows 错误详情。",
+    "patterns": []
+  },
+  {
+    "code": "DISCOVERY_FAILED",
+    "exit": 1,
+    "message": "设备发现失败。",
+    "action": "检查本地网络与发现服务。",
+    "patterns": []
+  },
+  {
+    "code": "SETTINGS_SAVE_FAILED",
+    "exit": 1,
+    "message": "设置保存失败。",
+    "action": "检查应用数据目录和磁盘。",
+    "patterns": []
+  },
+  {
+    "code": "AUTOSTART_FAILED",
+    "exit": 1,
+    "message": "开机自启设置失败。",
+    "action": "检查当前用户的启动项权限。",
+    "patterns": []
+  },
+  {
+    "code": "WINDOW_ACTION_FAILED",
+    "exit": 1,
+    "message": "窗口操作失败。",
+    "action": "查看窗口状态与 Windows 错误。",
+    "patterns": []
+  },
+  {
+    "code": "LOG_DIRECTORY_FAILED",
+    "exit": 1,
+    "message": "无法打开日志目录。",
+    "action": "检查目录是否存在。",
+    "patterns": []
+  },
+  {
+    "code": "PASSWORD_SUBMIT_FAILED",
+    "exit": 1,
+    "message": "密码请求通道失败。",
+    "action": "检查会话是否仍有效。",
+    "patterns": []
+  },
+  {
+    "code": "STREAM_FAILED",
+    "exit": 1,
+    "message": "串流操作失败。",
+    "action": "查看具体错误详情和故障日志。",
+    "patterns": []
+  },
+  {
+    "code": "APP_INITIALIZE_FAILED",
+    "exit": 1,
+    "message": "应用初始化失败。",
+    "action": "检查配置和音频设备枚举。",
+    "patterns": []
+  },
+  {
+    "code": "INTERNAL_ERROR",
+    "exit": 1,
+    "message": "未分类的内部故障。",
+    "action": "保留详细错误；不要猜测密码或权限原因。",
+    "patterns": []
+  },
+  {
+    "code": "AUDIO_FORMAT_UNSUPPORTED",
+    "exit": 1,
+    "message": "音频格式不受支持。",
+    "action": "检查采样率、位深、声道及格式头。",
+    "patterns": [
+      "WASAPI 格式",
+      "WAVEFORMATEXTENSIBLE 不完整",
+      "不支持的音频子格式",
+      "暂不支持格式",
+      "GetMixFormat 返回空指针",
+      "不支持的输入采样率",
+      "格式不是 VT_BLOB",
+      "设备格式为空",
+      "空音频格式"
+    ]
+  },
+  {
+    "code": "INPUT_FILE_INVALID",
+    "exit": 2,
+    "message": "输入音频文件无效。",
+    "action": "使用有效、支持的 WAV／PCM 文件。",
+    "patterns": [
+      "输入不是 WAV",
+      "WAV 数据块",
+      "WAV 格式头",
+      "WAV 缺少",
+      "转换入口目前",
+      "转换测试限制"
+    ]
+  },
+  {
+    "code": "RESAMPLE_FAILED",
+    "exit": 1,
+    "message": "重采样过程异常。",
+    "action": "检查转换输入、时长及漂移控制。",
+    "patterns": [
+      "重采样器未消耗",
+      "双声道输入包含",
+      "重采样输出长度",
+      "漂移校正超过"
+    ]
+  },
+  {
+    "code": "CAPTURE_TIMEOUT",
+    "exit": 1,
+    "message": "采集未在期限内收到完整音频。",
+    "action": "检查来源与驱动。",
+    "patterns": [
+      "持续采集未在期限内",
+      "未在期限内采到"
+    ]
+  },
+  {
+    "code": "CAPTURE_BUFFER_INVALID",
+    "exit": 1,
+    "message": "采集缓冲区无效。",
+    "action": "检查驱动及当前采集格式。",
+    "patterns": [
+      "采集缓冲区为空",
+      "非静音缓冲区为空"
+    ]
+  },
+  {
+    "code": "PCM_PIPE_FAILED",
+    "exit": 1,
+    "message": "PCM 写入或管道异常。",
+    "action": "检查后端进程和最早的故障日志。",
+    "patterns": [
+      "PCM 写入线程异常",
+      "缺少 PCM 管道",
+      "缺少后端日志管道",
+      "PCM 发送管道"
+    ]
+  },
+  {
+    "code": "LOG_WRITE_FAILED",
+    "exit": 1,
+    "message": "诊断日志写入异常。",
+    "action": "检查磁盘和目录权限，音频故障需另行判断。",
+    "patterns": [
+      "详细日志线程异常",
+      "诊断达到"
+    ]
+  },
+  {
+    "code": "AUTH_PIPE_FAILED",
+    "exit": 1,
+    "message": "密码通信管道异常。",
+    "action": "检查会话是否仍有效及最早的后端故障；此码不表示密码错误。",
+    "patterns": [
+      "密码通信 /"
+    ]
+  }
+]
