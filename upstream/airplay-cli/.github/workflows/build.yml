@@ -1,0 +1,441 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      release_tag:
+        description: "Existing v-prefixed tag to build and release"
+        required: true
+        type: string
+    secrets:
+      MUSIC_ASSISTANT_BOT_PRIVATE_KEY:
+        required: true
+
+permissions:
+  contents: read
+
+env:
+  GITHUB_API_VERSION: "2026-03-10"
+  RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
+
+jobs:
+  immutable-settings:
+    name: Verify immutable release settings
+    if: startsWith(github.ref, 'refs/tags/v') || startsWith(inputs.release_tag, 'v')
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - name: Create immutable-settings token
+        id: immutable-settings-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.MUSIC_ASSISTANT_BOT_CLIENT_ID }}
+          private-key: ${{ secrets.MUSIC_ASSISTANT_BOT_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-administration: read
+
+      - name: Validate immutable release settings
+        env:
+          APP_SLUG: ${{ steps.immutable-settings-token.outputs.app-slug }}
+          GH_TOKEN: ${{ steps.immutable-settings-token.outputs.token }}
+        run: |
+          set -euo pipefail
+
+          if [[ "$APP_SLUG" != "musicassistant-bot" ]]; then
+            echo "::error::Immutable-settings token belongs to $APP_SLUG, expected musicassistant-bot."
+            exit 1
+          fi
+
+          if ! immutable_enabled="$(
+            gh api \
+              --method GET \
+              --header "X-GitHub-Api-Version: $GITHUB_API_VERSION" \
+              "repos/$GITHUB_REPOSITORY/immutable-releases" \
+              --jq '.enabled'
+          )"; then
+            echo "::error::The GitHub App needs repository administration read access to verify immutable releases."
+            exit 1
+          fi
+          if [[ "$immutable_enabled" != "true" ]]; then
+            echo "::error::Enable release immutability under Settings > General > Releases before publishing."
+            exit 1
+          fi
+
+  test-updater:
+    name: Test release updater
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.release_tag || github.ref }}
+          persist-credentials: false
+      - name: Run updater unit tests
+        run: python3 -m unittest discover -s tests -v
+
+  build-linux:
+    # Keep release binaries on a stable libc baseline that runs on Debian 12+.
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: x86_64
+            cc: gcc
+            cxx: g++
+            packages: ""
+          - platform: aarch64
+            cc: aarch64-linux-gnu-gcc
+            cxx: aarch64-linux-gnu-g++
+            packages: gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.release_tag || github.ref }}
+          submodules: recursive
+          persist-credentials: false
+      - name: Install cross toolchain
+        if: matrix.packages != ''
+        run: sudo apt-get update && sudo apt-get install -y ${{ matrix.packages }}
+      - name: Build
+        run: |
+          # RELEASE_TAG (workflow-level env, see top of file) covers both a
+          # direct `v*` tag push and an Auto Release run: in the latter,
+          # github.ref is the caller's ref (not the tag), so RELEASE_TAG is the
+          # only reliable signal. Other builds (branch pushes, PRs) fall back
+          # to the Makefile's own `git describe`.
+          VERSION_ARGS=()
+          if [[ "$RELEASE_TAG" == v* ]]; then
+            VERSION_ARGS=(VERSION="${RELEASE_TAG#v}")
+          fi
+          make STATIC=1 CC=${{ matrix.cc }} CXX=${{ matrix.cxx }} "${VERSION_ARGS[@]}"
+      - name: Validate
+        run: |
+          bin="bin/cliairplay-linux-${{ matrix.platform }}"
+          test -f "$bin"
+          if [ "${{ matrix.platform }}" = "x86_64" ]; then
+            make test STATIC=1 CC=${{ matrix.cc }} CXX=${{ matrix.cxx }}
+            # Native: run the self-check (should print "cliairplay check").
+            "./$bin" --check | grep -qE "cliairplay.*check"
+            make test CC=${{ matrix.cc }}
+          else
+            # Cross-built: can't execute here, just confirm the architecture.
+            file "$bin" | grep -qi "aarch64"
+          fi
+          glibc_ceiling=GLIBC_2.36
+          max_glibc=$(readelf --version-info "$bin" |
+            grep -o 'GLIBC_[0-9.]*' | sort -V | tail -1)
+          echo "Maximum glibc requirement: ${max_glibc:-none}"
+          if [ -n "$max_glibc" ] &&
+             [ "$(printf '%s\n' "$glibc_ceiling" "$max_glibc" |
+               sort -V | tail -1)" != "$glibc_ceiling" ]; then
+            echo "::error::$bin requires $max_glibc; server ceiling is $glibc_ceiling"
+            exit 1
+          fi
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: cliairplay-linux-${{ matrix.platform }}
+          path: bin/cliairplay-linux-${{ matrix.platform }}
+          if-no-files-found: error
+
+  sanitize-linux:
+    name: Test with sanitizers
+    # AddressSanitizer + UndefinedBehaviorSanitizer over the test suite. Linux
+    # only: ASan hangs during runtime init on recent macOS.
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.release_tag || github.ref }}
+          submodules: recursive
+          persist-credentials: false
+      - name: Run tests under ASan and UBSan
+        env:
+          ASAN_OPTIONS: detect_leaks=0
+          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+        run: make test STATIC=1 CC=gcc CXX=g++ SANITIZE=address,undefined
+
+  build-macos:
+    # Both arches build on the arm64 runner: arm64 natively, x86_64 cross-compiled
+    # via -arch (the Intel macos-13 runner is being retired).
+    runs-on: macos-14
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [arm64, x86_64]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.release_tag || github.ref }}
+          submodules: recursive
+          persist-credentials: false
+      - name: Build
+        run: |
+          # RELEASE_TAG (workflow-level env, see top of file) covers both a
+          # direct `v*` tag push and an Auto Release run: in the latter,
+          # github.ref is the caller's ref (not the tag), so RELEASE_TAG is the
+          # only reliable signal. Other builds (branch pushes, PRs) fall back
+          # to the Makefile's own `git describe`.
+          VERSION_ARGS=()
+          if [[ "$RELEASE_TAG" == v* ]]; then
+            VERSION_ARGS=(VERSION="${RELEASE_TAG#v}")
+          fi
+          if [ "${{ matrix.platform }}" = "x86_64" ]; then
+            make STATIC=1 CC=clang CXX=clang++ HOST=macos PLATFORM=x86_64 \
+              EXTRA_CFLAGS="-arch x86_64" EXTRA_LDFLAGS="-arch x86_64" "${VERSION_ARGS[@]}"
+          else
+            make STATIC=1 CC=clang CXX=clang++ "${VERSION_ARGS[@]}"
+          fi
+      - name: Validate
+        run: |
+          bin="bin/cliairplay-macos-${{ matrix.platform }}"
+          test -f "$bin"
+          if [ "${{ matrix.platform }}" = "arm64" ]; then
+            make test STATIC=1 CC=clang CXX=clang++
+            "./$bin" --check | grep -qE "cliairplay.*check"
+            make test CC=clang
+          else
+            file "$bin" | grep -qi "x86_64"
+          fi
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: cliairplay-macos-${{ matrix.platform }}
+          path: bin/cliairplay-macos-${{ matrix.platform }}
+          if-no-files-found: error
+
+  release:
+    # Publish binaries for tag-based and reusable release runs.
+    if: startsWith(github.ref, 'refs/tags/v') || startsWith(inputs.release_tag, 'v')
+    needs: [immutable-settings, test-updater, build-linux, sanitize-linux, build-macos]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.release_tag || github.ref }}
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          path: artifacts
+      - name: Collect binaries, checksums and license notices
+        run: |
+          binaries=(
+            cliairplay-linux-aarch64
+            cliairplay-linux-x86_64
+            cliairplay-macos-arm64
+            cliairplay-macos-x86_64
+          )
+          mkdir release
+          for binary in "${binaries[@]}"; do
+            cp "artifacts/$binary/$binary" "release/$binary"
+          done
+          chmod +x release/cliairplay-*
+          cp LICENSE THIRD_PARTY_NOTICES.md release/
+          (cd release && sha256sum "${binaries[@]}" > SHA256SUMS)
+          ls -la release
+      # gh uploads assets to a temporary draft and publishes only after every
+      # upload succeeds, making the resulting release safe to lock.
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >
+          gh release create "$RELEASE_TAG" release/*
+          --repo "${{ github.repository }}"
+          --title "$RELEASE_TAG"
+          --generate-notes
+          --verify-tag
+
+  verify-release:
+    if: startsWith(github.ref, 'refs/tags/v') || startsWith(inputs.release_tag, 'v')
+    needs: release
+    runs-on: ubuntu-22.04
+    outputs:
+      checksums_sha256: ${{ steps.checksums_digest.outputs.sha256 }}
+    steps:
+      - name: Verify release is immutable
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          test "$(
+            gh release view "$RELEASE_TAG" \
+              --repo "${{ github.repository }}" \
+              --json isImmutable \
+              --jq .isImmutable
+          )" = "true"
+      - name: Download published assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir release
+          gh release download "$RELEASE_TAG" \
+            --repo "${{ github.repository }}" \
+            --dir release
+      - name: Verify asset contract and checksums
+        run: |
+          assets=(
+            LICENSE
+            SHA256SUMS
+            THIRD_PARTY_NOTICES.md
+            cliairplay-linux-aarch64
+            cliairplay-linux-x86_64
+            cliairplay-macos-arm64
+            cliairplay-macos-x86_64
+          )
+          test "$(find release -maxdepth 1 -type f | wc -l)" -eq "${#assets[@]}"
+          for asset in "${assets[@]}"; do
+            test -f "release/$asset"
+          done
+          cat release/SHA256SUMS
+          (cd release && sha256sum --check SHA256SUMS)
+          chmod +x release/cliairplay-linux-x86_64
+          release/cliairplay-linux-x86_64 --check
+      - name: Record checksum manifest digest
+        id: checksums_digest
+        run: |
+          set -euo pipefail
+          digest="$(sha256sum release/SHA256SUMS | awk '{print $1}')"
+          if [[ ! "$digest" =~ ^[0-9a-f]{64}$ ]]; then
+            echo "::error::Failed to compute a valid SHA256SUMS digest"
+            exit 1
+          fi
+          echo "sha256=$digest" >> "$GITHUB_OUTPUT"
+      - name: Verify privileged PTP binding
+        run: |
+          image=ubuntu:22.04
+          docker pull "$image"
+
+          set +e
+          output=$(docker run --rm \
+            --sysctl net.ipv4.ip_unprivileged_port_start=1024 \
+            --cap-drop ALL \
+            --user 65534:65534 \
+            --volume "$PWD/release:/assets:ro" \
+            "$image" \
+            sh -c 'printf "SYSCTL="; cat /proc/sys/net/ipv4/ip_unprivileged_port_start; exec /assets/cliairplay-linux-x86_64 --ptp-daemon' 2>&1)
+          rc=$?
+          set -e
+          printf '%s\nNON_ROOT_EXIT_CODE=%s\n' "$output" "$rc"
+          test "$rc" -eq 2
+          grep -F "cannot bind UDP 319/320" <<<"$output"
+
+          set +e
+          output=$(docker run --rm \
+            --sysctl net.ipv4.ip_unprivileged_port_start=1024 \
+            --cap-drop ALL \
+            --cap-add NET_BIND_SERVICE \
+            --volume "$PWD/release:/assets:ro" \
+            "$image" \
+            sh -c 'printf "SYSCTL="; cat /proc/sys/net/ipv4/ip_unprivileged_port_start; exec timeout --signal=TERM --kill-after=1 2 /assets/cliairplay-linux-x86_64 --ptp-daemon' 2>&1)
+          rc=$?
+          set -e
+          printf '%s\nCAPABILITY_TIMEOUT_EXIT_CODE=%s\n' "$output" "$rc"
+          test "$rc" -eq 124
+          grep -F "daemon up: engine on 319/320" <<<"$output"
+
+  server-repo-pr:
+    name: Update server release pins
+    if: startsWith(github.ref, 'refs/tags/v') || startsWith(inputs.release_tag, 'v')
+    needs: verify-release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Create server repository token
+        id: server-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.MUSIC_ASSISTANT_BOT_CLIENT_ID }}
+          private-key: ${{ secrets.MUSIC_ASSISTANT_BOT_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: server
+          permission-contents: write
+          permission-pull-requests: write
+
+      - name: Validate server automation identity
+        env:
+          APP_SLUG: ${{ steps.server-token.outputs.app-slug }}
+        run: |
+          set -euo pipefail
+          if [[ "$APP_SLUG" != "musicassistant-bot" ]]; then
+            echo "::error::Server token belongs to $APP_SLUG, expected musicassistant-bot."
+            exit 1
+          fi
+
+      - name: Checkout airplay-cli
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.release_tag || github.ref }}
+          path: airplay-cli
+          persist-credentials: false
+      - name: Checkout server
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: music-assistant/server
+          ref: dev
+          token: ${{ steps.server-token.outputs.token }}
+          path: server
+          persist-credentials: false
+      - name: Update server Dockerfile pins
+        env:
+          CHECKSUMS_SHA256: ${{ needs.verify-release.outputs.checksums_sha256 }}
+        run: |
+          set -euo pipefail
+          python3 airplay-cli/scripts/update_server_dockerfile.py \
+            server/Dockerfile \
+            "$RELEASE_TAG" \
+            "$CHECKSUMS_SHA256"
+      - name: Create or update server pull request
+        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
+        with:
+          token: ${{ steps.server-token.outputs.token }}
+          sign-commits: true
+          path: server
+          commit-message: Update airplay-cli to ${{ env.RELEASE_TAG }}
+          # This branch deliberately avoids the server's auto-merge prefixes.
+          branch: bump-airplay-cli-${{ env.RELEASE_TAG }}
+          base: dev
+          delete-branch: true
+          title: Update airplay-cli to ${{ env.RELEASE_TAG }}
+          body: |
+            # What does this implement/fix?
+
+            Updates the server Dockerfile to use the verified
+            [airplay-cli ${{ env.RELEASE_TAG }} release](https://github.com/music-assistant/airplay-cli/releases/tag/${{ env.RELEASE_TAG }}).
+
+            - Pins `CLIAIRPLAY_VERSION` to `${{ env.RELEASE_TAG }}`.
+            - Pins `CLIAIRPLAY_CHECKSUMS_SHA256` to `${{ needs.verify-release.outputs.checksums_sha256 }}`.
+            - The release workflow verified the four published binaries and `SHA256SUMS` before opening this PR.
+
+            **Related issue (if applicable):**
+
+            - N/A
+
+            ## Types of changes
+
+            - [ ] Bugfix (non-breaking change which fixes an issue) — `bugfix`
+            - [ ] New feature (non-breaking change which adds functionality) — `new-feature`
+            - [ ] Enhancement to an existing feature — `enhancement`
+            - [ ] New music/player/metadata/plugin provider — `new-provider`
+            - [ ] Breaking change (fix or feature that would cause existing functionality to not work as expected) — `breaking-change`
+            - [ ] Refactor (no behaviour change) — `refactor`
+            - [ ] Documentation only — `documentation`
+            - [ ] Maintenance / chore — `maintenance`
+            - [ ] CI / workflow change — `ci`
+            - [x] Dependencies bump — `dependencies`
+
+            ## Checklist
+
+            - [ ] The code change is tested and works locally. (Release assets and pin updates were verified in CI; no local server build is run.)
+            - [ ] `pre-commit run --all-files` passes. (Not run by this pin-only automation.)
+            - [ ] `pytest` passes, and tests have been added/updated under `tests/` where applicable. (Not applicable to a Dockerfile pin-only change.)
+            - [ ] For changes to shared models, the companion PR in `music-assistant/models` is linked. (Not applicable.)
+            - [ ] For changes affecting the UI, the companion PR in `music-assistant/frontend` is linked. (Not applicable.)
+            - [ ] I have read and complied with the project's [AI Policy](https://github.com/music-assistant/.github/blob/main/AI_POLICY.md) for any AI-assisted contributions. (Not applicable to this automated pin-only PR.)
+            - [ ] I have raised a PR against the documentation repository targeting the main or beta branch as appropriate. (Not applicable.)
+          labels: dependencies

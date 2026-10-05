@@ -1,0 +1,21 @@
+[submodule "curve25519"]
+	path = curve25519
+	url = https://github.com/philippe44/curve25519
+[submodule "libopenssl"]
+	path = libopenssl
+	url = https://github.com/Philippe44/libopenssl
+[submodule "libcodecs"]
+	path = libcodecs
+	url = https://github.com/Philippe44/libcodecs
+[submodule "libmdns"]
+	path = libmdns
+	url = https://github.com/philippe44/libmdns
+[submodule "dmap-parser"]
+	path = dmap-parser
+	url = https://github.com/philippe44/dmap-parser
+[submodule "crosstools"]
+	path = crosstools
+	url = https://github.com/philippe44/crosstools
+[submodule "libpthreads4w"]
+	path = libpthreads4w
+	url = https://github.com/philippe44/libpthreads4w

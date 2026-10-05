@@ -1,0 +1,17 @@
+# cliairplay — open items
+
+Genuinely open work only. Completed work lives in git history.
+
+- [ ] **Parse `audioLatencies` from GET /info.** The SETUP echo of
+      `latencyMin`/`latencyMax` is receiver-optional (Sonos omits it); the
+      /info table would populate the pacing window and the reported
+      `[STATUS] latency` line for every device instead of falling back to the
+      1.75 s default.
+- [ ] **`--probe` mode for capability discovery.** A one-shot plaintext
+      GET /info (no pairing needed) printing the capabilities line, so the
+      caller can pick the best format per device before the first stream —
+      the CLI half of fully automatic 24-bit selection (no user toggle; the
+      format tables are evidence, the Apple-model check covers understating
+      receivers). The fetch and the format-table parse already run as part of
+      the normal connect; what is missing is the flag that stops there and
+      exits.

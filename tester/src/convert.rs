@@ -1,0 +1,405 @@
+//! Stateful sinc resampling and TPDF-dithered S16LE quantization.
+use audioadapter_buffers::direct::InterleavedSlice;
+use rubato::{Adjustable, Async, FixedAsync, Resampler, SincInterpolationParameters};
+use serde::Serialize;
+use std::{
+    collections::VecDeque,
+    error::Error,
+    fs::{self, File},
+    io::{Read, Seek, SeekFrom, Write},
+    path::{Path, PathBuf},
+};
+
+type Result<T> = std::result::Result<T, Box<dyn Error>>;
+const RATE: u32 = 44100;
+const CHUNK: usize = 480;
+
+#[derive(Default, Serialize)]
+pub struct Stats {
+    input_frames: u64,
+    output_frames: u64,
+    invalid_samples: u64,
+    clipped_samples: u64,
+}
+struct Quantizer {
+    state: u64,
+}
+impl Quantizer {
+    fn uniform(&mut self) -> f64 {
+        self.state = self.state.wrapping_add(0x9e3779b97f4a7c15);
+        let mut x = self.state;
+        x = (x ^ (x >> 30)).wrapping_mul(0xbf58476d1ce4e5b9);
+        x = (x ^ (x >> 27)).wrapping_mul(0x94d049bb133111eb);
+        x ^= x >> 31;
+        (x >> 32) as f64 / 4294967296.0
+    }
+    fn sample(&mut self, input: f32, stats: &mut Stats) -> i16 {
+        if !input.is_finite() {
+            stats.invalid_samples += 1;
+            return 0;
+        }
+        if input.abs() > 1.0 {
+            stats.clipped_samples += 1;
+        }
+        let tpdf = self.uniform() - self.uniform(); // +/- 1 LSB, zero mean
+        (input as f64 * 32768.0 + tpdf)
+            .round()
+            .clamp(-32768.0, 32767.0) as i16
+    }
+}
+pub struct Converter {
+    sampler: Async<f32>,
+    pending: VecDeque<f32>,
+    input: Vec<f32>,
+    output: Vec<f32>,
+    pcm: Vec<i16>,
+    skip: usize,
+    input_rate: u32,
+    relative_ratio: f64,
+    previous_ratio: f64,
+    expected_frames: f64,
+    adaptive: bool,
+    quantizer: Quantizer,
+    pub stats: Stats,
+}
+impl Converter {
+    pub fn new(input_rate: u32, seed: u64) -> Result<Self> {
+        if !(8000..=192000).contains(&input_rate) {
+            return Err("不支持的输入采样率".into());
+        }
+        let sampler = Async::new_sinc(
+            RATE as f64 / input_rate as f64,
+            1.001,
+            &SincInterpolationParameters::default(),
+            CHUNK,
+            2,
+            FixedAsync::Input,
+        )?;
+        let output_max = sampler.output_frames_max();
+        let skip = sampler.output_delay();
+        Ok(Self {
+            sampler,
+            pending: VecDeque::with_capacity(CHUNK * 4),
+            input: vec![0.0; CHUNK * 2],
+            output: vec![0.0; output_max * 2],
+            pcm: Vec::with_capacity(output_max * 2),
+            skip,
+            input_rate,
+            relative_ratio: 1.0,
+            previous_ratio: 1.0,
+            expected_frames: 0.0,
+            adaptive: false,
+            quantizer: Quantizer { state: seed },
+            stats: Stats::default(),
+        })
+    }
+    pub fn output_frames(&self) -> u64 {
+        self.stats.output_frames
+    }
+    pub fn set_correction_ppm(&mut self, ppm: f64) -> Result<()> {
+        if !ppm.is_finite() || ppm.abs() > 800.0 {
+            return Err("漂移校正超过 +/-800 ppm".into());
+        }
+        self.relative_ratio = 1.0 + ppm / 1_000_000.0;
+        self.sampler
+            .set_resample_ratio_relative(self.relative_ratio, true)?;
+        self.adaptive = true;
+        Ok(())
+    }
+    fn process(&mut self, limit: u64, sink: &mut impl FnMut(&[i16]) -> Result<()>) -> Result<()> {
+        let input = InterleavedSlice::new(&self.input, 2, CHUNK)?;
+        let output_frames = self.output.len() / 2;
+        let mut output = InterleavedSlice::new_mut(&mut self.output, 2, output_frames)?;
+        let (used, produced) = self
+            .sampler
+            .process_into_buffer(&input, &mut output, None)?;
+        if used != CHUNK {
+            return Err("重采样器未消耗完整输入块".into());
+        }
+        let skip = self.skip.min(produced);
+        self.skip -= skip;
+        let count = (produced - skip).min(limit.saturating_sub(self.stats.output_frames) as usize);
+        self.pcm.clear();
+        for value in &self.output[skip * 2..(skip + count) * 2] {
+            self.pcm
+                .push(self.quantizer.sample(*value, &mut self.stats));
+        }
+        if !self.pcm.is_empty() {
+            sink(&self.pcm)?;
+        }
+        self.stats.output_frames += count as u64;
+        self.previous_ratio = self.relative_ratio;
+        Ok(())
+    }
+    pub fn push(
+        &mut self,
+        samples: &[f32],
+        sink: &mut impl FnMut(&[i16]) -> Result<()>,
+    ) -> Result<()> {
+        if samples.len() % 2 != 0 {
+            return Err("双声道输入包含不完整的帧".into());
+        }
+        self.stats.input_frames += (samples.len() / 2) as u64;
+        // Accept arbitrary WASAPI packet boundaries without resetting the filter.
+        for value in samples {
+            let value = if value.is_finite() {
+                *value
+            } else {
+                self.stats.invalid_samples += 1;
+                0.0
+            };
+            self.pending.push_back(value);
+            if self.pending.len() == CHUNK * 2 {
+                for item in &mut self.input {
+                    *item = self.pending.pop_front().unwrap();
+                }
+                self.expected_frames += CHUNK as f64 * RATE as f64 / self.input_rate as f64
+                    * (self.previous_ratio + self.relative_ratio)
+                    / 2.0;
+                self.process(u64::MAX, sink)?;
+            }
+        }
+        Ok(())
+    }
+    pub fn finish(&mut self, sink: &mut impl FnMut(&[i16]) -> Result<()>) -> Result<()> {
+        // Live correction changes duration slightly. Flush according to the
+        // integrated ratio, never trim back to the nominal file-conversion size.
+        let target = if self.adaptive {
+            (self.expected_frames
+                + (self.pending.len() / 2) as f64 * RATE as f64 / self.input_rate as f64
+                    * (self.previous_ratio + self.relative_ratio)
+                    / 2.0)
+                .round() as u64
+        } else {
+            (self.stats.input_frames * RATE as u64 + self.input_rate as u64 / 2)
+                / self.input_rate as u64
+        };
+        self.input.fill(0.0);
+        for item in &mut self.input {
+            if let Some(value) = self.pending.pop_front() {
+                *item = value;
+            } else {
+                break;
+            }
+        }
+        while self.stats.output_frames < target {
+            self.process(target, sink)?;
+            self.input.fill(0.0);
+        }
+        if self.stats.output_frames != target {
+            return Err("重采样输出长度不符合时长约定".into());
+        }
+        Ok(())
+    }
+}
+
+pub fn wave(path: &Path) -> Result<PathBuf> {
+    let mut source = File::open(path)?;
+    let mut header = [0; 12];
+    source.read_exact(&mut header)?;
+    if &header[..4] != b"RIFF" || &header[8..] != b"WAVE" {
+        return Err("输入不是 WAV 文件".into());
+    }
+    let length = source.metadata()?.len();
+    let mut format = None;
+    let mut data = None;
+    while source.stream_position()? + 8 <= length {
+        let mut chunk = [0; 8];
+        source.read_exact(&mut chunk)?;
+        let size = u32::from_le_bytes(chunk[4..].try_into().unwrap()) as u64;
+        let position = source.stream_position()?;
+        if position + size > length {
+            return Err("WAV 数据块越过文件尾".into());
+        }
+        if &chunk[..4] == b"fmt " {
+            if size > 65536 {
+                return Err("WAV 格式头过大".into());
+            }
+            let mut blob = vec![0; size as usize];
+            source.read_exact(&mut blob)?;
+            format = Some(crate::capture::parse_format(&blob)?);
+        } else if &chunk[..4] == b"data" {
+            data = Some((position, size));
+        }
+        source.seek(SeekFrom::Start(position + size + (size % 2)))?;
+    }
+    let format = format.ok_or("WAV 缺少 fmt 块")?;
+    let (position, size) = data.ok_or("WAV 缺少 data 块")?;
+    if format.channels != 2 || format.encoding != "float32" || size % 8 != 0 || size == 0 {
+        return Err("转换入口目前需要双声道 float32 WAV".into());
+    }
+    if size / 8 > format.rate as u64 * 60 {
+        return Err("第一轮转换测试限制在 60 秒以内".into());
+    }
+    let raw_path = path.with_extension("pcm");
+    let wav_path = path.with_extension("pcm.wav");
+    let mut raw = File::create(&raw_path)?;
+    let mut wav = File::create(&wav_path)?;
+    let output_frames = (size / 8 * RATE as u64 + format.rate as u64 / 2) / format.rate as u64;
+    let bytes = (output_frames * 4) as u32;
+    wav.write_all(b"RIFF")?;
+    wav.write_all(&(bytes + 36).to_le_bytes())?;
+    wav.write_all(b"WAVEfmt \x10\0\0\0\x01\0\x02\0")?;
+    wav.write_all(&RATE.to_le_bytes())?;
+    wav.write_all(&(RATE * 4).to_le_bytes())?;
+    wav.write_all(b"\x04\0\x10\0data")?;
+    wav.write_all(&bytes.to_le_bytes())?;
+    let mut write_buffer = Vec::with_capacity(4096);
+    let mut sink = |samples: &[i16]| -> Result<()> {
+        write_buffer.clear();
+        for sample in samples {
+            write_buffer.extend_from_slice(&sample.to_le_bytes());
+        }
+        raw.write_all(&write_buffer)?;
+        wav.write_all(&write_buffer)?;
+        Ok(())
+    };
+    let mut converter = Converter::new(format.rate, 0x42335f6469746865)?;
+    source.seek(SeekFrom::Start(position))?;
+    let mut remaining = size as usize;
+    let mut buffer = [0u8; CHUNK * 8];
+    let mut samples = Vec::with_capacity(CHUNK * 2);
+    while remaining > 0 {
+        let count = remaining.min(buffer.len());
+        source.read_exact(&mut buffer[..count])?;
+        samples.clear();
+        samples.extend(
+            buffer[..count]
+                .chunks_exact(4)
+                .map(|bytes| f32::from_le_bytes(bytes.try_into().unwrap())),
+        );
+        converter.push(&samples, &mut sink)?;
+        remaining -= count;
+    }
+    converter.finish(&mut sink)?;
+    raw.flush()?;
+    wav.flush()?;
+    let report = serde_json::json!({ "source": path, "input_rate": format.rate, "output_rate": RATE,
+        "channels": 2, "output_bits": 16, "encoding": "signed-pcm-little-endian",
+        "resampler": "rubato 5.0.1 Async sinc", "dither": "TPDF +/-1 LSB", "gain": 1.0,
+        "stats": converter.stats, "pcm": raw_path, "wave": wav_path });
+    fs::write(
+        path.with_extension("pcm.json"),
+        serde_json::to_vec_pretty(&report)?,
+    )?;
+    println!(
+        "转换完成：{} Hz float32 → 44100 Hz int16，双声道，增益 1.0",
+        format.rate
+    );
+    println!(
+        "输入 {} 帧，输出 {} 帧；越界样本 {}，非法样本 {}",
+        converter.stats.input_frames,
+        converter.stats.output_frames,
+        converter.stats.clipped_samples,
+        converter.stats.invalid_samples
+    );
+    println!(
+        "PCM：{}\n试听 WAV：{}",
+        raw_path.display(),
+        wav_path.display()
+    );
+    Ok(raw_path)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    fn convert(samples: &[f32], chunk: usize) -> Vec<i16> {
+        let mut converter = Converter::new(48000, 1234).unwrap();
+        let mut result = Vec::new();
+        let mut sink = |samples: &[i16]| {
+            result.extend_from_slice(samples);
+            Ok(())
+        };
+        for input in samples.chunks(chunk * 2) {
+            converter.push(input, &mut sink).unwrap();
+        }
+        converter.finish(&mut sink).unwrap();
+        result
+    }
+    #[test]
+    fn packet_boundaries_do_not_change_audio_and_channels_stay_separate() {
+        let input: Vec<f32> = (0..48000)
+            .flat_map(|i| {
+                [
+                    0.5 * (2.0 * std::f32::consts::PI * 440.0 * i as f32 / 48000.0).sin(),
+                    0.0,
+                ]
+            })
+            .collect();
+        let output = convert(&input, 480);
+        assert_eq!(output, convert(&input, 137));
+        assert_eq!(output.len(), 44100 * 2);
+        let left: Vec<_> = output
+            .chunks_exact(2)
+            .map(|frame| frame[0] as f64 / 32768.0)
+            .collect();
+        let rms = (left[500..43000].iter().map(|s| s * s).sum::<f64>() / 42500.0).sqrt();
+        assert!((rms - 0.5 / 2f64.sqrt()).abs() < 0.001);
+        assert!(output.chunks_exact(2).all(|frame| frame[1].abs() <= 1));
+    }
+    #[test]
+    fn filter_rejects_out_of_band_input() {
+        let input: Vec<f32> = (0..48000)
+            .flat_map(|i| {
+                let x = 0.5 * (2.0 * std::f32::consts::PI * 23000.0 * i as f32 / 48000.0).sin();
+                [x, x]
+            })
+            .collect();
+        let output = convert(&input, 480);
+        let rms = (output[1000..86000]
+            .iter()
+            .map(|s| (*s as f64 / 32768.0).powi(2))
+            .sum::<f64>()
+            / 85000.0)
+            .sqrt();
+        assert!(rms < 0.001, "alias RMS {rms}");
+    }
+    #[test]
+    fn quantization_saturates_and_dither_has_no_mean_bias() {
+        let mut q = Quantizer { state: 1 };
+        let mut stats = Stats::default();
+        assert_eq!(q.sample(2.0, &mut stats), 32767);
+        assert_eq!(q.sample(-2.0, &mut stats), -32768);
+        assert_eq!(q.sample(f32::NAN, &mut stats), 0);
+        let values: Vec<_> = (0..100000).map(|_| q.sample(0.0, &mut stats)).collect();
+        assert!(values.iter().all(|s| s.abs() <= 1));
+        assert!(values.iter().any(|s| *s == 1) && values.iter().any(|s| *s == -1));
+        assert!(
+            (values.iter().map(|s| *s as i64).sum::<i64>() as f64 / values.len() as f64).abs()
+                < 0.01
+        );
+    }
+    #[test]
+    fn adaptive_ratio_flush_preserves_adjusted_duration_and_signal() {
+        for ppm in [-800.0, 800.0] {
+            let mut converter = Converter::new(48000, 1234).unwrap();
+            converter.set_correction_ppm(ppm).unwrap();
+            let mut output = Vec::new();
+            let mut sink = |pcm: &[i16]| {
+                output.extend_from_slice(pcm);
+                Ok(())
+            };
+            for _ in 0..1001 {
+                converter.push(&vec![0.25; 960], &mut sink).unwrap();
+            }
+            converter.push(&vec![0.25; 274], &mut sink).unwrap();
+            converter.finish(&mut sink).unwrap();
+            let expected =
+                ((480480.0 + 137.0) * 44100.0 / 48000.0 * (1.0 + ppm / 1e6)).round() as usize;
+            assert!((output.len() / 2).abs_diff(expected) <= 1);
+            assert!(
+                output[1000..output.len() - 1000]
+                    .iter()
+                    .all(|s| (*s as i32 - 8192).abs() <= 2)
+            );
+        }
+    }
+    #[test]
+    fn fractional_tail_has_exact_duration() {
+        for frames in [1, 137, 479, 480, 481, 1001] {
+            let output = convert(&vec![0.0; frames * 2], 137);
+            assert_eq!(output.len() / 2, (frames * 44100 + 24000) / 48000);
+        }
+    }
+}

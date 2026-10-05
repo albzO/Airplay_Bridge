@@ -1,0 +1,55 @@
+# Build output and dependency caches (keep Cargo.lock and pnpm-lock.yaml)
+/build/
+/environment-check/
+/dist/
+/snapshot-backups/
+target/
+node_modules/
+/desktop/dist/
+/desktop/src-tauri/gen/schemas/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.o
+*.obj
+*.a
+*.lib
+*.pdb
+
+# Local editor configuration and operating-system files
+.vscode/
+.vs/
+.idea/
+*.user
+*.suo
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Runtime logs, local device data, and UI check output
+logs/
+*.log
+*.log.*
+/desktop/checks/inputs.json
+/desktop/checks/devices.json
+/desktop/checks/*.png
+instance-smoke.json
+ui-smoke.json
+/devices.json
+/inputs.json
+/settings.json
+/auth-policy.json
+/auth-policy.pending.json
+
+# Local environment secrets; allow documented examples
+.env
+.env.*
+!.env.example
+!.env.sample
+!.env.template
+
+# Temporary files
+*.tmp
+*.temp
+*.swp
+*~
