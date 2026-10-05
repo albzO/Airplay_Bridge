@@ -10,7 +10,7 @@ use std::{
 };
 use windows::{
     Win32::{
-        Foundation::PROPERTYKEY,
+        Foundation::{PROPERTYKEY, HANDLE, CloseHandle, WAIT_OBJECT_0, WAIT_TIMEOUT},
         Media::Audio::*,
         System::Com::{
             CLSCTX_ALL, COINIT_APARTMENTTHREADED, CoCreateInstance, CoInitializeEx, CoTaskMemFree,
@@ -18,11 +18,28 @@ use windows::{
             StructuredStorage::{PROPVARIANT, PropVariantClear, PropVariantToStringAlloc},
         },
         System::Performance::{QueryPerformanceCounter, QueryPerformanceFrequency},
+        System::Threading::{CreateEventW, WaitForSingleObject},
     },
     core::{GUID, PWSTR},
 };
 
 type Result<T> = std::result::Result<T, Box<dyn Error>>;
+struct CaptureEvent(HANDLE);
+impl CaptureEvent {
+    fn new() -> Result<Self> {
+        Ok(Self(unsafe { CreateEventW(None, false, false, None)? }))
+    }
+    fn wait(&self, timeout_ms: u32) -> Result<bool> {
+        match unsafe { WaitForSingleObject(self.0, timeout_ms) } {
+            WAIT_OBJECT_0 => Ok(true),
+            WAIT_TIMEOUT => Ok(false),
+            _ => Err(windows::core::Error::from_thread().into()),
+        }
+    }
+}
+impl Drop for CaptureEvent {
+    fn drop(&mut self) { unsafe { let _ = CloseHandle(self.0); } }
+}
 struct Com;
 impl Com {
     fn open() -> Result<Self> {
@@ -293,6 +310,21 @@ fn sample(bytes: &[u8], format: &Format) -> f64 {
         _ => unreachable!(),
     }
 }
+// Inspect the packet while WASAPI still owns it. Never retain the buffer pointer
+// or raw audio in a log; this separates driver data from mapping/decoding.
+fn raw_packet_summary(bytes: &[u8], format: &Format) -> serde_json::Value {
+    let mut peaks = vec![0.0f64; format.channels as usize];
+    let mut nonfinite = 0u64;
+    let width = (format.bits / 8) as usize;
+    for frame in bytes.chunks_exact(format.block_align as usize) {
+        for (channel, peak) in peaks.iter_mut().enumerate() {
+            let value = sample(&frame[channel * width..(channel + 1) * width], format);
+            if value.is_finite() { *peak = peak.max(value.abs()); } else { nonfinite += 1; }
+        }
+    }
+    serde_json::json!({"channel_peaks":peaks,"nonfinite_samples":nonfinite,
+        "nonzero_bytes":bytes.iter().filter(|byte|**byte != 0).count(),"bytes":bytes.len()})
+}
 fn db(value: f64) -> String {
     if value > 0.0 {
         format!("{:.1} dBFS", 20.0 * value.log10())
@@ -324,6 +356,13 @@ fn open_source(
     Vec<u8>,
     Input,
 )> {
+    open_source_with_event(root, endpoint, None)
+}
+fn open_source_with_event(
+    root: &Path,
+    endpoint: Option<&str>,
+    event: Option<HANDLE>,
+) -> Result<(Com, IAudioClient, IAudioCaptureClient, Format, Vec<u8>, Input)> {
     let _com = Com::open()?;
     let enumerator: IMMDeviceEnumerator =
         unsafe { CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL)? };
@@ -360,11 +399,14 @@ fn open_source(
     );
     unsafe {
         let flags = if input.flow == "playback" {
-            AUDCLNT_STREAMFLAGS_LOOPBACK
+            AUDCLNT_STREAMFLAGS_LOOPBACK | if event.is_some() { AUDCLNT_STREAMFLAGS_EVENTCALLBACK } else { 0 }
         } else {
             0
         };
         client.Initialize(AUDCLNT_SHAREMODE_SHARED, flags, 1_000_000, 0, mix.0, None)?;
+        if input.flow == "playback" {
+            if let Some(event) = event { client.SetEventHandle(event)?; }
+        }
     }
     let capture: IAudioCaptureClient = unsafe { client.GetService()? };
     if endpoint.is_none() {
@@ -399,6 +441,7 @@ pub struct CaptureProgress {
     signal_frames: u64,
     packet_peaks: [f32; 2],
     windows_endpoint_peak: Option<f32>,
+    windows_endpoint_peak_age_ms: Option<f64>,
     packets: u64,
     synthesized_silent_frames: u64,
     skipped_overlap_frames: u64,
@@ -451,6 +494,30 @@ fn validate_packet_timestamp(previous: Option<u64>, current: u64, timestamp_bad:
 mod gap_recovery_tests {
     use super::*;
     #[test]
+    fn capture_ready_event_is_auto_reset_and_idle_wait_is_bounded() {
+        let event = CaptureEvent::new().unwrap();
+        assert!(!event.wait(0).unwrap());
+        unsafe { windows::Win32::System::Threading::SetEvent(event.0).unwrap(); }
+        assert!(event.wait(20).unwrap());
+        assert!(!event.wait(0).unwrap());
+    }
+    #[test]
+    fn raw_summary_separates_channels_and_nonfinite_float_samples() {
+        let format = Format { rate: 48000, channels: 2, bits: 32, valid_bits: 32,
+            block_align: 8, channel_mask: 3, encoding: "float32".into() };
+        let bytes: Vec<u8> = [0.0f32, 0.75, -0.25, f32::NAN]
+            .into_iter().flat_map(f32::to_le_bytes).collect();
+        let summary = raw_packet_summary(&bytes, &format);
+        assert_eq!(summary["channel_peaks"], serde_json::json!([0.25, 0.75]));
+        assert_eq!(summary["nonfinite_samples"], 1);
+        assert_eq!(summary["bytes"], 16);
+        // Negative float zero has nonzero raw bytes but no audio signal.
+        let negative_zero: Vec<u8> = [-0.0f32, 0.0].into_iter().flat_map(f32::to_le_bytes).collect();
+        let summary = raw_packet_summary(&negative_zero, &format);
+        assert_eq!(summary["channel_peaks"], serde_json::json!([0.0, 0.0]));
+        assert_eq!(summary["nonzero_bytes"], 1);
+    }
+    #[test]
     fn short_gap_requires_consistent_clock_and_rejects_bad_timeline() {
         let previous = (0, 480, 1_000_000);
         assert_eq!(
@@ -498,7 +565,10 @@ pub fn live_selected_diagnosed(
     diagnostic_enabled: Option<&std::sync::atomic::AtomicBool>,
     mut sink: impl FnMut(&[f32], u32) -> Result<()>,
 ) -> Result<serde_json::Value> {
-    let (_com, client, capture, format, _blob, input) = open_source(root, endpoint)?;
+    // Created before the client so it stays valid until after client release.
+    let capture_event = CaptureEvent::new()?;
+    let (_com, client, capture, format, _blob, input) =
+        open_source_with_event(root, endpoint, Some(capture_event.0))?;
     let meter = if progress.is_some() && input.flow == "playback" {
         (|| -> Result<windows::Win32::Media::Audio::Endpoints::IAudioMeterInformation> {
             let enumerator: IMMDeviceEnumerator =
@@ -552,7 +622,9 @@ pub fn live_selected_diagnosed(
             QueryPerformanceFrequency(&mut diagnostic_frequency)?;
         }
         log(
-            serde_json::json!({"kind":"capture_start","input":input,"format":format,"qpc_frequency":diagnostic_frequency}),
+            serde_json::json!({"kind":"capture_start","input":input,"format":format,"qpc_frequency":diagnostic_frequency,
+                "capture_wait":if loopback {"wasapi_event"}else{"polling"},
+                "endpoint_buffer_frames":unsafe {client.GetBufferSize().ok()}}),
         );
     }
     let mut previous_packet: Option<(Instant, u64, u64)> = None;
@@ -561,6 +633,7 @@ pub fn live_selected_diagnosed(
     let diagnostics_active =
         || diagnostic_enabled.is_none_or(|flag| flag.load(std::sync::atomic::Ordering::Relaxed));
     let mut last_packet = Instant::now();
+    let mut loopback_ready = false;
     if seconds == 0 {
         println!("音频持续采集已开始；Ctrl+C 可正常停止。");
     } else {
@@ -570,14 +643,28 @@ pub fn live_selected_diagnosed(
         if seconds != 0 && started.elapsed() > Duration::from_secs(seconds + 2) {
             return Err("持续采集未在期限内收到完整音频".into());
         }
-        if unsafe { capture.GetNextPacketSize()? } == 0 {
+        // On a ready event drain every available packet before waiting again.
+        // A timeout only drives idle silence; it never authorizes a buffer read.
+        if loopback && !loopback_ready {
+            let idle_target = ((started.elapsed().as_secs_f64() - 0.04).max(0.0)
+                * format.rate as f64) as u64;
+            // Catch up idle silence without paying another wait per 10 ms block.
+            // Still check the event first so resumed audio wins over silence.
+            let timeout = if last_packet.elapsed() >= Duration::from_millis(40)
+                && frames < idle_target.min(target) { 0 } else { 20 };
+            loopback_ready = capture_event.wait(timeout)?;
+        }
+        let next_packet = if loopback && !loopback_ready { 0 } else {
+            unsafe { capture.GetNextPacketSize()? }
+        };
+        if next_packet == 0 {
+            loopback_ready = false;
             // Render engines can stop supplying packets when no app is playing.
             // Keep the sender clock running with intentional silence, leaving
             // 40 ms for engine delivery. Packet QPC timestamps trim overlap
             // when playback resumes so silence cannot duplicate real frames.
             if loopback {
                 if last_packet.elapsed() < Duration::from_millis(40) {
-                    thread::sleep(Duration::from_millis(2));
                     continue;
                 }
                 let expected =
@@ -602,7 +689,6 @@ pub fn live_selected_diagnosed(
                     timeline_silence = true;
                     continue;
                 }
-                thread::sleep(Duration::from_millis(2));
                 continue;
             }
             if last_packet.elapsed() > Duration::from_secs(1) {
@@ -626,6 +712,9 @@ pub fn live_selected_diagnosed(
                 Some(&mut qpc),
             )?;
         }
+        // AUDCLNT_S_BUFFER_EMPTY is a successful HRESULT with zero frames.
+        // Do not validate its unset timestamp or release a nonexistent packet.
+        if available == 0 { loopback_ready = false; continue; }
         if flags
             & (AUDCLNT_BUFFERFLAGS_TIMESTAMP_ERROR.0 as u32
                 | AUDCLNT_BUFFERFLAGS_DATA_DISCONTINUITY.0 as u32)
@@ -712,6 +801,7 @@ pub fn live_selected_diagnosed(
         if used > 0 {
             timeline_silence = false;
         }
+        let mut raw_summary = serde_json::Value::Null;
         buffer.clear();
         if flags & AUDCLNT_BUFFERFLAGS_SILENT.0 as u32 != 0 {
             silent_packets += 1;
@@ -721,6 +811,11 @@ pub fn live_selected_diagnosed(
                 return Err("B3 缓冲区为空".into());
             }
             if used > 0 {
+                if diagnostic.is_some() && diagnostics_active() {
+                    raw_summary = raw_packet_summary(unsafe {
+                        std::slice::from_raw_parts(pointer, available as usize * format.block_align as usize)
+                    }, &format);
+                }
                 let selected = mapping
                     .map(|m| *m.lock().unwrap())
                     .unwrap_or([0, if format.channels > 1 { 1 } else { 0 }]);
@@ -745,7 +840,7 @@ pub fn live_selected_diagnosed(
         }
         packet.release()?;
         let received = Instant::now();
-        let diagnostic_entry = diagnostic.as_ref().filter(|_|diagnostics_active()).map(|_| {
+        let mut diagnostic_entry = diagnostic.as_ref().filter(|_|diagnostics_active()).map(|_| {
             let mut hash = 0xcbf29ce484222325u64;
             let mut peaks = [0f32;2];
             for sample in &buffer {
@@ -765,7 +860,8 @@ pub fn live_selected_diagnosed(
                 "timestamp_delta_ms":previous_packet.map(|p|(qpc as i128-p.2 as i128) as f64/10000.0),
                 "available_frames":available,"used_frames":used,"skipped_frames":skip,
                 "prefix_silent_frames":prefix_silence,"flags":flags,"input_rate":format.rate,
-                "frames_before":frames,"peaks":peaks,"sample_fingerprint":format!("{hash:016x}")});
+                "frames_before":frames,"peaks":peaks,"sample_fingerprint":format!("{hash:016x}"),
+                "raw_packet":raw_summary,"mapping":mapping.map(|m|*m.lock().unwrap()).unwrap_or([0,if format.channels>1 {1}else{0}])});
             previous_packet = Some((received, device_position, qpc));
             entry
         });
@@ -788,11 +884,16 @@ pub fn live_selected_diagnosed(
                     }
                 }
             }
-            if meter_updated.is_none_or(|t| t.elapsed() >= Duration::from_secs(1)) {
+            if meter_updated.is_none_or(|t| t.elapsed() >= Duration::from_millis(100)) {
                 p.windows_endpoint_peak = meter
                     .as_ref()
                     .and_then(|m| unsafe { m.GetPeakValue().ok() });
                 meter_updated = Some(Instant::now());
+            }
+            p.windows_endpoint_peak_age_ms = meter_updated.map(|t| t.elapsed().as_secs_f64() * 1000.0);
+            if let Some(entry) = diagnostic_entry.as_mut() {
+                entry["windows_endpoint_peak"] = serde_json::json!(p.windows_endpoint_peak);
+                entry["windows_endpoint_peak_age_ms"] = serde_json::json!(p.windows_endpoint_peak_age_ms);
             }
             if flags & AUDCLNT_BUFFERFLAGS_DATA_DISCONTINUITY.0 as u32 != 0 {
                 p.discontinuities += 1;

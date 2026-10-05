@@ -50,7 +50,7 @@ impl Default for Settings {
             capture_diagnostics: false,
             close_action: "tray".into(),
             speakers_swapped: false,
-            keep_awake: false,
+            keep_awake: true,
         }
     }
 }

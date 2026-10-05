@@ -9,3 +9,35 @@
 .source-levels{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:18px;font-weight:400}.source-levels .meter{margin:4px 0;min-width:0}
 
 .settings-tabs{display:flex;gap:6px;border-bottom:1px solid var(--line);margin-bottom:20px;padding-bottom:10px;flex-wrap:wrap}.settings-tabs button{border:0;background:transparent;color:var(--muted);padding:9px 18px}.settings-tabs button.current{background:var(--selected);color:var(--accent);font-weight:600}
+/* Main content scrolls independently of the permanent audio controls. */
+.shell{display:flex;flex-direction:column;height:100vh;width:100%;min-height:0}
+.shell main{flex:1;min-height:0;width:100%;max-width:none;margin:0;padding:32px 28px 16px;height:auto}
+.shell header{padding-right:160px;min-height:65px;margin-bottom:25px}
+.heading{display:flex;align-items:center;gap:14px;position:relative;z-index:11}
+.heading h1{margin-bottom:5px}
+.heading p{font-size:12px}
+.back-play{display:grid;place-items:center;padding:8px;border:0;background:transparent}
+.back-play svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
+.window-drag{left:0;right:172px;height:30px}
+.window-buttons{right:10px;top:12px}
+.window-buttons button.active{background:var(--selected);color:var(--accent)}
+.audio-dock{flex:0 0 auto;background:var(--surface);border-top:1px solid var(--line);padding:18px 28px;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:22px;align-items:center;position:relative;z-index:30}
+.dock-source{min-width:0}
+.dock-source>label{font-size:12px;font-weight:400;color:var(--muted);margin-bottom:7px}
+.source-picker{position:relative}
+.source-trigger{position:relative;width:100%;display:flex;align-items:center;justify-content:space-between;gap:16px;text-align:left;padding:10px 14px 13px;background:var(--subtle);overflow:hidden}
+.source-trigger>span:first-child{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.source-trigger svg{width:16px;height:16px;flex-shrink:0;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round}
+.source-total-meter{position:absolute;bottom:0;left:0;right:0;height:3px;background:var(--line);pointer-events:none}
+.source-total-meter i{display:block;height:100%;background:#32a781;transition:width .12s}
+.source-format{display:flex;justify-content:space-between;gap:16px;margin-top:6px;font-variant-numeric:tabular-nums}
+.source-format small:last-child{white-space:nowrap}
+.source-notice{display:block;overflow-wrap:anywhere;margin-top:4px}
+.dock-actions{display:flex;gap:8px;align-items:center}
+.source-popup{position:absolute;left:0;right:0;bottom:calc(100% + 8px);max-height:min(400px,60vh);overflow:auto;background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:8px;box-shadow:0 6px 22px #0003;scrollbar-width:none}
+.source-popup::-webkit-scrollbar{width:0}
+.source-group{display:block;padding:8px 10px}
+.source-popup button{display:flex;justify-content:space-between;gap:12px;text-align:left;width:100%;border:0;background:transparent;overflow-wrap:anywhere}
+.source-popup button[aria-pressed=true]{background:var(--selected);color:var(--accent)}
+.source-dismiss{position:fixed;inset:0;z-index:25;background:transparent}
+@media(max-width:650px){.shell main{padding:26px 16px 12px}.audio-dock{padding:14px 16px;gap:12px;grid-template-columns:minmax(0,1fr)}.dock-actions{justify-content:flex-end}.shell header{padding-right:155px}.heading{gap:6px}.heading h1{font-size:21px}.window-drag{left:0}.volume{gap:9px}.device-row{grid-template-columns:18px minmax(0,1fr) 65px 16px;gap:8px}.device-row .speaker{display:none}.device-row .badge{width:65px}}

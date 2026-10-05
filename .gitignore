@@ -3,6 +3,7 @@
 /environment-check/
 /dist/
 /snapshot-backups/
+/.local/
 target/
 node_modules/
 /desktop/dist/
