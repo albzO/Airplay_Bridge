@@ -8,6 +8,12 @@
 - `upstream/` 是固定版本第三方子模块。修改适配优先在 `airplay-backend/` 完成，不直接编辑 `build/` 中的生成文件。更新依赖提交应单独提交，并更新第三方记录；不要把第三方源码作为普通文件提交到本仓库。
 - 保留 Rust 和 pnpm 锁文件。依赖升级与功能修改尽量分开。
 - 不提交设备清单、密码、录音、日志、构建产物或个人工具路径。
+- 沿用现有命名和注释习惯，关键边界、退出顺序和兼容处理补充简短中文注释。说明原因，避免逐行重复代码含义。
+- 文件按外部导入、本地导入、常量与类型、状态、辅助方法、入口与生命周期、测试排列；依赖初始化顺序优先于机械排序。
+- 前端使用 2 空格、单引号、分号和约 100 列换行；Rust 使用 rustfmt。不要将第三方或生成文件纳入统一格式化。
+- `.editorconfig` 与 `.gitattributes` 统一文本编码、缩进和 LF 换行；图片保持二进制内容。
+- 通用数据类型放在 `src/types.ts`，桌面命令错误转换放在 `src/commands.ts`；设置校验与持久化放在 `src-tauri/src/settings.rs`，窗口行为放在 `window.rs`。
+- 日志在落盘和展示日志前脱敏；真实设备数据只用于发现、选择和控制。凭据不要加入日志、进程参数、配置文件或发布包。
 - 界面修改应检查浅色/深色、最小窗口尺寸、键盘交互和托盘状态。
 
 ## 验证
@@ -15,6 +21,14 @@
 根据改动范围选择检查，命令均在仓库根目录执行：
 
 ```powershell
+# 当前源码及待新增文件的敏感数据规则检查；输出仅包含位置与规则名
+python scripts/check-sensitive-data.py
+
+# 排版检查；首次安装工具依赖时使用锁文件
+pnpm --dir airplay-frontend format:check
+cargo fmt --manifest-path airplay-core/Cargo.toml --check
+cargo fmt --manifest-path airplay-frontend/src-tauri/Cargo.toml --check
+
 # Rust 音频库测试，不连接实际接收端
 cargo test --manifest-path airplay-core/Cargo.toml --locked --offline --lib
 
@@ -29,6 +43,10 @@ cargo check --manifest-path airplay-frontend/src-tauri/Cargo.toml --locked --off
 ```
 
 协议相关的模拟检查位于 `airplay-backend/tests/`。这些检查和编译通过都不能替代实机播放验证。音频修改请说明设备、来源、驱动、格式、提前量、Buffer、测试时长及实际听感；不要为了普通布局调整重复长测。
+
+模拟检查需要 Python `cryptography`。如需检查新构建的后端而保留现有发行包，可设置 `$env:AIRPLAY_TEST_BACKEND` 为后端的绝对路径，再运行 `check_auth.py` 和 `check_gui_pipe.py`；检查完成后清除该变量。不设置时仍使用 `dist/runtime/airplay-backend.exe`。
+
+敏感数据检查使用少量明确规则，不是完整凭据扫描器。`--history` 只读检查所有本地历史提交；封存快照或第三方历史示例命中规则时需人工判断，不因此改写历史。当前源码和历史结果应分别记录。
 
 ## 提交问题或改动
 

@@ -90,8 +90,14 @@ mod tests {
         let base = base();
         assert_eq!(portable_root(&base.join("airplay-bridge.exe")), None);
         fs::write(base.join("portable.flag"), b"").unwrap();
-        assert_eq!(portable_root(&base.join("airplay-bridge.exe")), Some(base.clone()));
-        assert_eq!(portable_root(&base.join("tools/homepod-test.exe")), Some(base.clone()));
+        assert_eq!(
+            portable_root(&base.join("airplay-bridge.exe")),
+            Some(base.clone())
+        );
+        assert_eq!(
+            portable_root(&base.join("tools/homepod-test.exe")),
+            Some(base.clone())
+        );
         assert_eq!(portable_root(&base.join("other/test.exe")), None);
         assert!(!base.join("data").exists());
         fs::remove_file(base.join("portable.flag")).unwrap();
