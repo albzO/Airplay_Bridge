@@ -1,4 +1,7 @@
-//! One WASAPI owner. Attaching a stream never closes or reopens capture.
+//! 持续采集来源：一个 Source 独占一条 WASAPI 采集线程。
+//! 同一来源同时提供页面预览和一个串流订阅；连接/断开订阅不重启采集。
+//! 采集线程不能等待网络或磁盘。音频通过有界队列交付，积压时报告故障，
+//! 防止内存无限增长；诊断队列允许丢记录，并在收尾报告丢弃数量。
 use crate::capture::{self, CaptureProgress};
 use serde_json::{Value, json};
 use std::{
@@ -18,6 +21,8 @@ enum Event {
     Audio(Vec<f32>, u32, CaptureProgress, Instant),
 }
 #[derive(Default)]
+/// 稳定性看数据包连续到达，不看振幅：系统在空闲时生成的静音也算有效数据。
+/// 故障或包间隔超过 250 ms 会重置连续窗口；500 ms 稳定且至少 3 包才可连接。
 struct Warmup {
     since: Option<Instant>,
     last: Option<Instant>,
@@ -398,8 +403,8 @@ impl Source {
     pub fn is_running(&self) -> bool {
         !self.done.load(Ordering::Acquire)
     }
-    /// Require continuous capture delivery before any network handshake.
-    /// WASAPI's intentional idle silence is valid; amplitude is never a readiness test.
+    /// 网络握手前等待连续采集稳定，最多等待 8 秒；取消和采集线程故障立即返回。
+    /// 静音不是故障，不能以“有声音”作为就绪条件，否则无声来源永远无法连接。
     pub fn wait_ready(&self, cancelled: &AtomicBool) -> Result<()> {
         let started = Instant::now();
         loop {
@@ -426,12 +431,17 @@ impl Source {
             thread::sleep(Duration::from_millis(20));
         }
     }
+    /// 结束整个采集线程并等待退出；只在切换来源、关闭采集或退出应用时调用。
     pub fn stop(&self) {
         self.stop.store(true, Ordering::Relaxed);
         if let Some(worker) = self.worker.lock().unwrap().take() {
             let _ = worker.join();
         }
     }
+    /// 订阅后续采集数据，sink 接收交错排列的 float32 左右声道及来源采样率。
+    /// 仅允许一个订阅者；64 个音频块的队列与 1024 条诊断队列各自限量。
+    /// stop 只结束本次订阅，保留来源线程；统计以挂接时的计数作基线，避免把
+    /// 连接前预览阶段的故障算进本次报告。sink 出错也会先解除订阅再返回。
     pub fn consume(
         &self,
         stop: &AtomicBool,

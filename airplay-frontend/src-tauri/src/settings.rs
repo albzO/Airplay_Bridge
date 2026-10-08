@@ -1,14 +1,21 @@
 //! 设置的数据结构、输入校验与持久化。
+//! serde 使用 camelCase 与前端对齐；缺少新字段时使用 Default，便于读取旧配置。
+//! 文件内容损坏或值越界时回退整份默认配置；写入前校验，避免覆盖有效设置。
 use serde::{Deserialize, Serialize};
 use std::{fs, path::Path};
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub(crate) struct Settings {
+    /// Windows 音频端点标识；空字符串表示尚未选择来源。
     pub endpoint: String,
+    /// 接收端播放提前量，单位 ms，合法范围 250–2000。
     pub latency: u32,
+    /// 后端预缓冲时长，单位 ms，合法范围 64–512；不是控制器直接设定值。
     pub buffer: u32,
+    /// 输出左右声道对应的来源下标，从 0 开始；单声道可映射为 [0, 0]。
     pub mapping: [usize; 2],
+    /// 详细协议日志和采集诊断分别控制，普通播放不需要打开全部高频日志。
     pub detailed_logs: bool,
     pub capture_diagnostics: bool,
     pub close_action: String,
@@ -44,6 +51,7 @@ impl Settings {
         Ok(())
     }
 
+    /// 路径由数据目录模块决定；设置文件只包含偏好，不保存密码或设备凭据。
     pub fn load(root: &Path) -> Self {
         fs::read(root.join("settings.json"))
             .ok()

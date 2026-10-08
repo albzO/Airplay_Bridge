@@ -1,4 +1,7 @@
-//! Log-only redaction. Control messages and device discovery retain real values.
+//! 日志和报告脱敏。控制消息及设备发现保留真实标识，不能用日志别名连接设备。
+//! text 处理协议文本和系统路径，value 递归处理 JSON，并优先屏蔽敏感字段值。
+//! 先替换本次已知设备，再兜底识别陌生地址/凭据；数值统计和时长保持可诊断。
+//! 分享旧日志或历史提交时仍需单独检查：本模块不会改写过去已经保存的数据。
 use crate::discovery::Device;
 use serde_json::Value;
 use std::{net::IpAddr, path::Path};
@@ -211,17 +214,18 @@ impl Redactor {
             .sort_by_key(|(from, _)| std::cmp::Reverse(from.len()));
         result
     }
+    /// 用于落盘/显示的副本；原始协议行仍可在内部解析，避免脱敏破坏控制标记。
     pub fn text(&self, text: &str) -> String {
         let mut result = text.to_owned();
-        // A raw failed-response body may encode names/keys as hex. Keep its
-        // length and status, but not bytes that a plain-text filter cannot see.
+        // 失败响应体可能用十六进制编码名称/密钥，普通文本替换看不到原值。
+        // 保留长度和状态，仅丢弃原始 body 字节。
         if let Some(start) = result.find(" | body[") {
             if let Some(end) = result[start..].find("]=") {
                 result.truncate(start + end + 2);
                 result.push_str("[REDACTED]");
             }
         }
-        // Paths are not useful identifiers and can expose account/project names.
+        // 用户目录及主机名会暴露账户/项目环境；日志诊断无需这些真实名称。
         for key in ["APPDATA", "LOCALAPPDATA", "USERPROFILE"] {
             if let Some(path) = std::env::var_os(key) {
                 let path = path.to_string_lossy();
@@ -261,6 +265,7 @@ impl Redactor {
         }
         redact_identifiers(&redact_fields(&result))
     }
+    /// 返回新 JSON，保留结构；敏感字段整体隐藏（包括嵌套对象），不改变原值。
     pub fn value(&self, value: &Value) -> Value {
         match value {
             Value::Object(fields) => Value::Object(

@@ -1,4 +1,8 @@
 #![windows_subsystem = "windows"]
+//! 桌面入口：接收 Tauri 命令，管理一份持续采集来源和至多一个播放会话。
+//! 页面不直接启动原生后端；此处校验设置、设备和声道，再委托 live::run_gui。
+//! 命令返回与工作线程事件是两条异步通道，所有 stream-event 都附带会话 id。
+//! 修改入口时同时核对前端 types.ts/protocol.ts，退出逻辑见 window.rs。
 mod auth;
 mod auth_memory;
 mod awake;
@@ -30,13 +34,17 @@ use tauri::{
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
 };
 use window::{quit, reveal, window_action};
-// 会话与音频来源共用状态；窗口操作和设置持久化分别放在独立模块。
+/// 一个播放会话持有控制标志和密码回复通道，不拥有持续采集线程。
+/// hosts 是已校验的目标地址，用于拒绝发给其他设备的密码回复。
 struct Session {
     id: u64,
     control: Arc<GuiControl>,
     reply: Sender<auth::Reply>,
     hosts: Vec<String>,
 }
+/// 应用级共享状态。Mutex 保护可替换对象；AtomicBool 用于跨线程快速通知。
+/// session 的 Some 同时充当连接/播放占用标志，直到工作线程收尾才清除。
+/// source 可以在 session 为 None 时继续运行，为页面提供音量预览。
 struct Engine {
     root: PathBuf,
     backend: PathBuf,
@@ -55,6 +63,8 @@ fn stop_source(e: &Engine) {
         source.stop();
     }
 }
+/// 同端点且线程健康时只更新声道映射，避免每次连接都重开 WASAPI。
+/// 切换端点时先等待旧线程退出再创建新来源，保证不会同时占用两份采集资源。
 fn ensure_source(app: tauri::AppHandle, e: &Engine) -> Result<Arc<Source>, String> {
     if e.quitting.load(Ordering::Relaxed) {
         return Err("应用正在退出".into());
@@ -259,6 +269,8 @@ fn start_stream(
         .unwrap()
         .as_millis() as u64;
     let control = Arc::new(GuiControl::new(settings.mapping));
+    // 将底层无会话编号的事件封装到本次 id；页面据此排除旧线程的延迟事件。
+    // 认证记忆只保存“设备需要密码”的策略，不保存输入的密码。
     let event_app = app.clone();
     let event_engine = e.clone();
     let emit: GuiEmitter = Arc::new(move |mut event| {
@@ -300,6 +312,7 @@ fn start_stream(
         reply: server.replies.clone(),
         hosts,
     });
+    // 会话登记完成后释放锁，工作线程收尾和 stop_stream 都需要访问这把锁。
     drop(active);
     thread::spawn(move || {
         emit(json!({"kind":"preparing_source"}));
@@ -339,6 +352,8 @@ fn start_stream(
                 );
             }
         }
+        // 先结束密码管道及其线程，再释放会话占用，最后通知页面 finished。
+        // 此处不 stop_source：播放停止后还要继续显示当前来源的采集预览。
         drop(server);
         let mut session = e.session.lock().unwrap();
         if session.as_ref().map(|s| s.id) == Some(id) {

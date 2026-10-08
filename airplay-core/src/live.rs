@@ -1,4 +1,8 @@
-//! Finite live bridge: capture -> stateful converter -> bounded queue -> pipe.
+//! 实时串流桥接：采集 → 有状态重采样 → 有界 PCM 队列 → 原生后端管道。
+//! GUI 订阅持续 Source；CLI 使用自身采集流程，二者共用转换和协议调度。
+//! 输出为 44.1 kHz、16 位、立体声 PCM；帧数每秒为 44100，字节数每秒为 176400。
+//! 后端的 QPC 播放计划作为时基，控制器按缓冲水位微调采样率，避免长期时钟漂移。
+//! 音频写管道、读协议日志、写诊断文件各自在线程中执行，不能阻塞采集回调。
 use crate::{capture, convert::Converter, discovery::Device, drift::Controller};
 use std::os::windows::process::CommandExt;
 use std::{
@@ -20,6 +24,8 @@ use windows::{
     core::BOOL,
 };
 pub type GuiEmitter = Arc<dyn Fn(serde_json::Value) + Send + Sync>;
+/// 页面命令与串流工作线程共用的控制面；音频数据不经这里传输。
+/// mapping/volume 需要成组读写，使用 Mutex；停止及左右互换用原子标志通知。
 pub struct GuiControl {
     pub stop: Arc<AtomicBool>,
     pub mapping: Mutex<[usize; 2]>,
@@ -49,8 +55,8 @@ pub struct GuiContext {
     pub emit: GuiEmitter,
 }
 
-// Disk writes never run on the capture callback. Bounded logging cannot
-// consume unlimited memory if the disk stalls during a long test.
+// 磁盘写入移到独立线程：慢磁盘不能拖住采集，也不能让长测日志无限占用内存。
+// 队列满时计数 dropped；finish 等待已入队记录落盘，报告保留丢记录信息。
 struct DetailLog {
     tx: mpsc::SyncSender<serde_json::Value>,
     dropped: AtomicU64,

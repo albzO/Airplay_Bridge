@@ -1,3 +1,7 @@
+//! GUI 与原生后端之间的密码管道。密码仅在本次请求内存和管道中传递。
+//! 后端先发送主机名（u32 小端字节长度 + UTF-8），再读取同格式的密码回复。
+//! 当前用户和 SYSTEM 可访问；拒绝远程客户端，并要求首次创建以防管道被抢占。
+//! Server 销毁时取消阻塞 I/O 并等待线程退出；Reply 销毁时清理剩余密码字节。
 use homepod_test::live::GuiEmitter;
 use std::{
     fs::File,
@@ -54,6 +58,8 @@ pub struct Server {
     thread: Option<thread::JoinHandle<()>>,
 }
 impl Server {
+    /// hosts 是本次会话已选择的设备地址白名单；未经选择的请求不能弹出密码框。
+    /// stop 与播放线程共用，停止播放也会取消等待密码的流程。
     pub fn start(
         name: String,
         stop: Arc<AtomicBool>,

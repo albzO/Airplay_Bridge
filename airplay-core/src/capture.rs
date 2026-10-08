@@ -1,4 +1,8 @@
-//! Shared-mode recording endpoint capture and playback endpoint loopback.
+//! Windows WASAPI 共享模式采集，兼容录音输入及播放端点 loopback。
+//! enumerate 读取端点和格式；实时采集将来源声道映射为交错 float32 立体声，
+//! 后续重采样和网络发送见 convert/live，持续线程与预览生命周期见 source。
+//! 所有 COM 和系统分配资源用 Drop 配对释放；取得音频包后必须 ReleaseBuffer，
+//! 即使转换途中返回错误也不能跳过，否则设备缓冲区会被占住。
 use serde::{Deserialize, Serialize};
 use std::{
     error::Error,
@@ -89,6 +93,8 @@ impl Drop for Running<'_> {
         }
     }
 }
+/// 音频包借用守卫。显式 release 先清空 frames，防止 Drop 重复释放；
+/// 中途出错时 Drop 自动归还未释放包，不转移 WASAPI 提供的底层指针所有权。
 struct Packet<'a> {
     client: &'a IAudioCaptureClient,
     frames: u32,
@@ -240,6 +246,8 @@ pub fn enumerate() -> Result<Vec<Input>> {
 }
 
 #[derive(Clone, Serialize, Deserialize)]
+/// 原始设备格式。bits 是每采样存储位宽，valid_bits 是有效位数，
+/// block_align 是一帧全部声道的字节数；不可把声道数或位宽直接当成帧数。
 pub struct Format {
     pub(crate) rate: u32,
     pub(crate) channels: u16,

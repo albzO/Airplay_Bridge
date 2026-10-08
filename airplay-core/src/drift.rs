@@ -1,5 +1,7 @@
-//! Slow PI servo on total unsent PCM, including Rust queue and OS pipe.
-//! Positive water error reduces output/input ratio (negative ppm correction).
+//! 缓慢的 PI 时钟漂移控制，输入是整条管线的 PCM 水位（ms），包括队列和管道。
+//! 前 5 次更新以实际启动深度建立基准，避免把滤波器/分包相位误认为时钟漂移。
+//! 水位偏高意味着输出太快，返回负 ppm 减少输出/输入比例；偏低则反向调整。
+//! 校正幅度限制 ±800 ppm，变化速度限制每秒 20 ppm，避免把包抖动变成突变。
 use serde::Serialize;
 #[derive(Serialize)]
 pub struct Controller {
@@ -27,11 +29,12 @@ impl Controller {
             saturated_updates: 0,
         }
     }
+    /// dt 是本次更新间隔（秒），返回相对采样率修正量（ppm），传给 Converter。
     pub fn update(&mut self, water_ms: f64, dt: f64) -> f64 {
         self.updates += 1;
         self.min_water_ms = self.min_water_ms.min(water_ms);
         self.max_water_ms = self.max_water_ms.max(water_ms);
-        // Preserve the actual startup depth, including fixed packet/filter phase.
+        // 启动预缓冲和滤波器延迟已体现在真实水位中，保留它而非强行追固定数值。
         if self.updates <= 5 {
             self.warmup_sum += water_ms;
             self.target_ms = self.warmup_sum / self.updates as f64;
@@ -43,7 +46,7 @@ impl Controller {
         let error = self.filtered_ms - self.target_ms;
         let proposed = (self.integral_ppm - 0.2 * error * dt).clamp(-800.0, 800.0);
         let raw = -20.0 * error + proposed;
-        // Anti-windup: only integrate at a limit if it moves toward the interior.
+        // 抗积分饱和：达到限幅后只允许把修正量拉回范围内的积分继续累积。
         if raw.abs() < 800.0 || raw * (proposed - self.integral_ppm) < 0.0 {
             self.integral_ppm = proposed;
         }

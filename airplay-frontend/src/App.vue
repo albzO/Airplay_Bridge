@@ -1,12 +1,31 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, nextTick, watch } from 'vue';
+import { computed, onMounted, onUnmounted, ref, shallowRef, nextTick, watch } from 'vue';
 import { getVersion } from '@tauri-apps/api/app';
 import { listen } from '@tauri-apps/api/event';
 import { invokeCommand } from './commands';
 import { describeError } from './errors';
-import type { Device, AudioFormat, Input, Settings } from './types';
+import {
+  decodeDevices,
+  decodeInitialization,
+  decodeSourceLevel,
+  decodeStreamEvent,
+} from './protocol';
+import type {
+  Device,
+  AudioFormat,
+  Input,
+  Settings,
+  SessionReport,
+  StreamEvent,
+  Telemetry,
+} from './types';
 
-// 页面状态与派生数据。
+/**
+ * 阅读顺序：页面状态 → computed 设备/来源视图 → 用户操作 → event → onMounted。
+ * 音频采集和协议连接由桌面端负责；页面只发送命令并显示经过校验的事件。
+ * 命令成功表示请求已被接受，是否开始播放、是否结束要以异步事件为准。
+ */
+// 设置是下一次连接的配置；activeDetailedLogs/activeDiagnostics 是本次会话的快照。
 const authNotice = ref('');
 const appVersion = ref('');
 const displayVersion = computed(() => appVersion.value.replace(/^(\d+\.\d+)\.0$/, '$1'));
@@ -42,13 +61,17 @@ const selection = ref<string[]>([]),
   ready = ref(false),
   phase = ref('尚未连接'),
   error = ref('');
+// busy 覆盖准备、认证和播放；playing 收到遥测后置真；stopping 等 finished 才清除。
+// connected 仅表示原生后端已完成握手（PCM_READY），并不保证已经收到音频遥测。
 const session = ref<number | null>(null),
   pending = ref(''),
   password = ref(''),
   sending = ref(false),
   connected = ref(false);
-const telemetry = ref<any>({}),
-  report = ref<any>({}),
+// 连接前没有遥测，保留空快照让界面显示“—”；报告只在串流收尾时到达。
+const telemetry = ref<Partial<Telemetry>>({}),
+  // 报告按整份快照替换，不修改内部字段；无需把任意深度 JSON 转为响应式代理。
+  report = shallowRef<SessionReport>({}),
   stats = ref<Record<string, Record<string, string>>>({}),
   technical = ref<Record<string, string>>({}),
   logs = ref<string[]>([]),
@@ -69,6 +92,7 @@ const deviceStates = ref<Record<string, string>>({}),
   lastPasswordHost = ref(''),
   retry = ref(false),
   retrySending = ref(false);
+// sessionStats 保存后端本次累计计数，stats 累加每次增量，避免重连后重复计入。
 const sessionStats = ref<Record<string, Record<string, string>>>({});
 const statsNames = ref<Record<string, string>>({});
 const statsRows = computed(() =>
@@ -90,6 +114,8 @@ const sourceLineWidth = computed(() =>
 );
 const source = computed(() => inputs.value.find((i) => i.id === settings.value.endpoint));
 const cards = computed(() => {
+  // 配对卡片和单设备卡片同时保留；仅同 tsid 且恰好两台时生成立体声卡片。
+  // igl 主设备排在前面；“左右互换”控制实际声道顺序，不修改发现结果。
   const list: { id: string; members: Device[]; title: string }[] = [];
   const groups = new Map<string, Device[]>();
   for (const d of devices.value) {
@@ -240,7 +266,7 @@ function enterPassword(e: KeyboardEvent) {
   }
 }
 
-function num(v: any, d = 1) {
+function num(v: unknown, d = 1) {
   return typeof v === 'number' && Number.isFinite(v) ? v.toFixed(d) : '—';
 }
 
@@ -271,6 +297,7 @@ async function awakeChanged() {
 }
 
 async function sourceChanged() {
+  // 换来源后旧声道下标可能越界，先恢复合法映射，再保存并启动该端点的预览。
   previewPeaks.value = [0, 0];
   previewError.value = '';
   sourceWarning.value = '';
@@ -298,14 +325,23 @@ function choose(card: (typeof cards.value)[number]) {
 async function refresh() {
   refreshing.value = true;
   error.value = '';
-  const d = await call<Device[]>('discover_devices');
-  if (d) {
-    devices.value = d;
-    if (!chosen.value) selection.value = [];
+  try {
+    const d = await call<unknown>('discover_devices');
+    if (d !== undefined) {
+      devices.value = decodeDevices(d);
+      if (!chosen.value) selection.value = [];
+    }
+  } catch (e) {
+    error.value = String(e);
+  } finally {
+    refreshing.value = false;
   }
-  refreshing.value = false;
 }
 
+/**
+ * 先清空本次会话的快照，再请求桌面线程启动。密码重试会建立新会话，
+ * 暂存输入直到新会话再次发出 password_required，随后立即提交并清空。
+ */
 async function start(passwordFirst = false) {
   activeDiagnostics.value = settings.value.captureDiagnostics;
   diagnosticLogs.value = [];
@@ -342,10 +378,14 @@ async function start(passwordFirst = false) {
     phase.value = '连接失败';
     deviceStates.value[attemptCard.value] = 'red';
     retrySending.value = false;
-  } else if (session.value === null) session.value = id;
+  } else {
+    // 工作线程可能在命令返回前发事件；event 已认领 id 时不能再次覆盖它。
+    if (session.value === null) session.value = id;
+  }
 }
 
 async function stop() {
+  // 停止是异步请求：禁用遥测更新，但让 finished 负责最终状态和失败信息。
   stopping.value = true;
   phase.value = '正在停止';
   password.value = '';
@@ -356,6 +396,7 @@ async function stop() {
 async function submit() {
   if (!pending.value || !password.value || sending.value) return;
   if (retry.value && !busy.value) {
+    // 密码失败后旧会话已经结束，不能把密码发给旧 session_id。
     retrySending.value = true;
     await start(true);
     return;
@@ -406,8 +447,9 @@ async function swap() {
   }
 }
 
-function event(e: any) {
-  // 旧会话的延迟回调不能覆盖当前状态。
+/** 仅接收 protocol.ts 已验证的事件；kind 收窄后只能读取该事件拥有的字段。 */
+function event(e: StreamEvent) {
+  // 新会话启动后旧线程可能仍有排队事件；先按 id 过滤，防止旧 finished 关闭新播放。
   if (session.value !== null && e.session_id !== session.value) return;
   if (session.value === null && busy.value) session.value = e.session_id;
   if (e.kind === 'preparing_source') {
@@ -450,6 +492,8 @@ function event(e: any) {
   if (e.kind === 'diagnostic_end')
     diagnosticLogs.value.push('诊断结束：' + JSON.stringify(e.status));
   if (e.kind === 'native') {
+    // 原始协议行用于识别标记；展示日志优先用桌面端脱敏后的 safe_line。
+    // 不对脱敏文本解析 host，否则多个设备别名会破坏计数归属。
     const line = String(e.line);
     if (e.is_fault || activeDetailedLogs.value) {
       logs.value.push(String(e.safe_line || line));
@@ -469,6 +513,7 @@ function event(e: any) {
         'rtx_resent',
         'rtx_expired',
       ]) {
+        // 后端发送累计计数；首次从 0 算增量，下降按 0 处理，避免出现负统计。
         const value = Number(f[key]);
         if (Number.isFinite(value)) {
           total[key] = String(
@@ -506,6 +551,7 @@ function event(e: any) {
     }
   }
   if (e.kind === 'finished') {
+    // finished 是本次会话唯一收尾入口；仍保留最后的遥测和报告供用户诊断。
     password.value = '';
     busy.value = false;
     playing.value = false;
@@ -535,7 +581,7 @@ function event(e: any) {
   }
 }
 
-// 所有状态就绪后注册监听；初始化桌面数据与设备清单。
+// 响应式监听只协调页面；桌面事件在 onMounted 注册，并在卸载时统一释放。
 watch(
   theme,
   (value) => {
@@ -547,7 +593,27 @@ watch(
 
 systemTheme.addEventListener('change', applyTheme);
 
-onUnmounted(() => systemTheme.removeEventListener('change', applyTheme));
+const unlisteners: (() => void)[] = [];
+let disposed = false;
+onUnmounted(() => {
+  disposed = true;
+  systemTheme.removeEventListener('change', applyTheme);
+  unlisteners.forEach((unlisten) => unlisten());
+});
+
+// 监听注册是异步的：若组件先卸载，返回的监听必须立即释放，避免回调重复累积。
+async function registerListener(name: string, handler: (payload: unknown) => void) {
+  const unlisten = await listen<unknown>(name, (e) => {
+    if (disposed) return;
+    try {
+      handler(e.payload);
+    } catch (e) {
+      error.value = String(e);
+    }
+  });
+  if (disposed) unlisten();
+  else unlisteners.push(unlisten);
+}
 
 watch(pending, () => {
   if (pending.value) void focusPassword();
@@ -564,20 +630,27 @@ watch(busy, () => (sourceOpen.value = false));
 onMounted(async () => {
   try {
     appVersion.value = await getVersion();
-    await listen('stream-event', (e) => event(e.payload));
-    await listen<any>('source-level', (e) => {
-      if (e.payload.endpoint === settings.value.endpoint) {
-        if ('captureEnabled' in e.payload) captureEnabled.value = e.payload.captureEnabled;
-        if (e.payload.peaks) previewPeaks.value = e.payload.peaks;
-        if ('error' in e.payload) previewError.value = e.payload.error || '';
-        if (e.payload.warning) {
-          sourceWarning.value = e.payload.warning;
-          logs.value.push('[WARN] ' + e.payload.warning);
+    // 先订阅再 initialize/monitor_source，避免错过初始化期间的采集事件。
+    await registerListener('stream-event', (payload) => {
+      const decoded = decodeStreamEvent(payload);
+      if (decoded) event(decoded);
+    });
+    await registerListener('source-level', (payload) => {
+      const e = decodeSourceLevel(payload);
+      // 旧来源切换过程中可能还有回调，只更新当前选中端点。
+      if (e.endpoint === settings.value.endpoint) {
+        if (e.captureEnabled !== undefined) captureEnabled.value = e.captureEnabled;
+        if (e.peaks) previewPeaks.value = e.peaks;
+        if (e.error !== undefined) previewError.value = e.error || '';
+        if (e.warning) {
+          sourceWarning.value = e.warning;
+          logs.value.push('[WARN] ' + e.warning);
           if (logs.value.length > 300) logs.value.shift();
         }
       }
     });
-    const s = await invokeCommand<any>('initialize');
+    const s = decodeInitialization(await invokeCommand<unknown>('initialize'));
+    if (disposed) return;
     devices.value = s.devices;
     inputs.value = s.inputs;
     settings.value = s.settings;
@@ -788,7 +861,7 @@ onMounted(async () => {
             <dt>协议提前量</dt>
             <dd>{{ telemetry.lead_ms ?? '—' }} ms</dd>
             <dt>估计发送端延迟</dt>
-            <dd>{{ num(telemetry.lead_ms + telemetry.water_ms) }} ms</dd>
+            <dd>{{ num((telemetry.lead_ms ?? NaN) + (telemetry.water_ms ?? NaN)) }} ms</dd>
             <dt>采集不连续 / 时间戳错误</dt>
             <dd>
               {{ report.capture?.discontinuities ?? '停止后汇总' }} /

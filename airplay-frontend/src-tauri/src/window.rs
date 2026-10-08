@@ -14,6 +14,9 @@ pub(crate) fn reveal(app: &tauri::AppHandle) {
         let _ = w.set_focus();
     }
 }
+/// 托盘和窗口共用的退出入口。swap 保证重复点击不会启动多个退出线程。
+/// 先通知串流停止，再释放防休眠、停止采集，等会话及密码管道收尾后退出进程。
+/// 等待放在后台线程中，避免主窗口线程卡住，阻碍收尾事件和界面响应。
 pub(crate) fn quit(app: &tauri::AppHandle) {
     let engine = app.state::<Arc<Engine>>().inner().clone();
     if engine.quitting.swap(true, Ordering::SeqCst) {
