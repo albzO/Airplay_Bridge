@@ -3,7 +3,7 @@
 ; Non-commercial use only.
 
 #define MyAppName "Airplay Bridge"
-#define MyAppVersion "1.0"
+#define MyAppVersion "1.0.0"
 #define MyAppPublisher "albzO"
 #define MyAppURL "https://github.com/albzO/Airplay_Bridge"
 #define MyAppExeName "airplay-bridge.exe"
@@ -33,9 +33,9 @@ ArchitecturesInstallIn64BitMode=x64compatible
 DisableProgramGroupPage=yes
 ; Uncomment the following line to run in non administrative install mode (install for current user only).
 ;PrivilegesRequired=lowest
-OutputDir=C:\Users\albertzhao\Documents\ChatGPT\Airplay win\Release
+OutputDir=..\Release
 OutputBaseFilename=AirPlay-Bridge-1.0.0-windows-x64-setup
-SetupIconFile=C:\Users\albertzhao\Documents\ChatGPT\Airplay win\airplay-frontend\src-tauri\icons\icon.ico
+SetupIconFile=..\airplay-frontend\src-tauri\icons\icon.ico
 SolidCompression=yes
 WizardStyle=classic
 
@@ -47,9 +47,24 @@ Name: "chinesesimplified"; MessagesFile: "compiler:Languages\ChineseSimplified.i
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
 
 [Files]
-Source: "C:\Users\albertzhao\Documents\ChatGPT\Airplay win\dist\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
-Source: "C:\Users\albertzhao\Documents\ChatGPT\Airplay win\dist\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
-Source: "C:\Users\albertzhao\Documents\ChatGPT\Airplay win\.local\MicrosoftEdgeWebview2Setup.exe"; Flags: dontcopy
+Source: "..\dist\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
+; 发布内容使用明确清单，避免把 dist 中的运行数据一起打包。
+Source: "..\dist\runtime\airplay-backend.exe"; DestDir: "{app}\runtime"; Flags: ignoreversion
+Source: "..\dist\runtime\*.dll"; DestDir: "{app}\runtime"; Flags: ignoreversion
+Source: "..\dist\tools\homepod-test.exe"; DestDir: "{app}\tools"; Flags: ignoreversion
+Source: "..\dist\LICENSE"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\dist\NOTICE"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\dist\docs\README.md"; DestDir: "{app}\docs"; Flags: ignoreversion
+Source: "..\dist\docs\release-notes.md"; DestDir: "{app}\docs"; Flags: ignoreversion
+Source: "..\dist\docs\licensing.md"; DestDir: "{app}\docs"; Flags: ignoreversion
+Source: "..\dist\docs\error-codes.md"; DestDir: "{app}\docs"; Flags: ignoreversion
+Source: "..\dist\docs\THIRD_PARTY.md"; DestDir: "{app}\docs"; Flags: ignoreversion
+Source: "..\dist\licenses\airplay-cli-LICENSE"; DestDir: "{app}\licenses"; Flags: ignoreversion
+Source: "..\dist\licenses\crosstools-LICENSE"; DestDir: "{app}\licenses"; Flags: ignoreversion
+Source: "..\dist\licenses\openssl\LICENSE"; DestDir: "{app}\licenses\openssl"; Flags: ignoreversion
+Source: "..\dist\licenses\winpthreads\COPYING"; DestDir: "{app}\licenses\winpthreads"; Flags: ignoreversion skipifsourcedoesntexist
+Source: "..\dist\licenses\libwinpthread\COPYING"; DestDir: "{app}\licenses\libwinpthread"; Flags: ignoreversion skipifsourcedoesntexist
+Source: "..\.local\MicrosoftEdgeWebview2Setup.exe"; Flags: dontcopy
 ; NOTE: Don't use "Flags: ignoreversion" on any shared system files.
 
 [Icons]

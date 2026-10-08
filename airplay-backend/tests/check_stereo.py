@@ -14,7 +14,7 @@ for summary in summaries:
     listeners.append(listener)
     worker=threading.Thread(target=m.receiver,args=(listener,'live-group-ptp',errors,summary),daemon=True)
     workers.append(worker);worker.start()
-command=[str(m.ROOT/'dist/runtime/airplay-backend.exe'),'--host','127.0.0.1','--port',str(listeners[0].getsockname()[1]),
+command=[str(m.BACKEND),'--host','127.0.0.1','--port',str(listeners[0].getsockname()[1]),
     '--peer-host','127.0.0.1','--peer-port',str(listeners[1].getsockname()[1]),
     '--peer-identity','A1B2C3D4E5F60719','--peer-active-remote','2',
     '--password',m.SECRET,'--bind-ip','127.0.0.1','--timing','ptp','--hold-seconds','0',

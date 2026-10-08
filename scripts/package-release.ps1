@@ -2,7 +2,8 @@ param(
     [switch]$Offline,
     [switch]$SkipBuild,
     [string]$Makensis = '',
-    [string]$WebViewBootstrapper = ''
+    [string]$WebViewBootstrapper = '',
+    [string]$OutputDirectory = ''
 )
 $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path -Parent $PSScriptRoot
@@ -24,7 +25,8 @@ $signature = Get-AuthenticodeSignature -LiteralPath $WebViewBootstrapper
 if ($signature.Status -ne 'Valid' -or $signature.SignerCertificate.Subject -notmatch 'O=Microsoft Corporation') {
     throw 'WebView2 bootstrapper must have a valid Microsoft signature.'
 }
-$output = Join-Path $projectRoot 'releases'
+$output = if ($OutputDirectory) { [IO.Path]::GetFullPath($OutputDirectory, $projectRoot) }
+    else { Join-Path $projectRoot 'releases' }
 New-Item -ItemType Directory -Force -Path $output | Out-Null
 # A fresh staging directory prevents local runtime data and obsolete files entering a release.
 $stage = Join-Path $projectRoot ('.local/package-' + [guid]::NewGuid().ToString('N'))
@@ -40,7 +42,19 @@ Copy-Item -LiteralPath 'dist/tools/homepod-test.exe' -Destination "$payload/tool
 foreach ($file in @('README.md', 'release-notes.md', 'licensing.md', 'error-codes.md', 'THIRD_PARTY.md')) {
     Copy-Item -LiteralPath "dist/docs/$file" -Destination "$payload/docs"
 }
-Get-ChildItem -LiteralPath 'dist/licenses' | Copy-Item -Destination "$payload/licenses" -Recurse
+# 许可证也采用明确清单，避免复制许可证目录中的个人临时文件。
+foreach ($file in @('airplay-cli-LICENSE', 'crosstools-LICENSE', 'openssl/LICENSE', 'winpthreads/COPYING', 'libwinpthread/COPYING')) {
+    $source = Join-Path $projectRoot "dist/licenses/$file"
+    if (!(Test-Path -LiteralPath $source -PathType Leaf)) {
+        if ($file -in @('airplay-cli-LICENSE', 'crosstools-LICENSE', 'openssl/LICENSE')) {
+            throw "Missing distribution license: $file"
+        }
+        continue
+    }
+    $destination = Join-Path $payload "licenses/$file"
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $destination) | Out-Null
+    Copy-Item -LiteralPath $source -Destination $destination
+}
 # Generate explicit uninstall paths: never recursively delete a user-selected directory.
 $deleteLines = foreach ($file in Get-ChildItem -LiteralPath $payload -Recurse -File) {
     $relative = $file.FullName.Substring($payload.Length + 1).Replace('$', '$$')

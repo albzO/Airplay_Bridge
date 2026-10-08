@@ -22,6 +22,8 @@ from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from cryptography.hazmat.primitives.ciphers.aead import ChaCha20Poly1305
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
+# 可验证新编译的后端，避免覆盖已有发行包。
+BACKEND = pathlib.Path(os.environ.get('AIRPLAY_TEST_BACKEND', ROOT / 'dist/runtime/airplay-backend.exe'))
 source = (ROOT / 'upstream/airplay-cli/src/ap2_hap.c').read_text(encoding='utf-8')
 group = re.search(r'static const char srp_n_hex_3072\[\] =\s*(.*?);', source, re.S).group(1)
 N = int(''.join(re.findall(r'"([0-9A-F]+)"', group)), 16)
@@ -421,7 +423,7 @@ def test_case(mode, password, expected_code, required, forbidden=(), automatic=F
     errors = []
     worker = threading.Thread(target=receiver, args=(listener, mode, errors), daemon=True)
     worker.start()
-    command = [str(ROOT / 'dist/runtime/airplay-backend.exe'), '--host', '127.0.0.1', '--port', str(port),
+    command = [str(BACKEND), '--host', '127.0.0.1', '--port', str(port),
                '--password-stdin', '--bind-ip', '127.0.0.1', '--timing', 'ptp' if mode.endswith('-ptp') else 'ntp',
                '--hold-seconds', '2' if mode in ('success', 'success-ptp', 'hold403') or mode.startswith('events-') and mode!='events-fail' else '0']
     if automatic: command.append('--password-auto')
@@ -462,7 +464,7 @@ def test_live_case(mode, expected_code):
     errors = []
     worker = threading.Thread(target=receiver, args=(listener, mode, errors), daemon=True)
     worker.start()
-    command = [str(ROOT / 'dist/runtime/airplay-backend.exe'), '--host', '127.0.0.1',
+    command = [str(BACKEND), '--host', '127.0.0.1',
                '--port', str(listener.getsockname()[1]), '--password', SECRET,
                '--bind-ip', '127.0.0.1', '--timing', 'ptp' if mode.endswith('-ptp') else 'ntp',
                '--hold-seconds', '0', '--pcm-stdin']

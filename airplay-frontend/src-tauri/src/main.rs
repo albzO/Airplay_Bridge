@@ -2,15 +2,17 @@
 mod auth;
 mod auth_memory;
 mod awake;
+mod settings;
 mod startup;
+mod window;
 use homepod_test::{
     capture,
     discovery::{self, Device},
     live::{self, GuiContext, GuiControl, GuiEmitter},
     source::Source,
 };
-use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use settings::Settings;
 use std::{
     fs,
     path::PathBuf,
@@ -27,34 +29,8 @@ use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
 };
-#[derive(Clone, Serialize, Deserialize)]
-#[serde(default, rename_all = "camelCase")]
-struct Settings {
-    endpoint: String,
-    latency: u32,
-    buffer: u32,
-    mapping: [usize; 2],
-    detailed_logs: bool,
-    capture_diagnostics: bool,
-    close_action: String,
-    speakers_swapped: bool,
-    keep_awake: bool,
-}
-impl Default for Settings {
-    fn default() -> Self {
-        Self {
-            endpoint: String::new(),
-            latency: 300,
-            buffer: 128,
-            mapping: [0, 1],
-            detailed_logs: false,
-            capture_diagnostics: false,
-            close_action: "tray".into(),
-            speakers_swapped: false,
-            keep_awake: true,
-        }
-    }
-}
+use window::{quit, reveal, window_action};
+// 会话与音频来源共用状态；窗口操作和设置持久化分别放在独立模块。
 struct Session {
     id: u64,
     control: Arc<GuiControl>,
@@ -157,11 +133,7 @@ fn devices(e: &Engine) -> Vec<Device> {
         .unwrap_or_default()
 }
 fn save(e: &Engine, s: &Settings) -> Result<(), String> {
-    fs::write(
-        e.root.join("settings.json"),
-        serde_json::to_vec_pretty(s).unwrap(),
-    )
-    .map_err(|e| e.to_string())
+    s.save(&e.root)
 }
 #[tauri::command]
 async fn initialize(engine: State<'_, Arc<Engine>>) -> Result<Value, String> {
@@ -195,12 +167,7 @@ async fn discover_devices(engine: State<'_, Arc<Engine>>) -> Result<Vec<Device>,
 }
 #[tauri::command]
 fn save_settings(engine: State<Arc<Engine>>, settings: Settings) -> Result<(), String> {
-    if !(250..=2000).contains(&settings.latency) || !(64..=512).contains(&settings.buffer) {
-        return Err("播放提前量为 250–2000 ms，Buffer 为 64–512 ms".into());
-    }
-    if !["tray", "quit"].contains(&settings.close_action.as_str()) {
-        return Err("未知窗口关闭动作".into());
-    }
+    settings.validate()?;
     if engine.quitting.load(Ordering::SeqCst) {
         return Err("应用正在退出".into());
     }
@@ -234,9 +201,7 @@ fn start_stream(
     if names.is_empty() || names.len() > 2 {
         return Err("请选择一台设备或一个立体声对".into());
     }
-    if !(250..=2000).contains(&settings.latency) || !(64..=512).contains(&settings.buffer) {
-        return Err("缓冲或提前量超出范围".into());
-    }
+    settings.validate()?;
     let found = devices(&e);
     let mut chosen = Vec::new();
     for name in &names {
@@ -400,21 +365,20 @@ fn submit_password(
     host: String,
     password: String,
 ) -> Result<(), String> {
+    let reply = auth::Reply { host, password };
     let session = engine.session.lock().unwrap();
     let s = session
         .as_ref()
         .filter(|s| s.id == session_id)
         .ok_or("会话已结束")?;
-    if !s.hosts.contains(&host)
-        || password.is_empty()
-        || password.len() > 1023
-        || password.contains(['\0', '\r', '\n'])
+    if !s.hosts.contains(&reply.host)
+        || reply.password.is_empty()
+        || reply.password.len() > 1023
+        || reply.password.contains(['\0', '\r', '\n'])
     {
         return Err("密码或设备无效".into());
     }
-    s.reply
-        .send(auth::Reply { host, password })
-        .map_err(|_| "密码请求已结束".into())
+    s.reply.send(reply).map_err(|_| "密码请求已结束".into())
 }
 #[tauri::command]
 fn stop_stream(engine: State<Arc<Engine>>) {
@@ -541,65 +505,12 @@ fn ui_ready(
     }
     Ok(())
 }
-fn reveal(app: &tauri::AppHandle) {
-    if let Some(w) = app.get_webview_window("main") {
-        let _ = w.show();
-        let _ = w.unminimize();
-        let _ = w.set_focus();
-    }
-}
-fn quit(app: &tauri::AppHandle) {
-    let engine = app.state::<Arc<Engine>>().inner().clone();
-    if engine.quitting.swap(true, Ordering::SeqCst) {
-        return;
-    }
-    if let Some(s) = engine.session.lock().unwrap().as_ref() {
-        s.control.stop.store(true, Ordering::Relaxed);
-    }
-    let app = app.clone();
-    thread::spawn(move || {
-        let _ = engine.awake.lock().unwrap().set(false);
-        stop_source(&engine);
-        while engine.session.lock().unwrap().is_some() {
-            thread::sleep(Duration::from_millis(100));
-        }
-        app.exit(0);
-    });
-}
-#[tauri::command]
-fn window_action(
-    app: tauri::AppHandle,
-    engine: State<Arc<Engine>>,
-    window: tauri::WebviewWindow,
-    action: String,
-) -> Result<(), String> {
-    match action.as_str() {
-        "minimize" => window.minimize(),
-        "maximize" => {
-            if window.is_maximized().map_err(|e| e.to_string())? {
-                window.unmaximize()
-            } else {
-                window.maximize()
-            }
-        }
-        "close" => {
-            if engine.settings.lock().unwrap().close_action == "quit" {
-                quit(&app);
-                Ok(())
-            } else {
-                window.hide()
-            }
-        }
-        "drag" => window.start_dragging(),
-        _ => return Err("未知窗口操作".into()),
-    }
-    .map_err(|e| e.to_string())
-}
 fn main() {
     let mut context = tauri::generate_context!();
     let exe = std::env::current_exe().expect("无法定位程序目录");
     if homepod_test::data_dir::portable_root(&exe).is_some() {
-        let root = homepod_test::data_dir::prepare().expect("便携版 data 目录不可写，请移到可写目录");
+        let root =
+            homepod_test::data_dir::prepare().expect("便携版 data 目录不可写，请移到可写目录");
         for window in &mut context.config_mut().app.windows {
             window.data_directory = Some(root.join("webview"));
         }
@@ -628,10 +539,7 @@ fn main() {
                 let fallback = adjacent;
                 fallback
             };
-            let settings: Settings = fs::read(root.join("settings.json"))
-                .ok()
-                .and_then(|b| serde_json::from_slice(&b).ok())
-                .unwrap_or_default();
+            let settings = Settings::load(&root);
             let seed = backend.parent().unwrap().join("devices.json");
             if !root.join("devices.json").exists() && seed.exists() {
                 fs::copy(seed, root.join("devices.json"))?;

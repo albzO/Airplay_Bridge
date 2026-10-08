@@ -40,6 +40,14 @@ pub struct Reply {
     pub host: String,
     pub password: String,
 }
+impl Drop for Reply {
+    fn drop(&mut self) {
+        // 发送失败、会话取消或队列销毁时，也清理仍归本对象所有的密码。
+        unsafe {
+            self.password.as_bytes_mut().fill(0);
+        }
+    }
+}
 pub struct Server {
     pub replies: mpsc::Sender<Reply>,
     stop: Arc<AtomicBool>,
@@ -146,11 +154,8 @@ impl Server {
                         match rx.recv_timeout(Duration::from_millis(100)) {
                             Ok(mut reply) => {
                                 if reply.host == host {
-                                    password = reply.password;
+                                    password = std::mem::take(&mut reply.password);
                                     break;
-                                }
-                                unsafe {
-                                    reply.password.as_bytes_mut().fill(0);
                                 }
                             }
                             Err(mpsc::RecvTimeoutError::Timeout) => {}
