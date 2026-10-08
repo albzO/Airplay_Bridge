@@ -24,8 +24,12 @@ import type {
  * 阅读顺序：页面状态 → computed 设备/来源视图 → 用户操作 → event → onMounted。
  * 音频采集和协议连接由桌面端负责；页面只发送命令并显示经过校验的事件。
  * 命令成功表示请求已被接受，是否开始播放、是否结束要以异步事件为准。
+ * Read in this order: state, computed device/source views, user actions, event, onMounted.
+ * The desktop owns capture and protocol connections; the page sends commands and displays
+ * validated events. Command success accepts a request; events determine playback and completion.
  */
 // 设置是下一次连接的配置；activeDetailedLogs/activeDiagnostics 是本次会话的快照。
+// Settings configure the next connection; activeDetailedLogs/activeDiagnostics snapshot this session.
 const authNotice = ref('');
 const appVersion = ref('');
 const displayVersion = computed(() => appVersion.value.replace(/^(\d+\.\d+)\.0$/, '$1'));
@@ -63,14 +67,18 @@ const selection = ref<string[]>([]),
   error = ref('');
 // busy 覆盖准备、认证和播放；playing 收到遥测后置真；stopping 等 finished 才清除。
 // connected 仅表示原生后端已完成握手（PCM_READY），并不保证已经收到音频遥测。
+// busy covers preparation/authentication/playback; playing starts on telemetry; finished clears stopping.
+// connected means the native handshake reached PCM_READY, not that audio telemetry has arrived.
 const session = ref<number | null>(null),
   pending = ref(''),
   password = ref(''),
   sending = ref(false),
   connected = ref(false);
 // 连接前没有遥测，保留空快照让界面显示“—”；报告只在串流收尾时到达。
+// Keep an empty snapshot before telemetry so the UI shows “—”; reports arrive during stream cleanup.
 const telemetry = ref<Partial<Telemetry>>({}),
   // 报告按整份快照替换，不修改内部字段；无需把任意深度 JSON 转为响应式代理。
+  // Replace reports as complete snapshots; arbitrary-depth JSON does not need deep reactive proxies.
   report = shallowRef<SessionReport>({}),
   stats = ref<Record<string, Record<string, string>>>({}),
   technical = ref<Record<string, string>>({}),
@@ -93,6 +101,7 @@ const deviceStates = ref<Record<string, string>>({}),
   retry = ref(false),
   retrySending = ref(false);
 // sessionStats 保存后端本次累计计数，stats 累加每次增量，避免重连后重复计入。
+// sessionStats tracks this session's counters; stats accumulates deltas without counting reconnects twice.
 const sessionStats = ref<Record<string, Record<string, string>>>({});
 const statsNames = ref<Record<string, string>>({});
 const statsRows = computed(() =>
@@ -116,6 +125,8 @@ const source = computed(() => inputs.value.find((i) => i.id === settings.value.e
 const cards = computed(() => {
   // 配对卡片和单设备卡片同时保留；仅同 tsid 且恰好两台时生成立体声卡片。
   // igl 主设备排在前面；“左右互换”控制实际声道顺序，不修改发现结果。
+  // Keep both paired and individual cards; create a pair only for exactly two members sharing tsid.
+  // Order the igl primary first; swapping left/right affects playback without changing discovery data.
   const list: { id: string; members: Device[]; title: string }[] = [];
   const groups = new Map<string, Device[]>();
   for (const d of devices.value) {
@@ -167,6 +178,7 @@ const sourceGroups = computed(() => [
 const channels = computed(() => Array.from({ length: source.value?.channels || 0 }, (_, i) => i));
 
 // 操作方法：设置、设备选择、会话控制与事件处理。
+// User actions: settings, device selection, session control and event handling.
 function applyTheme() {
   document.documentElement.dataset.theme =
     theme.value === 'system' ? (systemTheme.matches ? 'dark' : 'light') : theme.value;
@@ -298,6 +310,7 @@ async function awakeChanged() {
 
 async function sourceChanged() {
   // 换来源后旧声道下标可能越界，先恢复合法映射，再保存并启动该端点的预览。
+  // A new source may invalidate old channel indices; reset the mapping before saving and previewing it.
   previewPeaks.value = [0, 0];
   previewError.value = '';
   sourceWarning.value = '';
@@ -341,6 +354,8 @@ async function refresh() {
 /**
  * 先清空本次会话的快照，再请求桌面线程启动。密码重试会建立新会话，
  * 暂存输入直到新会话再次发出 password_required，随后立即提交并清空。
+ * Reset session snapshots before starting the desktop worker. Password retries create a new
+ * session; retain the input until its password_required event, then submit and clear it immediately.
  */
 async function start(passwordFirst = false) {
   activeDiagnostics.value = settings.value.captureDiagnostics;
@@ -380,12 +395,14 @@ async function start(passwordFirst = false) {
     retrySending.value = false;
   } else {
     // 工作线程可能在命令返回前发事件；event 已认领 id 时不能再次覆盖它。
+    // Events can precede the command response; do not overwrite an id already claimed by event.
     if (session.value === null) session.value = id;
   }
 }
 
 async function stop() {
   // 停止是异步请求：禁用遥测更新，但让 finished 负责最终状态和失败信息。
+  // Stop is asynchronous: suppress telemetry updates and let finished set final state and errors.
   stopping.value = true;
   phase.value = '正在停止';
   password.value = '';
@@ -397,6 +414,7 @@ async function submit() {
   if (!pending.value || !password.value || sending.value) return;
   if (retry.value && !busy.value) {
     // 密码失败后旧会话已经结束，不能把密码发给旧 session_id。
+    // The failed session has ended; create a new one instead of sending to its old session_id.
     retrySending.value = true;
     await start(true);
     return;
@@ -404,6 +422,7 @@ async function submit() {
   sending.value = true;
   const secret = password.value;
   // 交给桌面命令后不在响应式页面状态中保留密码。
+  // Clear the reactive password state once the value is handed to the desktop command.
   password.value = '';
   lastPasswordHost.value = pending.value;
   try {
@@ -447,9 +466,13 @@ async function swap() {
   }
 }
 
-/** 仅接收 protocol.ts 已验证的事件；kind 收窄后只能读取该事件拥有的字段。 */
+/**
+ * 仅接收 protocol.ts 已验证的事件；kind 收窄后只能读取该事件拥有的字段。
+ * Accept only events validated by protocol.ts; narrowing kind exposes only that variant's fields.
+ */
 function event(e: StreamEvent) {
   // 新会话启动后旧线程可能仍有排队事件；先按 id 过滤，防止旧 finished 关闭新播放。
+  // Filter queued events by id so an old worker's finished event cannot close a newer stream.
   if (session.value !== null && e.session_id !== session.value) return;
   if (session.value === null && busy.value) session.value = e.session_id;
   if (e.kind === 'preparing_source') {
@@ -494,6 +517,8 @@ function event(e: StreamEvent) {
   if (e.kind === 'native') {
     // 原始协议行用于识别标记；展示日志优先用桌面端脱敏后的 safe_line。
     // 不对脱敏文本解析 host，否则多个设备别名会破坏计数归属。
+    // Parse markers from the raw protocol line; prefer the redacted safe_line for display.
+    // Parsing host from redacted text would break per-device counter attribution.
     const line = String(e.line);
     if (e.is_fault || activeDetailedLogs.value) {
       logs.value.push(String(e.safe_line || line));
@@ -514,6 +539,7 @@ function event(e: StreamEvent) {
         'rtx_expired',
       ]) {
         // 后端发送累计计数；首次从 0 算增量，下降按 0 处理，避免出现负统计。
+        // Backend counters are cumulative; compute deltas from zero initially and clamp decreases to zero.
         const value = Number(f[key]);
         if (Number.isFinite(value)) {
           total[key] = String(
@@ -552,6 +578,7 @@ function event(e: StreamEvent) {
   }
   if (e.kind === 'finished') {
     // finished 是本次会话唯一收尾入口；仍保留最后的遥测和报告供用户诊断。
+    // finished is the session cleanup entry; retain the last telemetry and report for diagnosis.
     password.value = '';
     busy.value = false;
     playing.value = false;
@@ -582,6 +609,7 @@ function event(e: StreamEvent) {
 }
 
 // 响应式监听只协调页面；桌面事件在 onMounted 注册，并在卸载时统一释放。
+// Reactive watchers coordinate the UI; register desktop events on mount and release them on unmount.
 watch(
   theme,
   (value) => {
@@ -602,6 +630,7 @@ onUnmounted(() => {
 });
 
 // 监听注册是异步的：若组件先卸载，返回的监听必须立即释放，避免回调重复累积。
+// Registration is asynchronous; immediately release late listeners if the component already unmounted.
 async function registerListener(name: string, handler: (payload: unknown) => void) {
   const unlisten = await listen<unknown>(name, (e) => {
     if (disposed) return;
@@ -631,6 +660,7 @@ onMounted(async () => {
   try {
     appVersion.value = await getVersion();
     // 先订阅再 initialize/monitor_source，避免错过初始化期间的采集事件。
+    // Subscribe before initialize/monitor_source to avoid missing capture events during initialization.
     await registerListener('stream-event', (payload) => {
       const decoded = decodeStreamEvent(payload);
       if (decoded) event(decoded);
@@ -638,6 +668,7 @@ onMounted(async () => {
     await registerListener('source-level', (payload) => {
       const e = decodeSourceLevel(payload);
       // 旧来源切换过程中可能还有回调，只更新当前选中端点。
+      // A replaced source can still emit callbacks; update only the currently selected endpoint.
       if (e.endpoint === settings.value.endpoint) {
         if (e.captureEnabled !== undefined) captureEnabled.value = e.captureEnabled;
         if (e.peaks) previewPeaks.value = e.peaks;

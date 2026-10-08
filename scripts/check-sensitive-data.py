@@ -1,4 +1,6 @@
-"""Check committed source and pending additions without printing sensitive values."""
+"""检查已提交源码与待新增文件，不打印敏感值。
+Check committed source and pending additions without printing sensitive values.
+"""
 from __future__ import annotations
 
 import argparse
@@ -9,6 +11,7 @@ import sys
 
 ROOT = Path(__file__).resolve().parent.parent
 # 只报告规则名称和位置；不要在检查输出中再次泄露命中的内容。
+# Report only rule names and locations; never expose matched values in scanner output.
 RULES = {
     "personal-windows-path": re.compile(r"[A-Za-z]:[\\/]Users[\\/][^\\/\s]+", re.I),
     "private-key": re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----"),
@@ -54,6 +57,7 @@ def findings(path: str, data: bytes) -> list[tuple[int, str]]:
 def check_revision(revision: str) -> int:
     count = 0
     # 不递归扫描第三方子模块；其固定引用与审查边界另行记录。
+    # Do not recurse into third-party submodules; document their pinned revisions and review scope separately.
     records = git("ls-tree", "-r", "-z", revision).split(b"\0")
     for record in filter(None, records):
         metadata, encoded_path = record.split(b"\t", 1)

@@ -7,7 +7,9 @@ static log_level level = lDEBUG;
 log_level *loglevel = &level;
 int probe_debug = 1;
 static pthread_mutex_t log_lock = PTHREAD_MUTEX_INITIALIZER;
-/* 保存独立副本；认证缓冲区切换或清零时，日志线程仍使用有效数据。 */
+/* 保存独立副本；认证缓冲区切换或清零时，日志线程仍使用有效数据。
+ * Keep an owned copy so logging remains valid when authentication buffers change or are wiped.
+ */
 static char secret_to_redact[1024];
 void probe_set_secret(const char *secret) {
     pthread_mutex_lock(&log_lock);

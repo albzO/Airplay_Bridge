@@ -9,12 +9,14 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
+/// 运行程序与 CLI 的用户数据分开存放。
 /// Runtime files are separate from per-user CLI data.
 pub fn executable(_root: &Path) -> PathBuf {
     let directory = std::env::current_exe()
         .ok()
         .and_then(|exe| exe.parent().map(Path::to_path_buf))
         // 定位失败时返回无效路径，禁止退回用户数据目录加载程序。
+        // Return an invalid path on lookup failure; never load an executable from user data.
         .unwrap_or_default();
     resolve_executable(&directory)
 }
@@ -28,6 +30,7 @@ fn resolve_executable(directory: &Path) -> PathBuf {
         directory.join("airplay-backend.exe"),
     ];
     // 只有 tools/ 中的 CLI 可以向上查找同一安装根目录的 runtime/。
+    // Only a CLI under tools/ may search the parent installation's runtime/ directory.
     if directory
         .file_name()
         .is_some_and(|name| name.eq_ignore_ascii_case("tools"))

@@ -23,6 +23,7 @@ from cryptography.hazmat.primitives.ciphers.aead import ChaCha20Poly1305
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 # 可验证新编译的后端，避免覆盖已有发行包。
+# Test a newly built backend without overwriting the existing distribution.
 BACKEND = pathlib.Path(os.environ.get('AIRPLAY_TEST_BACKEND', ROOT / 'dist/runtime/airplay-backend.exe'))
 source = (ROOT / 'upstream/airplay-cli/src/ap2_hap.c').read_text(encoding='utf-8')
 group = re.search(r'static const char srp_n_hex_3072\[\] =\s*(.*?);', source, re.S).group(1)

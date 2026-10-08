@@ -154,7 +154,9 @@ int wmain(int argc, wchar_t **wide) {
         options.volume_control_port < 0 || options.volume_control_port > 65535 ||
         (options.bind_ip && inet_pton(AF_INET, options.bind_ip, &parsed) != 1) ||
         (prompt + input + (options.password != NULL) > 1) ||
-        /* 与 GUI 管道共用密码边界，避免截断后仅脱敏前缀。 */
+        /* 与 GUI 管道共用密码边界，避免截断后仅脱敏前缀。
+         * Match GUI pipe password limits so truncation cannot leave only a redacted prefix.
+         */
         (options.password && (strlen(options.password) >= sizeof(password) ||
             strpbrk(options.password, "\r\n") != NULL)) ||
         (automatic && (prompt || options.password || options.credentials)) ||

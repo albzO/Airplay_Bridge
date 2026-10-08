@@ -28,6 +28,7 @@ if ($signature.Status -ne 'Valid' -or $signature.SignerCertificate.Subject -notm
 $output = if ($OutputDirectory) { [IO.Path]::GetFullPath($OutputDirectory, $projectRoot) }
     else { Join-Path $projectRoot 'releases' }
 New-Item -ItemType Directory -Force -Path $output | Out-Null
+# 新建暂存目录，避免将本地运行数据和过时文件带入发布包。
 # A fresh staging directory prevents local runtime data and obsolete files entering a release.
 $stage = Join-Path $projectRoot ('.local/package-' + [guid]::NewGuid().ToString('N'))
 $payload = Join-Path $stage "AirPlay-Bridge-$version"
@@ -43,6 +44,7 @@ foreach ($file in @('README.md', 'release-notes.md', 'licensing.md', 'error-code
     Copy-Item -LiteralPath "dist/docs/$file" -Destination "$payload/docs"
 }
 # 许可证也采用明确清单，避免复制许可证目录中的个人临时文件。
+# Use an explicit license allowlist to exclude personal temporary files from that directory.
 foreach ($file in @('airplay-cli-LICENSE', 'crosstools-LICENSE', 'openssl/LICENSE', 'winpthreads/COPYING', 'libwinpthread/COPYING')) {
     $source = Join-Path $projectRoot "dist/licenses/$file"
     if (!(Test-Path -LiteralPath $source -PathType Leaf)) {
@@ -55,6 +57,7 @@ foreach ($file in @('airplay-cli-LICENSE', 'crosstools-LICENSE', 'openssl/LICENS
     New-Item -ItemType Directory -Force -Path (Split-Path -Parent $destination) | Out-Null
     Copy-Item -LiteralPath $source -Destination $destination
 }
+# 生成明确的卸载路径，不递归删除用户选择的整个目录。
 # Generate explicit uninstall paths: never recursively delete a user-selected directory.
 $deleteLines = foreach ($file in Get-ChildItem -LiteralPath $payload -Recurse -File) {
     $relative = $file.FullName.Substring($payload.Length + 1).Replace('$', '$$')

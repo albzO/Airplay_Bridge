@@ -4,6 +4,7 @@ from mock_receiver import BACKEND, SECRET, test_case
 
 if __name__=='__main__':
     # 参数阶段拒绝超长或多行密码，不能先截断再进入认证与日志路径。
+    # Reject oversized/multiline passwords during argument parsing, before authentication or logging.
     for secret in ['x' * 1024, 'example\npassword']:
         result = subprocess.run([str(BACKEND), '--host', '127.0.0.1', '--password', secret],
                                 capture_output=True, text=True, encoding='utf-8', timeout=5)

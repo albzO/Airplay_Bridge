@@ -3,6 +3,12 @@
 //! 后续重采样和网络发送见 convert/live，持续线程与预览生命周期见 source。
 //! 所有 COM 和系统分配资源用 Drop 配对释放；取得音频包后必须 ReleaseBuffer，
 //! 即使转换途中返回错误也不能跳过，否则设备缓冲区会被占住。
+//!
+//! Windows WASAPI shared-mode capture for recording inputs and playback loopback.
+//! enumerate reads endpoints/formats; live capture maps source channels to interleaved
+//! float32 stereo. See convert/live for resampling and transport, source for preview lifetime.
+//! Drop pairs COM/system allocations with cleanup. Every acquired packet needs ReleaseBuffer,
+//! including error paths, or the device buffer remains occupied.
 use serde::{Deserialize, Serialize};
 use std::{
     error::Error,
@@ -95,6 +101,8 @@ impl Drop for Running<'_> {
 }
 /// 音频包借用守卫。显式 release 先清空 frames，防止 Drop 重复释放；
 /// 中途出错时 Drop 自动归还未释放包，不转移 WASAPI 提供的底层指针所有权。
+/// Packet borrow guard: explicit release clears frames first to prevent a second release in Drop.
+/// Drop returns unreleased packets on errors; ownership of WASAPI's raw pointer never transfers.
 struct Packet<'a> {
     client: &'a IAudioCaptureClient,
     frames: u32,
@@ -248,6 +256,8 @@ pub fn enumerate() -> Result<Vec<Input>> {
 #[derive(Clone, Serialize, Deserialize)]
 /// 原始设备格式。bits 是每采样存储位宽，valid_bits 是有效位数，
 /// block_align 是一帧全部声道的字节数；不可把声道数或位宽直接当成帧数。
+/// Device format: bits is storage width, valid_bits is meaningful precision, and block_align
+/// counts bytes for all channels in one frame. Neither channel count nor bit width is a frame count.
 pub struct Format {
     pub(crate) rate: u32,
     pub(crate) channels: u16,

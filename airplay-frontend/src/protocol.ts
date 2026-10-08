@@ -15,6 +15,9 @@ import type {
  * Tauri 的泛型只约束编译，不验证运行时 JSON。因此先接收 unknown，再在此
  * 检查页面真正使用的字段。异常只携带字段路径，避免把密码或设备数据写入错误。
  * 新增事件可返回 null 供旧页面忽略；已知事件的损坏字段必须报错，不能默默当成成功。
+ * Tauri generics constrain compilation but do not validate runtime JSON. Accept unknown
+ * and validate the fields consumed by the UI. Errors contain field paths, not sensitive values.
+ * Ignore new event kinds via null; malformed known events must fail rather than imply success.
  */
 type Reader<T> = (value: unknown, path: string) => T;
 function invalid(path: string): never {
@@ -50,7 +53,10 @@ function pair(value: unknown, path: string, read: Reader<number>): [number, numb
 }
 const nullableText: Reader<string | null> = (value, path) => nullable(value, path, text);
 
-/** 报告是可扩展 JSON；递归限制避免损坏的桥接数据导致页面无限递归。 */
+/**
+ * 报告是可扩展 JSON；递归限制避免损坏的桥接数据导致页面无限递归。
+ * Reports allow extensible JSON; the depth limit prevents unbounded recursion on malformed data.
+ */
 function json(value: unknown, path: string, depth = 0): JsonValue {
   if (depth > 32) invalid(path);
   if (value === null || typeof value === 'string' || typeof value === 'boolean') return value;
@@ -64,6 +70,7 @@ function json(value: unknown, path: string, depth = 0): JsonValue {
 function jsonObject(value: unknown, path: string): JsonObject {
   object(value, path);
   // json 已递归验证为 JSON；object 的检查保证根节点不是数组或基本值。
+  // json validates the entire value; object ensures the root is neither an array nor a primitive.
   return json(value, path) as JsonObject;
 }
 
@@ -173,6 +180,7 @@ function report(value: unknown): SessionReport {
     optional(capture.timestamp_errors, 'report.capture.timestamp_errors', integer);
   }
   // 已校验可选字段；不额外填入 undefined，以保持整个报告仍是有效 JSON。
+  // Optional fields are validated; omit undefined values to keep the report valid JSON.
   return {
     ...result,
     ...(device === undefined ? {} : { device }),
@@ -184,6 +192,7 @@ export function decodeStreamEvent(value: unknown): StreamEvent | null {
   const v = object(value, 'stream-event');
   const kind = text(v.kind, 'kind');
   // 新版本桌面端可能增加事件。先识别 kind，未知事件不影响现有会话。
+  // Recognize kind first so events added by newer desktop versions do not disrupt this session.
   if (
     ![
       'preparing_source',

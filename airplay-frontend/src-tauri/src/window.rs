@@ -1,4 +1,5 @@
 //! 窗口操作与退出顺序，避免关闭窗口时遗漏音频或后台会话。
+//! Window actions and shutdown ordering ensure audio and background sessions are cleaned up.
 use crate::{Engine, stop_source};
 use std::{
     sync::{Arc, atomic::Ordering},
@@ -17,6 +18,9 @@ pub(crate) fn reveal(app: &tauri::AppHandle) {
 /// 托盘和窗口共用的退出入口。swap 保证重复点击不会启动多个退出线程。
 /// 先通知串流停止，再释放防休眠、停止采集，等会话及密码管道收尾后退出进程。
 /// 等待放在后台线程中，避免主窗口线程卡住，阻碍收尾事件和界面响应。
+/// Shared tray/window exit entry; swap prevents duplicate shutdown workers.
+/// Signal stream stop, release awake state, stop capture, then wait for session/pipe cleanup before exit.
+/// Wait off the window thread so cleanup events and UI processing can continue.
 pub(crate) fn quit(app: &tauri::AppHandle) {
     let engine = app.state::<Arc<Engine>>().inner().clone();
     if engine.quitting.swap(true, Ordering::SeqCst) {

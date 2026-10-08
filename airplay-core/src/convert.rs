@@ -3,6 +3,12 @@
 //! 不能在包边界重建 Converter，否则滤波器历史丢失会造成接缝和错误时长。
 //! 输入/输出计数按帧计算，一帧含左右两个采样；sink 接收交错 i16 切片。
 //! live 再按小端字节序写入管道；finish 补齐滤波器尾部并检查最终输出长度。
+//!
+//! Stateful sinc resampling with TPDF dither: float32 stereo to 44.1 kHz i16.
+//! WASAPI packets can vary in length; pending collects 480 frames before filtering.
+//! Keep the Converter across packets or lost filter history creates seams and duration errors.
+//! Counters use frames, each containing two samples; sink receives interleaved i16 samples.
+//! live serializes little-endian pipe bytes; finish flushes the filter and checks output length.
 use audioadapter_buffers::direct::InterleavedSlice;
 use rubato::{Adjustable, Async, FixedAsync, Resampler, SincInterpolationParameters};
 use serde::Serialize;
@@ -101,6 +107,7 @@ impl Converter {
         self.stats.output_frames
     }
     /// 相对基准转换比例微调（±800 ppm）；平滑切换，避免突然变速形成可闻突变。
+    /// Smoothly adjust the baseline conversion ratio within ±800 ppm to avoid audible rate jumps.
     pub fn set_correction_ppm(&mut self, ppm: f64) -> Result<()> {
         if !ppm.is_finite() || ppm.abs() > 800.0 {
             return Err("漂移校正超过 +/-800 ppm".into());
@@ -146,6 +153,7 @@ impl Converter {
         }
         self.stats.input_frames += (samples.len() / 2) as u64;
         // 不要求包长是 CHUNK 的整数倍；累积剩余采样，跨包保留滤波器状态。
+        // Packet lengths need not be multiples of CHUNK; carry remaining samples and filter state.
         for value in samples {
             let value = if value.is_finite() {
                 *value
@@ -169,6 +177,8 @@ impl Converter {
     pub fn finish(&mut self, sink: &mut impl FnMut(&[i16]) -> Result<()>) -> Result<()> {
         // 实时漂移校正会微调时长：按累计转换比例算尾帧，不能再裁回文件转换的
         // 名义帧数，否则会丢掉已经校正的音频。未启用校正时按原始时长精确取整。
+        // Live correction changes duration: integrate the actual ratio rather than trimming back
+        // to nominal file-conversion length. Without correction, round the original duration exactly.
         let target = if self.adaptive {
             (self.expected_frames
                 + (self.pending.len() / 2) as f64 * RATE as f64 / self.input_rate as f64

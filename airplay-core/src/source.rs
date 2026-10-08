@@ -2,6 +2,11 @@
 //! 同一来源同时提供页面预览和一个串流订阅；连接/断开订阅不重启采集。
 //! 采集线程不能等待网络或磁盘。音频通过有界队列交付，积压时报告故障，
 //! 防止内存无限增长；诊断队列允许丢记录，并在收尾报告丢弃数量。
+//!
+//! Each Source owns one WASAPI capture thread, serving preview and one stream subscriber.
+//! Attaching/detaching a stream does not restart capture. Capture never waits on network or disk.
+//! Bounded audio queues report overflow as a fault; diagnostic queues may drop records and
+//! report the count during cleanup instead of allowing unbounded memory growth.
 use crate::capture::{self, CaptureProgress};
 use serde_json::{Value, json};
 use std::{
@@ -23,6 +28,8 @@ enum Event {
 #[derive(Default)]
 /// 稳定性看数据包连续到达，不看振幅：系统在空闲时生成的静音也算有效数据。
 /// 故障或包间隔超过 250 ms 会重置连续窗口；500 ms 稳定且至少 3 包才可连接。
+/// Readiness measures continuous packet delivery, not amplitude; intentional idle silence is valid.
+/// Faults or gaps over 250 ms reset the window; require 500 ms stability and at least three packets.
 struct Warmup {
     since: Option<Instant>,
     last: Option<Instant>,
@@ -405,6 +412,8 @@ impl Source {
     }
     /// 网络握手前等待连续采集稳定，最多等待 8 秒；取消和采集线程故障立即返回。
     /// 静音不是故障，不能以“有声音”作为就绪条件，否则无声来源永远无法连接。
+    /// Wait for stable capture before handshaking, at most eight seconds; cancel/faults return early.
+    /// Silence is valid: requiring audible content would prevent quiet sources from ever connecting.
     pub fn wait_ready(&self, cancelled: &AtomicBool) -> Result<()> {
         let started = Instant::now();
         loop {
@@ -432,6 +441,7 @@ impl Source {
         }
     }
     /// 结束整个采集线程并等待退出；只在切换来源、关闭采集或退出应用时调用。
+    /// Stop and join capture only when switching sources, disabling capture or exiting the app.
     pub fn stop(&self) {
         self.stop.store(true, Ordering::Relaxed);
         if let Some(worker) = self.worker.lock().unwrap().take() {
@@ -442,6 +452,10 @@ impl Source {
     /// 仅允许一个订阅者；64 个音频块的队列与 1024 条诊断队列各自限量。
     /// stop 只结束本次订阅，保留来源线程；统计以挂接时的计数作基线，避免把
     /// 连接前预览阶段的故障算进本次报告。sink 出错也会先解除订阅再返回。
+    /// Subscribe to future interleaved float32 stereo samples and their source sample rate.
+    /// Allow one subscriber; bound audio at 64 blocks and diagnostics at 1024 records.
+    /// stop ends this subscription, not capture. Use attach-time counters as the report baseline
+    /// to exclude earlier preview faults. Detach before returning even when sink fails.
     pub fn consume(
         &self,
         stop: &AtomicBool,

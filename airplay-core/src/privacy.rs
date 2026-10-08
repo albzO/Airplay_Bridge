@@ -2,6 +2,11 @@
 //! text 处理协议文本和系统路径，value 递归处理 JSON，并优先屏蔽敏感字段值。
 //! 先替换本次已知设备，再兜底识别陌生地址/凭据；数值统计和时长保持可诊断。
 //! 分享旧日志或历史提交时仍需单独检查：本模块不会改写过去已经保存的数据。
+//!
+//! Redact logs/reports while retaining real identities for discovery and control.
+//! text handles protocol lines/system paths; value recursively redacts JSON sensitive fields.
+//! Replace known devices first, then detect unknown identifiers/credentials; preserve numeric stats.
+//! Review old logs and commits separately: this module does not rewrite previously saved data.
 use crate::discovery::Device;
 use serde_json::Value;
 use std::{net::IpAddr, path::Path};
@@ -47,6 +52,7 @@ fn sensitive_field(key: &str) -> bool {
 }
 
 // 不依赖设备清单：新字段或陌生设备也不能把凭据写入日志。
+// Do not rely on discovery data: new fields and unknown devices must not leak credentials to logs.
 fn redact_fields(text: &str) -> String {
     let bytes = text.as_bytes();
     let mut safe = String::new();
@@ -112,6 +118,7 @@ fn redact_fields(text: &str) -> String {
         } else {
             while end < bytes.len() && !matches!(bytes[end], b'\r' | b'\n' | b',' | b';' | b'}') {
                 // 保留同一行后面的统计字段，例如 password=x sent=123。
+                // Preserve later statistics on the same line, for example password=x sent=123.
                 if bytes[end].is_ascii_whitespace() {
                     let remaining = &text[end..];
                     let next = remaining.trim_start();
@@ -190,6 +197,7 @@ impl Redactor {
         let mut result = Self::default();
         for (index, device) in devices.iter().enumerate() {
             // 编号只在本次清单中关联设备，不保留可跨日志追踪的 UUID。
+            // List-local aliases correlate devices without retaining UUIDs for cross-log tracking.
             let alias = format!("[DEVICE_{}]", index + 1);
             for text in [&device.service, &device.host, &device.name] {
                 if !text.is_empty() {
@@ -215,10 +223,13 @@ impl Redactor {
         result
     }
     /// 用于落盘/显示的副本；原始协议行仍可在内部解析，避免脱敏破坏控制标记。
+    /// Produce a storage/display copy; retain raw lines internally so redaction cannot break markers.
     pub fn text(&self, text: &str) -> String {
         let mut result = text.to_owned();
         // 失败响应体可能用十六进制编码名称/密钥，普通文本替换看不到原值。
         // 保留长度和状态，仅丢弃原始 body 字节。
+        // Response bodies may encode names/keys as hex, beyond plain-text replacement.
+        // Preserve length/status while hiding the raw body bytes.
         if let Some(start) = result.find(" | body[") {
             if let Some(end) = result[start..].find("]=") {
                 result.truncate(start + end + 2);
@@ -226,6 +237,7 @@ impl Redactor {
             }
         }
         // 用户目录及主机名会暴露账户/项目环境；日志诊断无需这些真实名称。
+        // User paths and hostnames expose account/project details that diagnostics do not need.
         for key in ["APPDATA", "LOCALAPPDATA", "USERPROFILE"] {
             if let Some(path) = std::env::var_os(key) {
                 let path = path.to_string_lossy();
@@ -266,6 +278,7 @@ impl Redactor {
         redact_identifiers(&redact_fields(&result))
     }
     /// 返回新 JSON，保留结构；敏感字段整体隐藏（包括嵌套对象），不改变原值。
+    /// Return a new JSON tree; hide entire sensitive fields, including objects, without mutating input.
     pub fn value(&self, value: &Value) -> Value {
         match value {
             Value::Object(fields) => Value::Object(

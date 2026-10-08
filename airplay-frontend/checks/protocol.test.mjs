@@ -5,6 +5,8 @@ import ts from 'typescript';
 
 // 仅将不依赖运行时模块的校验器转为 JS，使用 Node 内置测试，不额外引入测试框架。
 // 编译错误由 build 中的 vue-tsc 检查；此处验证实际 JSON 边界和失败行为。
+// Transpile the validator, which has no runtime imports, and use Node's built-in test runner.
+// vue-tsc checks types during build; these tests exercise JSON boundaries and failure behavior.
 const source = await readFile(new URL('../src/protocol.ts', import.meta.url), 'utf8');
 const { outputText } = ts.transpileModule(source, {
   compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
