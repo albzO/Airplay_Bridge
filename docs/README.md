@@ -9,6 +9,7 @@
 - [CLI 诊断](cli.md)：独立诊断工具入口。
 - [架构](architecture.md)：模块职责、音频与控制通道。
 - [代码阅读与修改指南](code-reading-guide.md)：关键入口、状态变化、数据流、参数单位和 TypeScript 兼容说明。
+- [播放回环排查](playback-loopback.md)：VoiceMeeter VAIO 延迟、原始全零音频的实机对照与设置保存方法。
 - [第三方依赖与来源](../THIRD_PARTY.md)：固定版本、使用范围、本地修改和参考资料。
 - [许可证状态](licensing.md)：已确认授权、具体待确认事项和发行材料。
 - [贡献指南](../CONTRIBUTING.md)：开发约定与验证方式。

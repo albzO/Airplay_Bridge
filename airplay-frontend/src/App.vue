@@ -92,7 +92,7 @@ const savedTheme = localStorage.getItem('theme');
 const theme = ref(savedTheme === 'light' || savedTheme === 'dark' ? savedTheme : 'system');
 const autostart = ref(false),
   startupSaving = ref(false),
-  captureEnabled = ref(true),
+  captureEnabled = ref(false),
   captureChanging = ref(false);
 const tone = computed(() => (playing.value ? 'green' : busy.value ? 'yellow' : 'red'));
 const deviceStates = ref<Record<string, string>>({}),
@@ -197,9 +197,15 @@ async function startupChanged() {
 }
 
 async function toggleCapture() {
+  initialCapturePending = false;
+  await setCaptureEnabled(!captureEnabled.value);
+}
+
+// 自动启动与手动开关走同一命令，页面状态在命令成功后更新；失败时保留关闭状态供重试。
+// Auto-start and manual toggles share one command; update state only on success and keep failures retryable.
+async function setCaptureEnabled(enabled: boolean) {
   if (busy.value || captureChanging.value) return;
   captureChanging.value = true;
-  const enabled = !captureEnabled.value;
   try {
     await invokeCommand('set_capture_enabled', { enabled });
     captureEnabled.value = enabled;
@@ -211,6 +217,17 @@ async function toggleCapture() {
   } finally {
     captureChanging.value = false;
   }
+}
+
+// 首次开启必须同时满足页面已显示和来源有效；无来源时保留一次自动开启机会。
+// 消耗机会后不再干预手动关闭，切换设备不会再次强制打开采集。
+// The first enable requires a rendered UI and valid source; defer it until selection if needed.
+// Consume that opportunity once, then respect manual disabling across source changes.
+async function startInitialCapture() {
+  if (disposed || !uiInitialized || !initialCapturePending || !source.value) return;
+  initialCapturePending = false;
+  if (captureEnabled.value) await call('monitor_source');
+  else await setCaptureEnabled(true);
 }
 
 function logDisplayPath(path: unknown) {
@@ -245,7 +262,7 @@ async function windowAction(action: string) {
 }
 
 async function selectSource(input: Input) {
-  if (busy.value || !input.channels) return;
+  if (busy.value || captureChanging.value || !input.channels) return;
   settings.value.endpoint = input.id;
   sourceOpen.value = false;
   await sourceChanged();
@@ -316,7 +333,8 @@ async function sourceChanged() {
   sourceWarning.value = '';
   settings.value.mapping = [0, (source.value?.channels || 0) > 1 ? 1 : 0];
   await persist();
-  await call('monitor_source');
+  if (uiInitialized && initialCapturePending) await startInitialCapture();
+  else await call('monitor_source');
 }
 
 function choose(card: (typeof cards.value)[number]) {
@@ -623,6 +641,8 @@ systemTheme.addEventListener('change', applyTheme);
 
 const unlisteners: (() => void)[] = [];
 let disposed = false;
+let uiInitialized = false;
+let initialCapturePending = true;
 onUnmounted(() => {
   disposed = true;
   systemTheme.removeEventListener('change', applyTheme);
@@ -659,8 +679,8 @@ watch(busy, () => (sourceOpen.value = false));
 onMounted(async () => {
   try {
     appVersion.value = await getVersion();
-    // 先订阅再 initialize/monitor_source，避免错过初始化期间的采集事件。
-    // Subscribe before initialize/monitor_source to avoid missing capture events during initialization.
+    // 先订阅再初始化及开启采集，避免错过首次创建来源时的电平和故障事件。
+    // Subscribe before initialization and enabling capture to catch the first source's levels and faults.
     await registerListener('stream-event', (payload) => {
       const decoded = decodeStreamEvent(payload);
       if (decoded) event(decoded);
@@ -686,7 +706,7 @@ onMounted(async () => {
     inputs.value = s.inputs;
     settings.value = s.settings;
     autostart.value = !!s.autostart;
-    captureEnabled.value = s.captureEnabled !== false;
+    captureEnabled.value = s.captureEnabled;
     logPath.value = '%APPDATA%/AirPlay Hub/logs';
     if (s.autostartError) error.value = '无法读取开机自启状态：' + s.autostartError;
     if (s.awakeError) {
@@ -699,9 +719,20 @@ onMounted(async () => {
     selection.value = cards.value[0]?.members.map((d) => d.name) || [];
     if (!s.backendAvailable) error.value = '缺少原生后端，请从完整 dist 文件夹启动';
     await persist();
-    if (source.value) await call('monitor_source');
-    ready.value = s.backendAvailable;
+    // 冷启动时桌面采集保持关闭。先提交页面状态，再跨过一次绘制，之后才创建 WASAPI 来源。
+    // 两次动画帧回调之间浏览器可完成首次绘制；页面卸载后不再自动开启采集。
+    // Keep desktop capture off on cold start. Commit UI state and allow a paint before creating WASAPI.
+    // Two animation frames allow the first paint in between; never auto-enable after the page unmounts.
+    await nextTick();
+    await new Promise<void>((resolve) => {
+      requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+    });
+    if (disposed) return;
     await invokeCommand('ui_ready', { inputs: inputs.value });
+    if (disposed) return;
+    uiInitialized = true;
+    await startInitialCapture();
+    ready.value = s.backendAvailable;
     if (ready.value) await refresh();
   } catch (e) {
     error.value = `桌面后端未就绪：${String(e)}`;
@@ -1199,7 +1230,7 @@ onMounted(async () => {
               <button
                 v-for="input in group.items"
                 :key="input.id"
-                :disabled="!input.channels"
+                :disabled="busy || captureChanging || !input.channels"
                 :aria-pressed="settings.endpoint === input.id"
                 @click="selectSource(input)"
               >
@@ -1212,7 +1243,7 @@ onMounted(async () => {
           </div>
           <button
             class="source-trigger"
-            :disabled="busy"
+            :disabled="busy || captureChanging"
             :aria-expanded="sourceOpen"
             aria-controls="source-options"
             :aria-labelledby="
@@ -1246,7 +1277,9 @@ onMounted(async () => {
         ><button
           v-else
           class="primary"
-          :disabled="!ready || !selection.length || !settings.endpoint || refreshing"
+          :disabled="
+            !ready || !selection.length || !settings.endpoint || refreshing || captureChanging
+          "
           @click="start()"
         >
           开始串流</button
