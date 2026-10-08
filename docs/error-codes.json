@@ -212,6 +212,15 @@
     ]
   },
   {
+    "code": "CAPTURE_LOOPBACK_STALLED",
+    "exit": 1,
+    "message": "播放端点有输出，但回环采集持续返回全零音频。",
+    "action": "连接前最多自动重建采集三次；播放中先停止串流，再重新开启采集。若持续发生，检查音频驱动和共享模式。",
+    "patterns": [
+      "播放设备有输出但 loopback 原始音频持续全零"
+    ]
+  },
+  {
     "code": "CAPTURE_UNSTABLE",
     "exit": 1,
     "message": "采集管线未能在期限内稳定。",

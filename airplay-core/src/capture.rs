@@ -9,6 +9,9 @@
 //! float32 stereo. See convert/live for resampling and transport, source for preview lifetime.
 //! Drop pairs COM/system allocations with cleanup. Every acquired packet needs ReleaseBuffer,
 //! including error paths, or the device buffer remains occupied.
+mod health;
+pub(crate) use health::LoopbackStalled;
+use health::{LoopbackHealth, PlaybackMonitor};
 use serde::{Deserialize, Serialize};
 use std::{
     error::Error,
@@ -465,6 +468,9 @@ pub struct CaptureProgress {
     packet_peaks: [f32; 2],
     windows_endpoint_peak: Option<f32>,
     windows_endpoint_peak_age_ms: Option<f64>,
+    windows_endpoint_muted: Option<bool>,
+    windows_endpoint_volume: Option<f32>,
+    pub(crate) loopback_suspect: bool,
     packets: u64,
     event_timeout_packets: u64,
     synthesized_silent_frames: u64,
@@ -477,6 +483,32 @@ pub struct CaptureProgress {
     pub timestamp_errors: u64,
     pub repaired_gaps: u64,
     pub repaired_gap_frames: u64,
+}
+// 原始包已复制/检查后才能释放，再查询端点状态；任何查询失败都不能单独判定故障。
+// Inspect/copy the raw packet before releasing it, then query controls; query failures alone are not faults.
+fn check_loopback_health(
+    monitor: &mut Option<PlaybackMonitor>,
+    health: &mut LoopbackHealth,
+    progress: Option<&std::sync::Mutex<CaptureProgress>>,
+    raw_nonzero: bool,
+) -> Result<()> {
+    if let Some(monitor) = monitor {
+        let now = Instant::now();
+        let (reading, age_ms) = monitor.read(now);
+        let suspect = health.observe(now, reading, raw_nonzero);
+        if let Some(progress) = progress {
+            let mut p = progress.lock().unwrap();
+            p.windows_endpoint_peak = reading.peak;
+            p.windows_endpoint_peak_age_ms = Some(age_ms);
+            p.windows_endpoint_muted = reading.muted;
+            p.windows_endpoint_volume = reading.volume;
+            p.loopback_suspect = suspect;
+        }
+        if health.stalled(now) {
+            return Err(LoopbackStalled.into());
+        }
+    }
+    Ok(())
 }
 // Missing device frames are recoverable only when the packet clock agrees.
 fn recoverable_gap(
@@ -613,19 +645,12 @@ pub fn live_selected_diagnosed(
     let capture_event = CaptureEvent::new()?;
     let (_com, client, capture, format, _blob, input) =
         open_source_with_event(root, endpoint, Some(capture_event.0))?;
-    let meter = if progress.is_some() && input.flow == "playback" {
-        (|| -> Result<windows::Win32::Media::Audio::Endpoints::IAudioMeterInformation> {
-            let enumerator: IMMDeviceEnumerator =
-                unsafe { CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL)? };
-            let wide: Vec<u16> = input.id.encode_utf16().chain(Some(0)).collect();
-            let device = unsafe { enumerator.GetDevice(windows::core::PCWSTR(wide.as_ptr()))? };
-            Ok(unsafe { device.Activate(CLSCTX_ALL, None)? })
-        })()
-        .ok()
+    let mut monitor = if progress.is_some() && input.flow == "playback" {
+        PlaybackMonitor::open(&input.id).ok()
     } else {
         None
     };
-    let mut meter_updated: Option<Instant> = None;
+    let mut loopback_health = LoopbackHealth::default();
     let target = if seconds == 0 {
         u64::MAX
     } else {
@@ -737,6 +762,7 @@ pub fn live_selected_diagnosed(
                     if let Some(progress) = progress {
                         progress.lock().unwrap().synthesized_silent_frames += count;
                     }
+                    check_loopback_health(&mut monitor, &mut loopback_health, progress, false)?;
                     let delivered = sink(&buffer, format.rate);
                     if let Some(log) = diagnostic.as_mut() {
                         log(
@@ -871,13 +897,28 @@ pub fn live_selected_diagnosed(
             timeline_silence = false;
         }
         let mut raw_summary = serde_json::Value::Null;
+        let mut raw_nonzero = false;
         buffer.clear();
         if flags & AUDCLNT_BUFFERFLAGS_SILENT.0 as u32 != 0 {
             silent_packets += 1;
             buffer.resize(used * 2, 0.0);
         } else {
-            if pointer.is_null() && used > 0 {
+            if pointer.is_null() {
                 return Err("采集缓冲区为空".into());
+            }
+            // 判断原始全部声道是否全零，不受 mapping、重采样或后端发送影响。
+            // 检查必须发生在 ReleaseBuffer 前；非零字节采用保守策略，避免误重建。
+            // Inspect every raw channel independently of mapping/resampling/backend delivery.
+            // Inspect before ReleaseBuffer; treat any nonzero byte conservatively to avoid false reopenings.
+            if monitor.is_some() {
+                raw_nonzero = unsafe {
+                    std::slice::from_raw_parts(
+                        pointer,
+                        available as usize * format.block_align as usize,
+                    )
+                }
+                .iter()
+                .any(|byte| *byte != 0);
             }
             if used > 0 {
                 if diagnostic.is_some() && diagnostics_active() {
@@ -914,6 +955,7 @@ pub fn live_selected_diagnosed(
             }
         }
         packet.release()?;
+        check_loopback_health(&mut monitor, &mut loopback_health, progress, raw_nonzero)?;
         let received = Instant::now();
         let mut diagnostic_entry = diagnostic.as_ref().filter(|_|diagnostics_active()).map(|_| {
             let mut hash = 0xcbf29ce484222325u64;
@@ -959,18 +1001,13 @@ pub fn live_selected_diagnosed(
                     }
                 }
             }
-            if meter_updated.is_none_or(|t| t.elapsed() >= Duration::from_millis(100)) {
-                p.windows_endpoint_peak = meter
-                    .as_ref()
-                    .and_then(|m| unsafe { m.GetPeakValue().ok() });
-                meter_updated = Some(Instant::now());
-            }
-            p.windows_endpoint_peak_age_ms =
-                meter_updated.map(|t| t.elapsed().as_secs_f64() * 1000.0);
             if let Some(entry) = diagnostic_entry.as_mut() {
                 entry["windows_endpoint_peak"] = serde_json::json!(p.windows_endpoint_peak);
                 entry["windows_endpoint_peak_age_ms"] =
                     serde_json::json!(p.windows_endpoint_peak_age_ms);
+                entry["windows_endpoint_muted"] = serde_json::json!(p.windows_endpoint_muted);
+                entry["windows_endpoint_volume"] = serde_json::json!(p.windows_endpoint_volume);
+                entry["loopback_suspect"] = serde_json::json!(p.loopback_suspect);
             }
             if flags & AUDCLNT_BUFFERFLAGS_DATA_DISCONTINUITY.0 as u32 != 0 {
                 p.discontinuities += 1;

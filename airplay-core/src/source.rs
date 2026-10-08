@@ -22,14 +22,17 @@ use std::{
     time::{Duration, Instant},
 };
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
+const LOOPBACK_REOPEN_LIMIT: u32 = 3;
 enum Event {
     Audio(Vec<f32>, u32, CaptureProgress, Instant),
 }
 #[derive(Default)]
 /// 稳定性看数据包连续到达，不看振幅：系统在空闲时生成的静音也算有效数据。
 /// 故障或包间隔超过 250 ms 会重置连续窗口；500 ms 稳定且至少 3 包才可连接。
+/// 播放端点电平与原始包相矛盾时暂停计时，由回环健康检查决定是否重建。
 /// Readiness measures continuous packet delivery, not amplitude; intentional idle silence is valid.
 /// Faults or gaps over 250 ms reset the window; require 500 ms stability and at least three packets.
+/// Contradictory playback meter/raw PCM suspends warmup; the loopback health check decides whether to reopen.
 struct Warmup {
     since: Option<Instant>,
     last: Option<Instant>,
@@ -38,6 +41,12 @@ struct Warmup {
 }
 impl Warmup {
     fn observe(&mut self, now: Instant, progress: CaptureProgress) {
+        // 包连续到达不代表取得真实音频；端点电平与原始包矛盾时不得宣告就绪。
+        // Continuous packets do not guarantee valid audio; contradictory endpoint/raw PCM suspends readiness.
+        if progress.loopback_suspect {
+            *self = Self::default();
+            return;
+        }
         let faults = (
             progress.discontinuities,
             progress.timestamp_errors,
@@ -49,6 +58,7 @@ impl Warmup {
                 .is_some_and(|last| now.duration_since(last) > Duration::from_millis(250))
         {
             self.since = None;
+            self.packets = 0;
         }
         self.since.get_or_insert(now);
         self.last = Some(now);
@@ -67,6 +77,150 @@ impl Warmup {
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn ready_warmup() -> Warmup {
+        let now = Instant::now();
+        Warmup {
+            since: Some(now - Duration::from_secs(1)),
+            last: Some(now),
+            packets: 3,
+            faults: (0, 0, 0),
+        }
+    }
+    fn test_source() -> Source {
+        Source {
+            endpoint: "test".into(),
+            mapping: Mutex::new([0, 1]),
+            stop: AtomicBool::new(false),
+            done: AtomicBool::new(false),
+            subscriber: Mutex::new(None),
+            progress: Mutex::new(CaptureProgress::default()),
+            worker: Mutex::new(None),
+            error: Mutex::new(None),
+            info: Mutex::new(Value::Null),
+            diagnostic_enabled: AtomicBool::new(false),
+            warmup: Mutex::new(ready_warmup()),
+        }
+    }
+    #[test]
+    fn zero_pcm_with_active_endpoint_cannot_pass_continuity_warmup() {
+        let now = Instant::now();
+        let mut warmup = ready_warmup();
+        let mut progress = CaptureProgress::default();
+        progress.loopback_suspect = true;
+        warmup.observe(now, progress);
+        assert!(!warmup.ready(now));
+        progress.loopback_suspect = false;
+        for ms in [10, 110, 210, 310, 410] {
+            warmup.observe(now + Duration::from_millis(ms), progress);
+        }
+        assert!(!warmup.ready(now + Duration::from_millis(410)));
+        warmup.observe(now + Duration::from_millis(510), progress);
+        assert!(warmup.ready(now + Duration::from_millis(510)));
+    }
+    #[test]
+    fn readiness_rechecks_health_even_before_the_next_audio_callback() {
+        let source = test_source();
+        source.progress.lock().unwrap().loopback_suspect = true;
+        let cancelled = AtomicBool::new(false);
+        thread::scope(|scope| {
+            scope.spawn(|| {
+                thread::sleep(Duration::from_millis(40));
+                cancelled.store(true, Ordering::Relaxed);
+            });
+            let error = source.wait_ready(&cancelled).unwrap_err();
+            assert_eq!(error.to_string(), "启动采集已取消");
+        });
+    }
+    #[test]
+    fn reopening_resets_readiness_and_counters_and_preserves_the_source() {
+        let source = test_source();
+        source.progress.lock().unwrap().discontinuities = 10;
+        let mut captures = 0;
+        let mut reopens = Vec::new();
+        let report = source
+            .capture_with_recovery(
+                || {
+                    captures += 1;
+                    if captures == 1 {
+                        return Err(capture::LoopbackStalled.into());
+                    }
+                    assert_eq!(source.progress.lock().unwrap().discontinuities, 0);
+                    assert!(!source.warmup.lock().unwrap().ready(Instant::now()));
+                    if captures == 2 {
+                        Err(capture::LoopbackStalled.into())
+                    } else {
+                        Ok(json!({"frames":480}))
+                    }
+                },
+                |attempt, previous| {
+                    reopens.push(attempt);
+                    if attempt == 1 {
+                        assert_eq!(previous.discontinuities, 10);
+                    }
+                },
+            )
+            .unwrap();
+        assert_eq!(report["frames"], 480);
+        assert_eq!(captures, 3);
+        assert_eq!(reopens, [1, 2]);
+        assert!(source.is_running());
+    }
+    #[test]
+    fn recovery_is_bounded_and_never_retries_unrelated_failures() {
+        let source = test_source();
+        let mut captures = 0;
+        let mut reopens = 0;
+        let error = source
+            .capture_with_recovery(
+                || {
+                    captures += 1;
+                    Err(capture::LoopbackStalled.into())
+                },
+                |_, _| reopens += 1,
+            )
+            .unwrap_err();
+        assert!(error.is::<capture::LoopbackStalled>());
+        assert_eq!(captures, 4);
+        assert_eq!(reopens, 3);
+        let error = source
+            .capture_with_recovery(
+                || Err("invalid timestamp".into()),
+                |_, _| panic!("unrelated failure must not reopen"),
+            )
+            .unwrap_err();
+        assert_eq!(error.to_string(), "invalid timestamp");
+    }
+    #[test]
+    fn active_subscription_prevents_clock_reset_and_stopping_cancels_recovery() {
+        let source = test_source();
+        let (tx, _rx) = mpsc::sync_channel(64);
+        *source.subscriber.lock().unwrap() = Some(Subscription {
+            tx,
+            fault: Arc::new(Mutex::new(None)),
+            diagnostic_tx: None,
+            diagnostic_drops: Arc::new(AtomicU64::new(0)),
+        });
+        let error = source
+            .capture_with_recovery(
+                || Err(capture::LoopbackStalled.into()),
+                |_, _| panic!("active streams must not reopen"),
+            )
+            .unwrap_err();
+        assert!(error.is::<capture::LoopbackStalled>());
+        source.subscriber.lock().unwrap().take();
+        let mut captures = 0;
+        let report = source
+            .capture_with_recovery(
+                || {
+                    captures += 1;
+                    Err(capture::LoopbackStalled.into())
+                },
+                |_, _| source.stop.store(true, Ordering::Relaxed),
+            )
+            .unwrap();
+        assert!(report.is_null());
+        assert_eq!(captures, 1);
+    }
     #[test]
     fn warmup_requires_continuity_and_restarts_after_faults_or_gaps() {
         let start = Instant::now();
@@ -89,24 +243,38 @@ mod tests {
         assert!(!warmup.ready(start + Duration::from_millis(1400)));
     }
     #[test]
-    #[ignore = "reads real default playback endpoint startup for two seconds; no HomePod"]
+    #[ignore = "reopens a real playback endpoint three times; no HomePod connection"]
     fn real_playback_startup_progress() {
+        let endpoint = std::env::var("AIRPLAY_LOOPBACK_ENDPOINT")
+            .unwrap_or_else(|_| capture::default_endpoint("playback").unwrap());
         let input = capture::enumerate()
             .unwrap()
             .into_iter()
-            .find(|i| i.id == capture::default_endpoint("playback").unwrap())
+            .find(|i| i.id == endpoint && i.flow == "playback")
             .unwrap();
         let root = std::env::current_dir().unwrap().join("build/source-checks");
-        let source = Source::start(root, input.id, [0, 1], Arc::new(|_| {}));
-        source.wait_ready(&AtomicBool::new(false)).unwrap();
-        thread::sleep(Duration::from_secs(2));
-        let progress = *source.progress.lock().unwrap();
-        println!(
-            "default playback endpoint startup progress: {}",
-            serde_json::to_string(&progress).unwrap()
-        );
-        assert!(source.is_running());
-        source.stop();
+        for attempt in 1..=3 {
+            let source = Source::start(
+                root.clone(),
+                input.id.clone(),
+                [0, if input.channels.unwrap() > 1 { 1 } else { 0 }],
+                Arc::new(|_| {}),
+            );
+            let ready = source.wait_ready(&AtomicBool::new(false));
+            if ready.is_ok() {
+                thread::sleep(Duration::from_secs(2));
+            }
+            let progress = *source.progress.lock().unwrap();
+            let running = source.is_running();
+            source.stop();
+            println!(
+                "playback startup attempt {attempt}: {}",
+                serde_json::to_string(&progress).unwrap()
+            );
+            ready.unwrap();
+            assert!(running);
+            assert!(!progress.loopback_suspect);
+        }
     }
     #[test]
     #[ignore = "starts/stops/restarts real default recording endpoint capture; no HomePod"]
@@ -179,19 +347,7 @@ mod tests {
     }
     #[test]
     fn stream_detach_keeps_source_alive_and_next_attach_has_no_old_audio() {
-        let source = Arc::new(Source {
-            endpoint: "test".into(),
-            mapping: Mutex::new([0, 1]),
-            stop: AtomicBool::new(false),
-            done: AtomicBool::new(false),
-            subscriber: Mutex::new(None),
-            progress: Mutex::new(CaptureProgress::default()),
-            worker: Mutex::new(None),
-            error: Mutex::new(None),
-            info: Mutex::new(Value::Null),
-            diagnostic_enabled: AtomicBool::new(false),
-            warmup: Mutex::new(Warmup::default()),
-        });
+        let source = Arc::new(test_source());
         for value in [0.25, 0.75] {
             let producer = source.clone();
             let worker = thread::spawn(move || {
@@ -306,11 +462,13 @@ impl Source {
                     let _ = writeln!(
                         file,
                         "{}",
-                        json!({"source_id":stamp,"endpoint":s.endpoint,"elapsed_ms":started.elapsed().as_secs_f64()*1000.0,"entry":privacy.value(&entry)})
+                        privacy.value(&json!({"source_id":stamp,"endpoint":s.endpoint,"elapsed_ms":started.elapsed().as_secs_f64()*1000.0,"entry":entry}))
                     );
                 }
             };
-            write_startup(json!({"kind":"source_requested","mapping":*s.mapping.lock().unwrap()}));
+            write_startup(
+                json!({"kind":"source_requested","mapping":*s.mapping.lock().unwrap(),"process_id":std::process::id(),"loopback_health_check":"endpoint_vs_raw_pcm_v1"}),
+            );
             let mut peaks = [0f32; 2];
             let mut updated = Instant::now();
             let mut summary_updated = Instant::now();
@@ -334,63 +492,70 @@ impl Source {
                     }
                 }
             };
-            let result = capture::live_selected_diagnosed(
-                &root,
-                0,
-                &s.stop,
-                Some(&s.endpoint),
-                Some(&s.mapping),
-                Some(&s.progress),
-                Some(&mut diagnostic),
-                Some(&s.diagnostic_enabled),
-                |samples, rate| {
-                    let progress = *s.progress.lock().unwrap();
-                    if !samples.is_empty() && rate > 0 {
-                        s.warmup.lock().unwrap().observe(Instant::now(), progress);
-                    }
-                    for frame in samples.chunks_exact(2) {
-                        for ch in 0..2 {
-                            if frame[ch].is_finite() {
-                                peaks[ch] = peaks[ch].max(frame[ch].abs());
-                                summary_peaks[ch] = summary_peaks[ch].max(frame[ch].abs());
+            let capture = || {
+                capture::live_selected_diagnosed(
+                    &root,
+                    0,
+                    &s.stop,
+                    Some(&s.endpoint),
+                    Some(&s.mapping),
+                    Some(&s.progress),
+                    Some(&mut diagnostic),
+                    Some(&s.diagnostic_enabled),
+                    |samples, rate| {
+                        let progress = *s.progress.lock().unwrap();
+                        if !samples.is_empty() && rate > 0 {
+                            s.warmup.lock().unwrap().observe(Instant::now(), progress);
+                        }
+                        for frame in samples.chunks_exact(2) {
+                            for ch in 0..2 {
+                                if frame[ch].is_finite() {
+                                    peaks[ch] = peaks[ch].max(frame[ch].abs());
+                                    summary_peaks[ch] = summary_peaks[ch].max(frame[ch].abs());
+                                }
                             }
                         }
-                    }
-                    if started.elapsed() < Duration::from_secs(11)
-                        && summary_updated.elapsed() >= Duration::from_secs(1)
-                    {
-                        write_startup(
-                            json!({"kind":"startup_progress","rate":rate,"peaks":summary_peaks,"capture":progress,"ready":s.warmup.lock().unwrap().ready(Instant::now())}),
-                        );
-                        summary_peaks = [0.; 2];
-                        summary_updated = Instant::now();
-                    }
-                    if updated.elapsed() >= Duration::from_millis(100) {
-                        emit(json!({"endpoint":s.endpoint,"peaks":peaks}));
-                        peaks = [0.; 2];
-                        updated = Instant::now();
-                    }
-                    let mut subscriber = s.subscriber.lock().unwrap();
-                    if let Some(sub) = subscriber.as_ref() {
-                        let event = Event::Audio(
-                            samples.to_vec(),
-                            rate,
-                            *s.progress.lock().unwrap(),
-                            Instant::now(),
-                        );
-                        if let Err(error) = sub.tx.try_send(event) {
-                            if matches!(error, mpsc::TrySendError::Full(_)) {
-                                *sub.fault.lock().unwrap() = Some(
-                                    "持续采集分支队列已满，处理跟不上采集；电平预览继续运行".into(),
-                                );
-                            }
-                            *subscriber = None;
-                            s.diagnostic_enabled.store(false, Ordering::Relaxed);
+                        if started.elapsed() < Duration::from_secs(11)
+                            && summary_updated.elapsed() >= Duration::from_secs(1)
+                        {
+                            write_startup(
+                                json!({"kind":"startup_progress","rate":rate,"peaks":summary_peaks,"capture":progress,"ready":s.warmup.lock().unwrap().ready(Instant::now())}),
+                            );
+                            summary_peaks = [0.; 2];
+                            summary_updated = Instant::now();
                         }
-                    }
-                    Ok(())
-                },
-            );
+                        if updated.elapsed() >= Duration::from_millis(100) {
+                            emit(json!({"endpoint":s.endpoint,"peaks":peaks}));
+                            peaks = [0.; 2];
+                            updated = Instant::now();
+                        }
+                        let mut subscriber = s.subscriber.lock().unwrap();
+                        if let Some(sub) = subscriber.as_ref() {
+                            let event = Event::Audio(
+                                samples.to_vec(),
+                                rate,
+                                *s.progress.lock().unwrap(),
+                                Instant::now(),
+                            );
+                            if let Err(error) = sub.tx.try_send(event) {
+                                if matches!(error, mpsc::TrySendError::Full(_)) {
+                                    *sub.fault.lock().unwrap() = Some(
+                                        "持续采集分支队列已满，处理跟不上采集；电平预览继续运行"
+                                            .into(),
+                                    );
+                                }
+                                *subscriber = None;
+                                s.diagnostic_enabled.store(false, Ordering::Relaxed);
+                            }
+                        }
+                        Ok(())
+                    },
+                )
+            };
+            let result = s.capture_with_recovery(capture, |attempt, previous| {
+                write_startup(json!({"kind":"loopback_reopen","attempt":attempt,"limit":LOOPBACK_REOPEN_LIMIT,"reason":"active_output_zero_raw_pcm","capture":previous}));
+                emit(json!({"endpoint":s.endpoint,"peaks":[0.,0.],"warning":format!("播放回环未取得音频，正在重新初始化采集（{attempt}/{LOOPBACK_REOPEN_LIMIT}）")}));
+            });
             let error = result
                 .err()
                 .map(|e| crate::failure::describe(&e.to_string(), "CAPTURE_INIT_FAILED"));
@@ -406,6 +571,53 @@ impl Source {
         });
         *source.worker.lock().unwrap() = Some(worker);
         source
+    }
+    /// 复用 Source 对象但释放整套 WASAPI 客户端后重开，等价于采集开关的资源重置。
+    /// 只在尚未订阅串流时恢复，最多三次；已订阅时保留故障，避免重置时钟造成撕裂。
+    /// Reuse Source but reopen WASAPI after releasing the old client, matching the capture toggle's reset.
+    /// Recover only before subscription, at most three times; preserve live faults rather than reset a running clock.
+    fn capture_with_recovery(
+        &self,
+        mut capture: impl FnMut() -> Result<Value>,
+        mut reopened: impl FnMut(u32, CaptureProgress),
+    ) -> Result<Value> {
+        let mut attempts = 0;
+        loop {
+            let result = capture();
+            if !result
+                .as_ref()
+                .err()
+                .is_some_and(|error| error.is::<capture::LoopbackStalled>())
+            {
+                return result;
+            }
+            // 与订阅登记共用这把锁：重建期间必须先撤销就绪，再允许新的串流登记。
+            // Share the subscription lock: revoke readiness before a new stream can attach during reopening.
+            let subscriber = self.subscriber.lock().unwrap();
+            if subscriber.is_some() || attempts >= LOOPBACK_REOPEN_LIMIT {
+                return result;
+            }
+            let previous = *self.progress.lock().unwrap();
+            *self.warmup.lock().unwrap() = Warmup::default();
+            *self.progress.lock().unwrap() = CaptureProgress::default();
+            drop(subscriber);
+            if self.stop.load(Ordering::Relaxed) {
+                return Ok(Value::Null);
+            }
+            attempts += 1;
+            reopened(attempts, previous);
+            // 给旧客户端释放后的音频引擎 160 ms；按 20 ms 检查停止，关闭采集无需等完整重试。
+            // Allow 160 ms after client release; poll stop every 20 ms so disabling capture cancels recovery promptly.
+            for _ in 0..8 {
+                if self.stop.load(Ordering::Relaxed) {
+                    return Ok(Value::Null);
+                }
+                thread::sleep(Duration::from_millis(20));
+            }
+            if self.stop.load(Ordering::Relaxed) {
+                return Ok(Value::Null);
+            }
+        }
     }
     pub fn is_running(&self) -> bool {
         !self.done.load(Ordering::Acquire)
@@ -429,7 +641,8 @@ impl Source {
                     .unwrap_or("采集器已结束".into())
                     .into());
             }
-            if self.warmup.lock().unwrap().ready(Instant::now()) {
+            let suspect = self.progress.lock().unwrap().loopback_suspect;
+            if !suspect && self.warmup.lock().unwrap().ready(Instant::now()) {
                 return Ok(());
             }
             if started.elapsed() > Duration::from_secs(8) {
@@ -467,8 +680,10 @@ impl Source {
         let (diagnostic_tx, diagnostic_rx) = mpsc::sync_channel(1024);
         let diagnostic_drops = Arc::new(AtomicU64::new(0));
         let fault = Arc::new(Mutex::new(None));
-        let initial = *self.progress.lock().unwrap();
-        {
+        // 网络认证期间预览采集也可能重建，挂接时必须重新核对当前就绪状态。
+        // Preview can reopen during network authentication; recheck readiness when attaching.
+        let initial = loop {
+            self.wait_ready(stop)?;
             let mut subscriber = self.subscriber.lock().unwrap();
             if subscriber.is_some() {
                 return Err("已有串流使用持续采集器".into());
@@ -482,13 +697,21 @@ impl Source {
                     .unwrap_or("持续采集器已结束".into())
                     .into());
             }
+            if !self.warmup.lock().unwrap().ready(Instant::now()) {
+                continue;
+            }
+            let initial = *self.progress.lock().unwrap();
+            if initial.loopback_suspect {
+                continue;
+            }
             *subscriber = Some(Subscription {
                 tx,
                 fault: fault.clone(),
                 diagnostic_tx: diagnostic.is_some().then_some(diagnostic_tx),
                 diagnostic_drops: diagnostic_drops.clone(),
             });
-        }
+            break initial;
+        };
         self.diagnostic_enabled
             .store(diagnostic.is_some(), Ordering::Relaxed);
         if let Some(log) = diagnostic.as_mut() {

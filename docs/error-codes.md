@@ -41,6 +41,7 @@ HTTP 状态码、Windows HRESULT、HAP TLV error 是三个独立命名空间，�
 | `CAPTURE_QUEUE_FULL` | 1 | 采集分支队列已满。 | 检查处理速度、设备时钟及调度；不等同于内存泄漏。 |
 | `PCM_QUEUE_FULL` | 1 | PCM 队列已满。 | 检查发送阻塞、处理速度和时钟漂移。 |
 | `CAPTURE_UNSTABLE` | 1 | 采集管线未能在期限内稳定。 | 检查来源后重试；正常静音本身不是故障。 |
+| `CAPTURE_LOOPBACK_STALLED` | 1 | 播放端点有输出，但回环原始音频持续全零。 | 连接前最多自动重建采集三次；播放中先停止串流，再重新开启采集。 |
 | `CAPTURE_TIMESTAMP_INVALID` | 1 | 采集时间戳无效或倒退。 | 检查驱动及设备时钟，保留诊断日志。 |
 | `CAPTURE_POSITION_INVALID` | 1 | 采集位置倒退或重复。 | 重新开启采集并检查驱动。 |
 | `CAPTURE_GAP_EXCESSIVE` | 1 | 采集缺口超过恢复上限。 | 检查睡眠恢复、驱动或系统调度。 |
