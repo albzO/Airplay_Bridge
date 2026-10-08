@@ -45,9 +45,17 @@
 
 These independent probes reproduce the raw WASAPI failure without Vue, Source, resampling, or native AirPlay transport. All four event/polling and STA/MTA combinations failed in this run; changing those settings is not a demonstrated fix.
 
-用户确认 VoiceMeeter 一直运行，只重开本软件，因此 VoiceMeeter 自身刚启动不是该次现象的前提。当前播放软件和内容类型仍需核实：本机 Apple Music 进程存在，但这不能证明探针期间的声音来自它，或内容受到保护。微软说明受保护音频可能不允许回环采集；应先暂停原播放器，用同一播放端点播放普通本地 PCM/WAV，再比较原始包。见 [微软 Loopback Recording 说明](https://learn.microsoft.com/en-us/windows/win32/coreaudio/loopback-recording)。正常静音、受保护内容和客户端/驱动异常不能仅凭全零包区分，不应无限重试或把它直接标成某个驱动的确定缺陷。
+用户确认 VoiceMeeter 一直运行，只重开本软件，因此 VoiceMeeter 自身刚启动不是该次现象的前提。随后改播自行生成的普通 WAV 测试音，端点电平约 0.08。Apple Music 进程仍在时，四种组合共 16 次中 11 次复现；用户完全退出 Apple Music 后，测试前后均确认进程不存在，相同组合 16 次仍有 11 次复现。因此本轮证据不支持把 Apple Music 或受保护音频作为根因。微软确实说明受保护音频可能不允许回环采集，但不能仅凭全零就作此判断，见 [微软 Loopback Recording 说明](https://learn.microsoft.com/en-us/windows/win32/coreaudio/loopback-recording)。
 
-VoiceMeeter remained running while only this app was reopened. Verify the playback source and compare ordinary local PCM/WAV on the same endpoint before assigning the cause to initialization or a driver. A running Apple Music process alone does not establish protected playback.
+VoiceMeeter remained running while only this app was reopened. Ordinary generated WAV playback reproduced the failure with Apple Music fully exited; this run does not support attributing the fault to Apple Music or protected content.
+
+PCM16 自动转换也不是已验证的修复：12 次转换采集中，所有包都有非零字节，但 3 次在 500 ms 后只有约 0.0000305 的量化噪声，没有振幅约 0.08 的测试音；另有间歇丢失。因此不能把转换后的非零字节直接当成恢复证据，也不能据此加入格式降级。项目 Source 的连续 3 次实机初始化取得测试音、未重建，这仅验证这 3 个样本，不能证明之后稳定。
+
+PCM16 conversion can dither silent input into nonzero bytes. Check decoded signal amplitude before claiming recovery: three of twelve converted captures contained only about one PCM16 least-significant bit after warmup. Do not add a format fallback based on byte presence alone.
+
+环境线索：Windows 11 build 26200、VoiceMeeter 3.1.2.2、实际 VAIO 驱动 3.4.1.7；保存的 VAIO latency 数值为 768、LoopBack 为 1。注册表值不能代替当前运行状态。官方 2026 年 9 月更新说明列出 VAIO 驱动 3.4.1.8 对 STRICT 同步模式的修复，描述旧模式在延迟大于 5 ms 时不能正确工作。当前是否采用 STRICT 尚待核实，应先比较 NORMAL 模式及实际 VAIO 延迟，再决定是否需要更改项目初始化。见 [官方 VoiceMeeter 更新说明](https://voicemeeter.com/voicemeeter-updates-september-2026/)。
+
+The installed VAIO driver is 3.4.1.7. The vendor lists a STRICT synchronization fix in 3.4.1.8; verify the live synchronization mode and latency before assigning causality. Saved registry values alone are not live driver state.
 
 探针统计只保存包数、电平、等待模式等诊断数值，没有录音和端点标识。正式启动日志中的设备标识已脱敏，不能用相同的脱敏占位符证明两次采集选择了同一个端点。
 
