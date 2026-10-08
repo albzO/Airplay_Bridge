@@ -35,29 +35,7 @@
 
 端点电平在端点音量调整前测量，因此不能仅凭电平非零触发恢复，需同时查询静音与音量。接口约定见 [微软 IAudioMeterInformation 说明](https://learn.microsoft.com/en-us/windows/win32/api/endpointvolume/nn-endpointvolume-iaudiometerinformation)。
 
-2026-10-09 实机排查：异常会话的原始包为全零，端点电平约 0.39，发送端无丢包记录；这将排查范围缩小到采集路径，但不能单凭日志判断是 WASAPI、驱动还是初始化时序。音乐播放时，对两个活跃播放端点（包含 VoiceMeeter）分别进行了事件驱动和轮询采集，每种方式重开三次，共 12 次；项目 Source 线程另重开六次。均持续取得非零音频，未复现半秒后无声。因此保留原初始化模式，加入上述有界恢复；这些短时采集检查不能代替首次登录、AirPlay 播放和撕裂声音的复测。
-
-后续排查已在独立程序中复现，不能再把上述短时成功当成问题已消除：
-
-- 直接调用 WASAPI 的 Rust 探针共 12 次启动，3 次在前少量非零包之后持续全零。请求缓冲时长为 0 或 100 ms、是否事先枚举全部端点，都出现过失败。
-- 失败客户端再保持运行 2 秒仍为全零；同客户端 Stop/Reset/Start、COM 消息派发、额外无声播放流，在对应失败样本中均未恢复。会话音量为 1 且未静音。
-- 不依赖 Rust 或项目代码的 C++ 探针，在同一次测试中固定一个活跃 VoiceMeeter 播放端点，交错启动事件/轮询与 STA/MTA 四种组合，各 4 次。11/16 次出现原始全零与即时端点电平大于 0.01 连续矛盾至少 500 ms；四种组合都发生失败。数据包连续到达，不能据此改线程模式或等待方式并宣称修复。
-
-These independent probes reproduce the raw WASAPI failure without Vue, Source, resampling, or native AirPlay transport. All four event/polling and STA/MTA combinations failed in this run; changing those settings is not a demonstrated fix.
-
-用户确认 VoiceMeeter 一直运行，只重开本软件，因此 VoiceMeeter 自身刚启动不是该次现象的前提。随后改播自行生成的普通 WAV 测试音，端点电平约 0.08。Apple Music 进程仍在时，四种组合共 16 次中 11 次复现；用户完全退出 Apple Music 后，测试前后均确认进程不存在，相同组合 16 次仍有 11 次复现。因此本轮证据不支持把 Apple Music 或受保护音频作为根因。微软确实说明受保护音频可能不允许回环采集，但不能仅凭全零就作此判断，见 [微软 Loopback Recording 说明](https://learn.microsoft.com/en-us/windows/win32/coreaudio/loopback-recording)。
-
-VoiceMeeter remained running while only this app was reopened. Ordinary generated WAV playback reproduced the failure with Apple Music fully exited; this run does not support attributing the fault to Apple Music or protected content.
-
-PCM16 自动转换也不是已验证的修复：12 次转换采集中，所有包都有非零字节，但 3 次在 500 ms 后只有约 0.0000305 的量化噪声，没有振幅约 0.08 的测试音；另有间歇丢失。因此不能把转换后的非零字节直接当成恢复证据，也不能据此加入格式降级。项目 Source 的连续 3 次实机初始化取得测试音、未重建，这仅验证这 3 个样本，不能证明之后稳定。
-
-PCM16 conversion can dither silent input into nonzero bytes. Check decoded signal amplitude before claiming recovery: three of twelve converted captures contained only about one PCM16 least-significant bit after warmup. Do not add a format fallback based on byte presence alone.
-
-环境线索：Windows 11 build 26200、VoiceMeeter 3.1.2.2、实际 VAIO 驱动 3.4.1.7；保存的 VAIO latency 数值为 768、LoopBack 为 1。注册表值不能代替当前运行状态。官方 2026 年 9 月更新说明列出 VAIO 驱动 3.4.1.8 对 STRICT 同步模式的修复，描述旧模式在延迟大于 5 ms 时不能正确工作。当前是否采用 STRICT 尚待核实，应先比较 NORMAL 模式及实际 VAIO 延迟，再决定是否需要更改项目初始化。见 [官方 VoiceMeeter 更新说明](https://voicemeeter.com/voicemeeter-updates-september-2026/)。
-
-The installed VAIO driver is 3.4.1.7. The vendor lists a STRICT synchronization fix in 3.4.1.8; verify the live synchronization mode and latency before assigning causality. Saved registry values alone are not live driver state.
-
-探针统计只保存包数、电平、等待模式等诊断数值，没有录音和端点标识。正式启动日志中的设备标识已脱敏，不能用相同的脱敏占位符证明两次采集选择了同一个端点。
+播放回环的实机证据、VAIO 延迟对照和保存设置方法见 [播放回环排查](playback-loopback.md)。本次把 VAIO3 内部延迟从 768 调到 7168 后，独立采集 16 次及项目 Source 3 次均正常；完整 AirPlay 播放仍需实机复测。
 
 ## core 串流模块的职责（2026-10-09）
 

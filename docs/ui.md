@@ -97,6 +97,8 @@ GUI 直接链接 `homepod-test` Rust 库，启动的协议后端是 `airplay-bac
 
 Playback 逐包诊断还记录释放前原始缓冲的各声道峰值、非零字节数和非有限采样数，以及映射选择、Windows 端点电平和读数年龄。`capture_start` 中 `capture_wait=wasapi_event` 表示使用事件驱动回采；这些统计不保存原始音频。
 
+VoiceMeeter 播放设备出现“系统电平正常，但本软件只有短暂声音后全零”时，检查正在使用的 VAIO 内部延迟及控制面板缓冲统计。一次实机对照中，VAIO3 的 latency 从 768 改到默认 7168 后，16 次独立初始化及 3 次项目来源初始化均持续取得测试音。需在 VoiceMeeter 主界面右键对应虚拟输入标题保存延迟，单独控制面板的临时修改可能被引擎重启覆盖。此结果不代表所有设备都使用同一延迟，完整验证和局限见 [播放回环排查](playback-loopback.md)。
+
 旧 `%APPDATA%\com.airplaywin.bridge` 的数据在首次启动时复制到 `AirPlay Hub`，仅补充新目录缺失的文件，不覆盖已有配置。旧目录保留作为备份，迁移完成后不会反复恢复已删除的日志。
 
 
