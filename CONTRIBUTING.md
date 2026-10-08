@@ -44,7 +44,9 @@ cargo check --manifest-path airplay-frontend/src-tauri/Cargo.toml --locked --off
 .\scripts\build-desktop.ps1 -Offline
 ```
 
-协议相关的模拟检查位于 `airplay-backend/tests/`。这些检查和编译通过都不能替代实机播放验证。音频修改请说明设备、来源、驱动、格式、提前量、Buffer、测试时长及实际听感；不要为了普通布局调整重复长测。
+独立测试脚本和测试素材仅在本地维护，`test/`、`tests/`、`airplay-frontend/checks/` 及 `*.test.*` / `*.spec.*` 不纳入 Git。源码内嵌的 Rust 单元测试仍随源码维护。
+
+如本地已有协议模拟检查，可在 `airplay-backend/tests/` 运行；这些文件不会随仓库下载。前端协议检查可直接执行 `node --test airplay-frontend/checks/protocol.test.mjs`。这些检查和编译通过都不能替代实机播放验证。音频修改请说明设备、来源、驱动、格式、提前量、Buffer、测试时长及实际听感；不要为了普通布局调整重复长测。
 
 模拟检查需要 Python `cryptography`。如需检查新构建的后端而保留现有发行包，可设置 `$env:AIRPLAY_TEST_BACKEND` 为后端的绝对路径，再运行 `check_auth.py` 和 `check_gui_pipe.py`；检查完成后清除该变量。不设置时仍使用 `dist/runtime/airplay-backend.exe`。
 

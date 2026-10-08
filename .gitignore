@@ -56,9 +56,13 @@ settings.json
 settings.pending.json
 auth-policy.json
 auth-policy.pending.json
-# These two files contain fictional UI fixtures, not local device data.
-!/airplay-frontend/checks/devices.json
-!/airplay-frontend/checks/inputs.json
+
+# Standalone tests and fixtures are maintained locally, not published.
+test/
+tests/
+/airplay-frontend/checks/
+*.test.*
+*.spec.*
 
 # Local environment secrets; allow documented examples
 .env

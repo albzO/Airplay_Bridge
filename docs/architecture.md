@@ -13,7 +13,7 @@
 
 界面的 `types.ts` 集中保存与桌面命令共享的数据结构，`commands.ts` 统一命令错误转换。桌面端的 `settings.rs` 管理默认值、范围校验、读取和完整写入后的替换；`window.rs` 管理显示、关闭和退出顺序。`main.rs` 保留命令注册、共享状态和会话编排。
 
-`airplay-core/` 包含音频核心代码和独立诊断 CLI，`tests/` 保留采集及转换检查脚本。其 `lib.rs` 导出音频模块供 GUI 直接链接；`main.rs` 生成独立的 `homepod-test.exe`。Cargo 包名暂时保留 `homepod-test`，GUI 不通过启动该 CLI 实现串流。
+`airplay-core/` 包含音频核心代码和独立诊断 CLI；采集及转换检查脚本在本地 `tests/` 维护，不随 Git 仓库发布。其 `lib.rs` 导出音频模块供 GUI 直接链接；`main.rs` 生成独立的 `homepod-test.exe`。Cargo 包名暂时保留 `homepod-test`，GUI 不通过启动该 CLI 实现串流。
 
 ## 数据路径
 

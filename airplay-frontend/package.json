@@ -6,9 +6,8 @@
   "scripts": {
     "dev": "vite --host 127.0.0.1",
     "build": "vue-tsc --noEmit && vite build",
-    "test:protocol": "node --test checks/protocol.test.mjs",
-    "format": "prettier --write src checks/protocol.test.mjs package.json tsconfig.json vite.config.ts index.html src-tauri/tauri.conf.json src-tauri/capabilities/default.json",
-    "format:check": "prettier --check src checks/protocol.test.mjs package.json tsconfig.json vite.config.ts index.html src-tauri/tauri.conf.json src-tauri/capabilities/default.json"
+    "format": "prettier --write src package.json tsconfig.json vite.config.ts index.html src-tauri/tauri.conf.json src-tauri/capabilities/default.json",
+    "format:check": "prettier --check src package.json tsconfig.json vite.config.ts index.html src-tauri/tauri.conf.json src-tauri/capabilities/default.json"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",
