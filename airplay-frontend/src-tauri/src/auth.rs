@@ -1,3 +1,12 @@
+//! GUI 与原生后端之间的密码管道。密码仅在本次请求内存和管道中传递。
+//! 后端先发送主机名（u32 小端字节长度 + UTF-8），再读取同格式的密码回复。
+//! 当前用户和 SYSTEM 可访问；拒绝远程客户端，并要求首次创建以防管道被抢占。
+//! Server 销毁时取消阻塞 I/O 并等待线程退出；Reply 销毁时清理剩余密码字节。
+//!
+//! GUI/native-backend password pipe; passwords exist only in request memory and transport.
+//! Requests send hostnames as a little-endian u32 byte length plus UTF-8; replies use the same framing.
+//! Allow the current user/SYSTEM, reject remote clients and require first-instance creation.
+//! Server cleanup cancels blocking I/O and joins its thread; Reply cleanup wipes retained password bytes.
 use homepod_test::live::GuiEmitter;
 use std::{
     fs::File,
@@ -40,12 +49,25 @@ pub struct Reply {
     pub host: String,
     pub password: String,
 }
+impl Drop for Reply {
+    fn drop(&mut self) {
+        // 发送失败、会话取消或队列销毁时，也清理仍归本对象所有的密码。
+        // Wipe owned password bytes even on send failure, session cancellation or queue destruction.
+        unsafe {
+            self.password.as_bytes_mut().fill(0);
+        }
+    }
+}
 pub struct Server {
     pub replies: mpsc::Sender<Reply>,
     stop: Arc<AtomicBool>,
     thread: Option<thread::JoinHandle<()>>,
 }
 impl Server {
+    /// hosts 是本次会话已选择的设备地址白名单；未经选择的请求不能弹出密码框。
+    /// stop 与播放线程共用，停止播放也会取消等待密码的流程。
+    /// hosts is the selected-device allowlist; unrelated requests cannot trigger password prompts.
+    /// stop is shared with playback so stopping the stream also cancels password waits.
     pub fn start(
         name: String,
         stop: Arc<AtomicBool>,
@@ -146,11 +168,8 @@ impl Server {
                         match rx.recv_timeout(Duration::from_millis(100)) {
                             Ok(mut reply) => {
                                 if reply.host == host {
-                                    password = reply.password;
+                                    password = std::mem::take(&mut reply.password);
                                     break;
-                                }
-                                unsafe {
-                                    reply.password.as_bytes_mut().fill(0);
                                 }
                             }
                             Err(mpsc::RecvTimeoutError::Timeout) => {}

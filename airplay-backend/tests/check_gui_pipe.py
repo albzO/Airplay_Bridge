@@ -22,7 +22,7 @@ def pipe_server():
 p=threading.Thread(target=pipe_server,daemon=True);p.start()
 s=socket.socket();s.bind(('127.0.0.1',0));s.listen(2);s.settimeout(15)
 r=threading.Thread(target=m.receiver,args=(s,'success',errors) if direct else (s,'auto-password',errors),daemon=True);r.start()
-result=subprocess.run([str(m.ROOT/'dist/runtime/airplay-backend.exe'),'--host','127.0.0.1','--port',str(s.getsockname()[1]),'--password-auto','--password-pipe',name,'--bind-ip','127.0.0.1','--timing','ntp','--hold-seconds','0']+(['--password-pipe-first'] if direct else []),capture_output=True,text=True,encoding='utf-8',timeout=15)
+result=subprocess.run([str(m.BACKEND),'--host','127.0.0.1','--port',str(s.getsockname()[1]),'--password-auto','--password-pipe',name,'--bind-ip','127.0.0.1','--timing','ntp','--hold-seconds','0']+(['--password-pipe-first'] if direct else []),capture_output=True,text=True,encoding='utf-8',timeout=15)
 p.join(2);r.join(2);log=result.stdout+result.stderr
 assert result.returncode==0,log
 assert 'PASSWORD_NEEDED' in log and 'PASSWORD_ACCEPTED' in log and 'SESSION_ACCEPTED' in log,log

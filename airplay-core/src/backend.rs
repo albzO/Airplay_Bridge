@@ -9,18 +9,36 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
+/// 运行程序与 CLI 的用户数据分开存放。
 /// Runtime files are separate from per-user CLI data.
-pub fn executable(root: &Path) -> PathBuf {
+pub fn executable(_root: &Path) -> PathBuf {
     let directory = std::env::current_exe()
         .ok()
         .and_then(|exe| exe.parent().map(Path::to_path_buf))
-        .unwrap_or_else(|| root.to_path_buf());
+        // 定位失败时返回无效路径，禁止退回用户数据目录加载程序。
+        // Return an invalid path on lookup failure; never load an executable from user data.
+        .unwrap_or_default();
+    resolve_executable(&directory)
+}
+
+fn resolve_executable(directory: &Path) -> PathBuf {
+    if directory.as_os_str().is_empty() {
+        return PathBuf::new();
+    }
     let mut candidates = vec![
-        directory.join("../runtime/airplay-backend.exe"),
         directory.join("runtime/airplay-backend.exe"),
         directory.join("airplay-backend.exe"),
-        root.join("airplay-backend.exe"),
     ];
+    // 只有 tools/ 中的 CLI 可以向上查找同一安装根目录的 runtime/。
+    // Only a CLI under tools/ may search the parent installation's runtime/ directory.
+    if directory
+        .file_name()
+        .is_some_and(|name| name.eq_ignore_ascii_case("tools"))
+    {
+        if let Some(root) = directory.parent() {
+            candidates.insert(0, root.join("runtime/airplay-backend.exe"));
+        }
+    }
     #[cfg(debug_assertions)]
     candidates.push(
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../dist/runtime/airplay-backend.exe"),
@@ -300,4 +318,47 @@ pub fn test(
         println!("控制会话测试通过；尚未测试音频播放。");
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod executable_tests {
+    use super::*;
+
+    #[test]
+    fn executable_search_never_uses_user_data_or_working_directory() {
+        let root = std::env::temp_dir().join(format!("airplay-loader-{}", std::process::id()));
+        let installed = root.join("installed");
+        let data = root.join("data");
+        fs::create_dir_all(&installed).unwrap();
+        fs::create_dir_all(&data).unwrap();
+        fs::write(data.join("airplay-backend.exe"), b"untrusted").unwrap();
+        assert_ne!(
+            resolve_executable(&installed),
+            data.join("airplay-backend.exe")
+        );
+        assert!(resolve_executable(Path::new("")).as_os_str().is_empty());
+        fs::create_dir_all(installed.join("runtime")).unwrap();
+        fs::write(
+            installed.join("runtime/airplay-backend.exe"),
+            b"trusted location",
+        )
+        .unwrap();
+        assert_eq!(
+            resolve_executable(&installed),
+            installed.join("runtime/airplay-backend.exe")
+        );
+        let tools = installed.join("tools");
+        fs::create_dir(&tools).unwrap();
+        assert_eq!(
+            resolve_executable(&tools),
+            installed.join("runtime/airplay-backend.exe")
+        );
+        fs::remove_dir(tools).unwrap();
+        fs::remove_file(data.join("airplay-backend.exe")).unwrap();
+        fs::remove_file(installed.join("runtime/airplay-backend.exe")).unwrap();
+        fs::remove_dir(installed.join("runtime")).unwrap();
+        fs::remove_dir(installed).unwrap();
+        fs::remove_dir(data).unwrap();
+        fs::remove_dir(root).unwrap();
+    }
 }

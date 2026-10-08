@@ -1,7 +1,15 @@
 """Focused auth routing checks; no audio or physical receiver involved."""
-from mock_receiver import SECRET, test_case
+import subprocess
+from mock_receiver import BACKEND, SECRET, test_case
 
 if __name__=='__main__':
+    # 参数阶段拒绝超长或多行密码，不能先截断再进入认证与日志路径。
+    # Reject oversized/multiline passwords during argument parsing, before authentication or logging.
+    for secret in ['x' * 1024, 'example\npassword']:
+        result = subprocess.run([str(BACKEND), '--host', '127.0.0.1', '--password', secret],
+                                capture_output=True, text=True, encoding='utf-8', timeout=5)
+        assert result.returncode == 2 and secret not in result.stderr
+    print('PASS password bounds: oversized and multiline arguments rejected')
     test_case('auto-open', SECRET, 0, ['AUTH_ATTEMPT host=127.0.0.1 mode=automatic',
         'AUTH_METHOD value=fixed-pin','SESSION_ACCEPTED'], ['PASSWORD_NEEDED','PASSWORD_ACCEPTED'], automatic=True)
     test_case('auto-password', SECRET, 0, ['PASSWORD_NEEDED','mode=password',

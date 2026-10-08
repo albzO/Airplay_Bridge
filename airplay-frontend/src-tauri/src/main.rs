@@ -1,16 +1,27 @@
 #![windows_subsystem = "windows"]
+//! 桌面入口：接收 Tauri 命令，管理一份持续采集来源和至多一个播放会话。
+//! 页面不直接启动原生后端；此处校验设置、设备和声道，再委托 live::run_gui。
+//! 命令返回与工作线程事件是两条异步通道，所有 stream-event 都附带会话 id。
+//! 修改入口时同时核对前端 types.ts/protocol.ts，退出逻辑见 window.rs。
+//!
+//! Desktop entry: accept Tauri commands, manage persistent capture and at most one stream session.
+//! Validate settings/devices/channels before delegating to live::run_gui; the UI never starts it directly.
+//! Command responses and worker events are separate asynchronous channels; stream events carry an id.
+//! Keep types.ts/protocol.ts aligned with changes here; see window.rs for shutdown ordering.
 mod auth;
 mod auth_memory;
 mod awake;
+mod settings;
 mod startup;
+mod window;
 use homepod_test::{
     capture,
     discovery::{self, Device},
     live::{self, GuiContext, GuiControl, GuiEmitter},
     source::Source,
 };
-use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use settings::Settings;
 use std::{
     fs,
     path::PathBuf,
@@ -27,40 +38,23 @@ use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
 };
-#[derive(Clone, Serialize, Deserialize)]
-#[serde(default, rename_all = "camelCase")]
-struct Settings {
-    endpoint: String,
-    latency: u32,
-    buffer: u32,
-    mapping: [usize; 2],
-    detailed_logs: bool,
-    capture_diagnostics: bool,
-    close_action: String,
-    speakers_swapped: bool,
-    keep_awake: bool,
-}
-impl Default for Settings {
-    fn default() -> Self {
-        Self {
-            endpoint: String::new(),
-            latency: 300,
-            buffer: 128,
-            mapping: [0, 1],
-            detailed_logs: false,
-            capture_diagnostics: false,
-            close_action: "tray".into(),
-            speakers_swapped: false,
-            keep_awake: true,
-        }
-    }
-}
+use window::{quit, reveal, window_action};
+/// 一个播放会话持有控制标志和密码回复通道，不拥有持续采集线程。
+/// hosts 是已校验的目标地址，用于拒绝发给其他设备的密码回复。
+/// A session owns control flags and a password reply channel, not the persistent capture thread.
+/// hosts contains validated target addresses and rejects password replies for other devices.
 struct Session {
     id: u64,
     control: Arc<GuiControl>,
     reply: Sender<auth::Reply>,
     hosts: Vec<String>,
 }
+/// 应用级共享状态。Mutex 保护可替换对象；AtomicBool 用于跨线程快速通知。
+/// session 的 Some 同时充当连接/播放占用标志，直到工作线程收尾才清除。
+/// source 可以在 session 为 None 时继续运行，为页面提供音量预览。
+/// App-wide state: Mutex protects replaceable objects; AtomicBool sends fast cross-thread signals.
+/// Some(session) reserves preparation/playback until worker cleanup; source can outlive the session
+/// and continue producing the UI's level preview while session is None.
 struct Engine {
     root: PathBuf,
     backend: PathBuf,
@@ -79,6 +73,10 @@ fn stop_source(e: &Engine) {
         source.stop();
     }
 }
+/// 同端点且线程健康时只更新声道映射，避免每次连接都重开 WASAPI。
+/// 切换端点时先等待旧线程退出再创建新来源，保证不会同时占用两份采集资源。
+/// Reuse a healthy source at the same endpoint and update mapping instead of reopening WASAPI.
+/// Join the previous thread before switching endpoints to avoid holding two capture resources.
 fn ensure_source(app: tauri::AppHandle, e: &Engine) -> Result<Arc<Source>, String> {
     if e.quitting.load(Ordering::Relaxed) {
         return Err("应用正在退出".into());
@@ -157,11 +155,7 @@ fn devices(e: &Engine) -> Vec<Device> {
         .unwrap_or_default()
 }
 fn save(e: &Engine, s: &Settings) -> Result<(), String> {
-    fs::write(
-        e.root.join("settings.json"),
-        serde_json::to_vec_pretty(s).unwrap(),
-    )
-    .map_err(|e| e.to_string())
+    s.save(&e.root)
 }
 #[tauri::command]
 async fn initialize(engine: State<'_, Arc<Engine>>) -> Result<Value, String> {
@@ -195,12 +189,7 @@ async fn discover_devices(engine: State<'_, Arc<Engine>>) -> Result<Vec<Device>,
 }
 #[tauri::command]
 fn save_settings(engine: State<Arc<Engine>>, settings: Settings) -> Result<(), String> {
-    if !(250..=2000).contains(&settings.latency) || !(64..=512).contains(&settings.buffer) {
-        return Err("播放提前量为 250–2000 ms，Buffer 为 64–512 ms".into());
-    }
-    if !["tray", "quit"].contains(&settings.close_action.as_str()) {
-        return Err("未知窗口关闭动作".into());
-    }
+    settings.validate()?;
     if engine.quitting.load(Ordering::SeqCst) {
         return Err("应用正在退出".into());
     }
@@ -234,9 +223,7 @@ fn start_stream(
     if names.is_empty() || names.len() > 2 {
         return Err("请选择一台设备或一个立体声对".into());
     }
-    if !(250..=2000).contains(&settings.latency) || !(64..=512).contains(&settings.buffer) {
-        return Err("缓冲或提前量超出范围".into());
-    }
+    settings.validate()?;
     let found = devices(&e);
     let mut chosen = Vec::new();
     for name in &names {
@@ -294,6 +281,10 @@ fn start_stream(
         .unwrap()
         .as_millis() as u64;
     let control = Arc::new(GuiControl::new(settings.mapping));
+    // 将底层无会话编号的事件封装到本次 id；页面据此排除旧线程的延迟事件。
+    // 认证记忆只保存“设备需要密码”的策略，不保存输入的密码。
+    // Attach this session id to lower-level events so the UI can reject late callbacks from old workers.
+    // Authentication memory stores only the device's password policy, never the submitted password.
     let event_app = app.clone();
     let event_engine = e.clone();
     let emit: GuiEmitter = Arc::new(move |mut event| {
@@ -335,6 +326,8 @@ fn start_stream(
         reply: server.replies.clone(),
         hosts,
     });
+    // 会话登记完成后释放锁，工作线程收尾和 stop_stream 都需要访问这把锁。
+    // Release the session lock after registration; worker cleanup and stop_stream also need it.
     drop(active);
     thread::spawn(move || {
         emit(json!({"kind":"preparing_source"}));
@@ -374,6 +367,10 @@ fn start_stream(
                 );
             }
         }
+        // 先结束密码管道及其线程，再释放会话占用，最后通知页面 finished。
+        // 此处不 stop_source：播放停止后还要继续显示当前来源的采集预览。
+        // Close/join the password server, release the session reservation, then emit finished.
+        // Keep source running so capture preview continues after playback stops.
         drop(server);
         let mut session = e.session.lock().unwrap();
         if session.as_ref().map(|s| s.id) == Some(id) {
@@ -400,21 +397,20 @@ fn submit_password(
     host: String,
     password: String,
 ) -> Result<(), String> {
+    let reply = auth::Reply { host, password };
     let session = engine.session.lock().unwrap();
     let s = session
         .as_ref()
         .filter(|s| s.id == session_id)
         .ok_or("会话已结束")?;
-    if !s.hosts.contains(&host)
-        || password.is_empty()
-        || password.len() > 1023
-        || password.contains(['\0', '\r', '\n'])
+    if !s.hosts.contains(&reply.host)
+        || reply.password.is_empty()
+        || reply.password.len() > 1023
+        || reply.password.contains(['\0', '\r', '\n'])
     {
         return Err("密码或设备无效".into());
     }
-    s.reply
-        .send(auth::Reply { host, password })
-        .map_err(|_| "密码请求已结束".into())
+    s.reply.send(reply).map_err(|_| "密码请求已结束".into())
 }
 #[tauri::command]
 fn stop_stream(engine: State<Arc<Engine>>) {
@@ -541,61 +537,16 @@ fn ui_ready(
     }
     Ok(())
 }
-fn reveal(app: &tauri::AppHandle) {
-    if let Some(w) = app.get_webview_window("main") {
-        let _ = w.show();
-        let _ = w.unminimize();
-        let _ = w.set_focus();
-    }
-}
-fn quit(app: &tauri::AppHandle) {
-    let engine = app.state::<Arc<Engine>>().inner().clone();
-    if engine.quitting.swap(true, Ordering::SeqCst) {
-        return;
-    }
-    if let Some(s) = engine.session.lock().unwrap().as_ref() {
-        s.control.stop.store(true, Ordering::Relaxed);
-    }
-    let app = app.clone();
-    thread::spawn(move || {
-        let _ = engine.awake.lock().unwrap().set(false);
-        stop_source(&engine);
-        while engine.session.lock().unwrap().is_some() {
-            thread::sleep(Duration::from_millis(100));
-        }
-        app.exit(0);
-    });
-}
-#[tauri::command]
-fn window_action(
-    app: tauri::AppHandle,
-    engine: State<Arc<Engine>>,
-    window: tauri::WebviewWindow,
-    action: String,
-) -> Result<(), String> {
-    match action.as_str() {
-        "minimize" => window.minimize(),
-        "maximize" => {
-            if window.is_maximized().map_err(|e| e.to_string())? {
-                window.unmaximize()
-            } else {
-                window.maximize()
-            }
-        }
-        "close" => {
-            if engine.settings.lock().unwrap().close_action == "quit" {
-                quit(&app);
-                Ok(())
-            } else {
-                window.hide()
-            }
-        }
-        "drag" => window.start_dragging(),
-        _ => return Err("未知窗口操作".into()),
-    }
-    .map_err(|e| e.to_string())
-}
 fn main() {
+    let mut context = tauri::generate_context!();
+    let exe = std::env::current_exe().expect("无法定位程序目录");
+    if homepod_test::data_dir::portable_root(&exe).is_some() {
+        let root =
+            homepod_test::data_dir::prepare().expect("便携版 data 目录不可写，请移到可写目录");
+        for window in &mut context.config_mut().app.windows {
+            window.data_directory = Some(root.join("webview"));
+        }
+    }
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _, _| {
             reveal(app);
@@ -620,10 +571,7 @@ fn main() {
                 let fallback = adjacent;
                 fallback
             };
-            let settings: Settings = fs::read(root.join("settings.json"))
-                .ok()
-                .and_then(|b| serde_json::from_slice(&b).ok())
-                .unwrap_or_default();
+            let settings = Settings::load(&root);
             let seed = backend.parent().unwrap().join("devices.json");
             if !root.join("devices.json").exists() && seed.exists() {
                 fs::copy(seed, root.join("devices.json"))?;
@@ -701,6 +649,6 @@ fn main() {
                 }
             }
         })
-        .run(tauri::generate_context!())
+        .run(context)
         .expect("无法启动 AirPlay Bridge");
 }

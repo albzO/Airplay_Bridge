@@ -5,6 +5,12 @@ use std::{
 };
 
 pub fn prepare() -> io::Result<PathBuf> {
+    let exe = std::env::current_exe()?;
+    if let Some(root) = portable_root(&exe) {
+        let destination = root.join("data");
+        fs::create_dir_all(&destination)?;
+        return Ok(destination);
+    }
     let base = std::env::var_os("APPDATA").ok_or_else(|| {
         io::Error::new(
             io::ErrorKind::NotFound,
@@ -12,6 +18,22 @@ pub fn prepare() -> io::Result<PathBuf> {
         )
     })?;
     prepare_at(Path::new(&base))
+}
+
+/// A marker next to the GUI enables portability for both the GUI and tools/ CLI.
+/// Resolve from the executable, never from the caller's working directory.
+pub fn portable_root(exe: &Path) -> Option<PathBuf> {
+    let directory = exe.parent()?;
+    if directory.join("portable.flag").is_file() {
+        return Some(directory.to_path_buf());
+    }
+    if directory.file_name()?.eq_ignore_ascii_case("tools") {
+        let root = directory.parent()?;
+        if root.join("portable.flag").is_file() {
+            return Some(root.to_path_buf());
+        }
+    }
+    None
 }
 
 fn prepare_at(base: &Path) -> io::Result<PathBuf> {
@@ -63,6 +85,24 @@ fn copy_missing(source: &Path, destination: &Path) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn portable_marker_selects_gui_and_cli_but_not_other_directories() {
+        let base = base();
+        assert_eq!(portable_root(&base.join("airplay-bridge.exe")), None);
+        fs::write(base.join("portable.flag"), b"").unwrap();
+        assert_eq!(
+            portable_root(&base.join("airplay-bridge.exe")),
+            Some(base.clone())
+        );
+        assert_eq!(
+            portable_root(&base.join("tools/homepod-test.exe")),
+            Some(base.clone())
+        );
+        assert_eq!(portable_root(&base.join("other/test.exe")), None);
+        assert!(!base.join("data").exists());
+        fs::remove_file(base.join("portable.flag")).unwrap();
+        fs::remove_dir(base).unwrap();
+    }
     fn base() -> PathBuf {
         let path = std::env::temp_dir().join(format!(
             "airplay-data-dir-{}-{}",

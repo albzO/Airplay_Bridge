@@ -2,10 +2,13 @@
 /build/
 /environment-check/
 /dist/
+/releases/
+/Release/
 /snapshot-backups/
 /.local/
 target/
 node_modules/
+.pnpm-store/
 /airplay-frontend/dist/
 /airplay-frontend/src-tauri/gen/schemas/
 __pycache__/
@@ -50,6 +53,7 @@ devices.json
 inputs.json
 audio-inputs.json
 settings.json
+settings.pending.json
 auth-policy.json
 auth-policy.pending.json
 # These two files contain fictional UI fixtures, not local device data.

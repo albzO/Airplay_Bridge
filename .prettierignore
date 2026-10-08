@@ -1,0 +1,8 @@
+**/node_modules/
+**/target/
+**/dist/
+.local/
+.pnpm-store/
+build/
+upstream/
+**/*lock*
