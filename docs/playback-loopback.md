@@ -4,22 +4,27 @@
 
 ## 当前结果 / Current result
 
-在 VoiceMeeter VAIO3 / I/O 8 上，普通 WAV 测试音持续播放、Apple Music 已退出，SOFT 同步及 A1/A4 ASIO 路由保持原设置。只将实际 VAIO latency 从 768 改为 7168 后，相同的独立采集对照不再出现持续全零：
+在 VoiceMeeter VAIO3 / I/O 8 上，普通 WAV 测试音持续播放、Apple Music 已退出，SOFT 同步及 A1/A4 ASIO 路由保持原设置。先将实际 VAIO latency 从 768 改为 7168 完成对照，再按用户的低延迟需求改为 1536，重复验证：
 
-| 验证 | VAIO latency 768 | VAIO latency 7168 |
+| VAIO latency | 验证 | 结果 |
 |---|---|---|
-| C++ 探针：事件/轮询 × STA/MTA，各重开四次 | 11/16 次原始全零与电平连续矛盾至少 500 ms | 0/16 次；各次 500 ms 后都持续取得振幅约 0.08 的测试音 |
-| 项目 Source：连续三次初始化 | 该组三次成功，说明故障有间歇性 | 三次成功，各一次初始化、零重建，采样振幅正确 |
+| 768 | C++ 探针：事件/轮询 × STA/MTA，各重开四次 | 11/16 次原始全零与电平连续矛盾至少 500 ms |
+| 7168 | 相同 C++ 矩阵，以及三次项目 Source 启动 | 16/16 取得实际测试音；Source 3/3 一次成功、零重建 |
+| 1536 | C++ 事件驱动 STA：30 个独立进程，每次采集两秒 | 30/30 取得实际测试音；500 ms 后每次至少 150 个有声包，无持续至少 500 ms 的原始全零/电平矛盾段 |
+| 1536 | C++ 事件驱动 STA：连续采集 60 秒 | 6000 个包，5999 个非零包；无全零/电平矛盾段，预热后 5951 个包全部取得实际测试音 |
+| 1536 | 项目 Source：两组独立测试进程，每组重开三次 | 6/6 一次成功、零重建；每次约 12 万个有声帧，无时间戳错误或补静音缺口 |
 
-这将当前故障的主要触发条件缩小到 VAIO 内部延迟与回环缓冲的兼容性。正式采集代码和原生后端未因这次参数对照改动。短时原始采集检查仍不代替 AirPlay 完整播放、长时间运行、VoiceMeeter 重启和撕裂声音的听感复测。
+1536 在本轮采集验证中通过，48 kHz 下对应约 32 ms 的 VAIO 内部延迟；7168 约为 149 ms。这是该缓冲的延迟，不是完整 AirPlay 链路的总延迟。1536 尚未执行上述事件/轮询与 STA/MTA 四种组合矩阵；30 次重开使用与当前项目相同的事件驱动 STA 模式。项目每次采集累计各有一次 discontinuity 标记，无时间戳错误或补静音缺口。
 
-Changing only VAIO3 latency eliminated sustained zero-PCM failures in this controlled run: 11/16 at 768 samples versus 0/16 at 7168. Three real Source starts also succeeded without reopening. Full AirPlay playback and long-running stability remain to be checked.
+这将当前故障的主要触发条件缩小到 VAIO 内部延迟与回环缓冲的兼容性。正式采集代码和原生后端未因这次参数对照改动。当前建议保留用户选择的 1536，7168 作为已验证的较大缓冲对照。采集检查仍不代替 AirPlay 完整播放、更长时间运行、VoiceMeeter 重启和撕裂声音的听感复测。
+
+At 768 samples, 11/16 independent starts failed. At 7168, all 16 matrix runs and three Source starts succeeded. The user's lower-latency choice of 1536 passed 30 fresh event-driven STA starts, one 60-second capture, and six real Source starts without reopening. At 48 kHz, 1536 samples represent about 32 ms of VAIO latency, not total AirPlay delay. Full streaming, longer runs, engine restarts, and audible distortion still need verification.
 
 ## 保存设置 / Persisting the setting
 
-在 VoiceMeeter 主界面右键正在使用的 VAIO3 虚拟输入标题，选择 `7168 samples (Default)`。仅在独立 VAIO 控制面板修改运行时 latency，可能在音频引擎重启后被 VoiceMeeter 原设置覆盖。不要混淆运行时 `Latency` 与需要重启的 `Max Latency`；这次只改变前者。保存后核对控制面板中 Selected I/O 为 8、Latency 为 7168。
+在 VoiceMeeter 主界面右键正在使用的 VAIO3 虚拟输入标题，选择本轮验证通过的 `1536 samples`。仅在独立 VAIO 控制面板修改运行时 latency，可能在音频引擎重启后被 VoiceMeeter 原设置覆盖。不要混淆运行时 `Latency` 与需要重启的 `Max Latency`；这次只改变前者。保存后核对控制面板中 Selected I/O 为 8、Latency 为 1536。当前测试没有重启 VoiceMeeter，因此尚未验证该值已经持久保存。
 
-Use the VAIO3 virtual-input caption's latency menu to persist the choice. A runtime-only control-panel change can be overwritten on engine restart; do not confuse current latency with allocated maximum latency.
+Use the VAIO3 virtual-input caption's latency menu to persist 1536 samples. A runtime-only control-panel change can be overwritten on engine restart. Persistence has not been tested in this run; do not confuse current latency with allocated maximum latency.
 
 官方手册第 48–49 页说明 VAIO latency 包含 loopback 路径，需覆盖连接程序最大缓冲的三倍，并应从 VoiceMeeter 的延迟菜单保存。见 [官方 Potato 手册](https://vb-audio.com/Voicemeeter/VoicemeeterPotato_UserManual.pdf)。
 
