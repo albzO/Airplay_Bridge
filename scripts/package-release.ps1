@@ -40,7 +40,7 @@ New-Item -ItemType Directory -Force -Path "$payload/runtime", "$payload/tools", 
 Copy-Item -LiteralPath 'dist/runtime/airplay-backend.exe' -Destination "$payload/runtime"
 Get-ChildItem -LiteralPath 'dist/runtime' -Filter '*.dll' -File | Copy-Item -Destination "$payload/runtime"
 Copy-Item -LiteralPath 'dist/tools/homepod-test.exe' -Destination "$payload/tools"
-foreach ($file in @('README.md', 'release-notes.md', 'licensing.md', 'error-codes.md', 'THIRD_PARTY.md')) {
+foreach ($file in @('README.md', 'release-notes.md', 'playback-loopback.md', 'licensing.md', 'error-codes.md', 'THIRD_PARTY.md')) {
     Copy-Item -LiteralPath "dist/docs/$file" -Destination "$payload/docs"
 }
 # 许可证也采用明确清单，避免复制许可证目录中的个人临时文件。

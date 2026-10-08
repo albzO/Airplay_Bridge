@@ -37,6 +37,7 @@ try {
     Copy-Item -LiteralPath LICENSE,NOTICE -Destination dist
     Copy-Item -LiteralPath scripts/distribution-readme.md -Destination dist/docs/README.md
     Copy-Item -LiteralPath CHANGELOG.md -Destination dist/docs/release-notes.md
+    Copy-Item -LiteralPath docs/playback-loopback.md -Destination dist/docs/playback-loopback.md
     Copy-Item -LiteralPath docs/licensing.md -Destination dist/docs/licensing.md
     Copy-Item -LiteralPath docs/error-codes.md -Destination dist/docs/error-codes.md
     Copy-Item -LiteralPath "airplay-frontend/src-tauri/target/$profileFolder/airplay-bridge.exe" -Destination dist/airplay-bridge.exe

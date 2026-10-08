@@ -3,7 +3,7 @@
 ; Non-commercial use only.
 
 #define MyAppName "Airplay Bridge"
-#define MyAppVersion "1.0.0"
+#define MyAppVersion "1.0.1"
 #define MyAppPublisher "albzO"
 #define MyAppURL "https://github.com/albzO/Airplay_Bridge"
 #define MyAppExeName "airplay-bridge.exe"
@@ -34,7 +34,7 @@ DisableProgramGroupPage=yes
 ; Uncomment the following line to run in non administrative install mode (install for current user only).
 ;PrivilegesRequired=lowest
 OutputDir=..\Release
-OutputBaseFilename=AirPlay-Bridge-1.0.0-windows-x64-setup
+OutputBaseFilename=AirPlay-Bridge-{#MyAppVersion}-windows-x64-setup
 SetupIconFile=..\airplay-frontend\src-tauri\icons\icon.ico
 SolidCompression=yes
 WizardStyle=classic
@@ -56,6 +56,7 @@ Source: "..\dist\LICENSE"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\dist\NOTICE"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\dist\docs\README.md"; DestDir: "{app}\docs"; Flags: ignoreversion
 Source: "..\dist\docs\release-notes.md"; DestDir: "{app}\docs"; Flags: ignoreversion
+Source: "..\dist\docs\playback-loopback.md"; DestDir: "{app}\docs"; Flags: ignoreversion
 Source: "..\dist\docs\licensing.md"; DestDir: "{app}\docs"; Flags: ignoreversion
 Source: "..\dist\docs\error-codes.md"; DestDir: "{app}\docs"; Flags: ignoreversion
 Source: "..\dist\docs\THIRD_PARTY.md"; DestDir: "{app}\docs"; Flags: ignoreversion

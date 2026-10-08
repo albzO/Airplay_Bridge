@@ -2,7 +2,7 @@
 
 Windows 上的 AirPlay 2 音频发送工具。通过桌面界面选择录音或播放设备，将音频发送到 HomePod 等 AirPlay 接收端。
 
-当前版本为 **1.0 正式版**（软件版本号 `1.0.0`），主要验证 HomePod mini 单设备及立体声对。其他接收端的兼容性尚未完整验证。版本说明见 [更新日志](CHANGELOG.md)，项目授权状态见 [许可证说明](docs/licensing.md)。
+当前版本为 **1.0.1**，主要验证 HomePod mini 单设备及立体声对。其他接收端的兼容性尚未完整验证。版本说明见 [更新日志](CHANGELOG.md)，项目授权状态见 [许可证说明](docs/licensing.md)。
 
 ## AI 辅助开发声明
 
