@@ -2,6 +2,8 @@
 /build/
 /environment-check/
 /dist/
+/releases/
+/Release/
 /snapshot-backups/
 /.local/
 target/

@@ -1,12 +1,6 @@
 use homepod_test::{backend, capture, convert, discovery, failure, live};
 
-use std::{env, path::PathBuf};
-
-fn project_root() -> PathBuf {
-    PathBuf::from(env::var_os("APPDATA").expect("APPDATA 未设置"))
-        .join("AirPlay Hub")
-        .join("cli")
-}
+use std::env;
 
 fn main() {
     if let Err(error) = run() {
@@ -22,8 +16,8 @@ fn main() {
 }
 
 fn run() -> Result<(), Box<dyn std::error::Error>> {
-    homepod_test::data_dir::prepare()?;
-    std::fs::create_dir_all(project_root())?;
+    let project_root = homepod_test::data_dir::prepare()?.join("cli");
+    std::fs::create_dir_all(&project_root)?;
     let args: Vec<String> = env::args().skip(1).collect();
     match args.first().map(String::as_str) {
         Some("stream") | Some("stream-stereo") => {
@@ -50,7 +44,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             }
             if stereo {
                 live::run_stereo(
-                    &project_root(),
+                    &project_root,
                     name,
                     value(&args, "--right").ok_or("请指定 --right <设备名称>")?,
                     seconds,
@@ -60,7 +54,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 )
             } else {
                 live::run(
-                    &project_root(),
+                    &project_root,
                     name,
                     seconds,
                     latency,
@@ -73,14 +67,14 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             let input = value(&args, "--input").ok_or("请指定 --input <采集 float32 WAV>")?;
             convert::wave(std::path::Path::new(input)).map(|_| ())
         }
-        Some("audio-devices") => capture::list(&project_root()),
+        Some("audio-devices") => capture::list(&project_root),
         Some("capture") => {
             let seconds =
                 parse_value::<u64>(value(&args, "--seconds").unwrap_or("10"), "--seconds")?;
             if !(1..=60).contains(&seconds) {
                 return Err("采集时长应在 1～60 秒之间".into());
             }
-            let wave = capture::record(&project_root(), seconds, value(&args, "--endpoint"))?;
+            let wave = capture::record(&project_root, seconds, value(&args, "--endpoint"))?;
             if args.iter().any(|arg| arg == "--convert") {
                 convert::wave(&wave)?;
             }
@@ -94,15 +88,15 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 return Err("录制时长应在 1～60 秒之间".into());
             }
             println!("先录制所选音频来源，再转换并回放到 HomePod；这是有限录音回放测试。");
-            let wave = capture::record(&project_root(), seconds, value(&args, "--endpoint"))?;
+            let wave = capture::record(&project_root, seconds, value(&args, "--endpoint"))?;
             let pcm = convert::wave(&wave)?;
-            backend::test(&project_root(), name, "ptp", true, false, Some(&pcm))
+            backend::test(&project_root, name, "ptp", true, false, Some(&pcm))
         }
         Some("play-pcm") => {
             let name = value(&args, "--device").ok_or("请指定 --device <HomePod 名称>")?;
             let input = value(&args, "--input").ok_or("请指定 --input <本工具生成的 .pcm 文件>")?;
             backend::test(
-                &project_root(),
+                &project_root,
                 name,
                 "ptp",
                 true,
@@ -116,7 +110,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             if !(1..=60).contains(&seconds) {
                 return Err("发现时长应在 1～60 秒之间".into());
             }
-            discovery::discover(&project_root(), seconds)
+            discovery::discover(&project_root, seconds)
         }
         Some("test") | Some("tone") => {
             let name = value(&args, "--device").ok_or("请指定 --device <设备名称>")?;
@@ -125,7 +119,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 return Err("timing 应为 ptp 或 ntp".into());
             }
             backend::test(
-                &project_root(),
+                &project_root,
                 name,
                 timing,
                 !args.iter().any(|a| a == "--no-password"),

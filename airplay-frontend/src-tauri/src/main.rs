@@ -596,6 +596,14 @@ fn window_action(
     .map_err(|e| e.to_string())
 }
 fn main() {
+    let mut context = tauri::generate_context!();
+    let exe = std::env::current_exe().expect("无法定位程序目录");
+    if homepod_test::data_dir::portable_root(&exe).is_some() {
+        let root = homepod_test::data_dir::prepare().expect("便携版 data 目录不可写，请移到可写目录");
+        for window in &mut context.config_mut().app.windows {
+            window.data_directory = Some(root.join("webview"));
+        }
+    }
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _, _| {
             reveal(app);
@@ -701,6 +709,6 @@ fn main() {
                 }
             }
         })
-        .run(tauri::generate_context!())
+        .run(context)
         .expect("无法启动 AirPlay Bridge");
 }
