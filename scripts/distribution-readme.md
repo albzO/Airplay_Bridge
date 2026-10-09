@@ -1,6 +1,6 @@
-# AirPlay Hub 1.0.1
+# AirPlay Hub 1.0.2
 
-软件版本号 `1.0.1`。版本说明见同目录 `release-notes.md`。
+软件版本号 `1.0.2`。版本说明见同目录 `release-notes.md`。
 
 启动上一级目录中的 `airplay-bridge.exe`。保留整个发行目录；`runtime/` 中的后端和 DLL 是串流必需文件。
 

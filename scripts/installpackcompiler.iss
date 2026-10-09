@@ -3,7 +3,7 @@
 ; Non-commercial use only.
 
 #define MyAppName "Airplay Bridge"
-#define MyAppVersion "1.0.1"
+#define MyAppVersion "1.0.2"
 #define MyAppPublisher "albzO"
 #define MyAppURL "https://github.com/albzO/Airplay_Bridge"
 #define MyAppExeName "airplay-bridge.exe"

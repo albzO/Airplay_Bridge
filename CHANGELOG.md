@@ -1,10 +1,22 @@
 # 更新日志
 
-## 1.0.1 — 待发布 / Pending release
+## 1.0.2 — 待发布 / Pending release
 
-本次维护重点是播放设备的采集启动、回环异常诊断与设备连接。2026-10-10 发现暂停播放误触发自动重建及已占用设备首次连接超时，当前版本暂停发布，修复后的播放/暂停/恢复及真实设备接管验证完成前不作为正式发行。
+- 修复暂停播放后误报回环无音频并重建采集的问题：回环一致性检查仅在启动阶段运行，后续暂停、恢复或停止串流不重新触发。
+  Fix false loopback recovery during playback pauses by limiting consistency checks to capture startup.
+- 修复设备已有播放会话时音频流建立过早超时的问题：音频 `SETUP` 使用 8 秒启动预算，收到回应立即继续，不增加正常播放延迟。
+  Fix premature audio stream setup timeouts by retaining the 8-second startup budget without increasing normal playback latency.
+- 桌面应用、前端包、Rust 核心、锁文件和安装包版本统一更新为 `1.0.2`，保留原安装身份和历史发行记录。
+  Update application, frontend, core, lockfiles and installers to `1.0.2`, preserving the existing installation identity and release history.
 
-This pending release fixes false capture recovery during playback pauses and a premature audio stream setup timeout. Real-device pause/resume and takeover checks are still required before release.
+验证：采集健康状态回归及本地延迟回应的单设备/立体声协议测试已通过；真实设备的暂停/恢复及已有播放会话切换仍需确认。
+Validation: capture health regressions and local single/stereo receiver checks with delayed responses pass; real-device pause/resume and takeover checks remain pending.
+
+## 1.0.1 — 历史候选 / Previous candidate
+
+本阶段维护重点是播放设备的采集启动、回环异常诊断与设备连接。2026-10-10 发现暂停播放误触发自动重建及已占用设备首次连接超时，随后候选包加入以下修复。后续修复版本统一为 `1.0.2`，此处保留原维护记录。
+
+This previous candidate includes capture startup and audio stream setup fixes. Further fixed builds use version `1.0.2`; the earlier maintenance record is retained below.
 
 ### 采集启动与恢复
 
