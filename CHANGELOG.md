@@ -2,7 +2,9 @@
 
 ## 1.0.1 — 待发布 / Pending release
 
-本次维护重点是播放设备的采集启动、回环异常诊断与发行说明。2026-10-10 发现暂停播放误触发自动重建，当前版本暂停发布，修复后的播放/暂停/恢复验证完成前不作为正式发行。
+本次维护重点是播放设备的采集启动、回环异常诊断与设备连接。2026-10-10 发现暂停播放误触发自动重建及已占用设备首次连接超时，当前版本暂停发布，修复后的播放/暂停/恢复及真实设备接管验证完成前不作为正式发行。
+
+This pending release fixes false capture recovery during playback pauses and a premature audio stream setup timeout. Real-device pause/resume and takeover checks are still required before release.
 
 ### 采集启动与恢复
 
@@ -11,6 +13,15 @@
 - 自动重建检查仅用于首次采集稳定之前；连续 500 ms 无端点/原始音频矛盾后永久结束检查。后续暂停、恢复或停止串流不重新开启该检查，不因静音撤销就绪或重建实例。
 - 初始化阶段发现持续回环异常时，释放旧采集实例并进行有次数限制的重建；正常安静来源可完成初始化，串流期间不自动重置采集时钟。
 - 来源启动日志无需先开始串流即可记录初始化、重建次数和采集进度，便于排查首次打开软件时的无声问题。
+
+### 设备连接 / Receiver connection
+
+- 修复控制会话已建立后，音频流 `SETUP` 误用普通控制请求 2 秒超时的问题；音频流建立始终使用现有的 8 秒启动预算，给接收端切换原有播放留出时间。
+  Audio stream `SETUP` now retains the existing 8-second startup budget after the control session is accepted, allowing more time for the receiver to switch playback.
+- 响应到达立即继续，不额外等待 8 秒，不改变播放提前量；密码错误、访问拒绝及正常控制请求的处理保持原有行为。
+  The connection continues immediately on response without changing playback latency; password errors, access denials and regular control requests retain their existing behavior.
+- 本地加密协议模拟验证：延迟 3 秒回应的单设备（NTP/PTP）及立体声均一次成功，旧后端在约 2 秒超时；超过预算仍有限退出，密码错误和 403 拒绝不会进入音频发送。
+  Local encrypted-protocol checks pass for single receivers (NTP/PTP) and stereo with a 3-second response delay; the previous backend times out at about 2 seconds. Over-budget responses remain bounded, and password errors or 403 denials do not start audio transmission.
 
 ### VoiceMeeter 排查与验证
 

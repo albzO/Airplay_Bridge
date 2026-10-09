@@ -60,6 +60,17 @@ ap2_native_pair_verify ap2_native_pair ap2_native_connect'''.split()
 selected = []
 for name in names:
     body = function(name)
+    if name == 'ap2_rtsp_timeout_ms':
+        # 控制会话已建立不代表音频流已就绪；接收端切换原有播放时仍需 SETUP 预算。
+        # An accepted control session is not a ready audio stream; takeover SETUP needs its full budget.
+        marker = '    if (!p->rtsp_established) return AP2_RTSP_SETUP_TIMEOUT_MS;'
+        if body.count(marker) != 1: raise ValueError('RTSP setup timeout boundary changed')
+        body = body.replace(marker, '''    /* 音频 SETUP 仍使用 8 秒启动预算，避免误用普通控制请求的 2 秒超时。
+     * Audio SETUP retains the 8-second startup budget instead of the 2-second control timeout.
+     * 响应到达立即继续；不增加播放延迟，也不重复认证或重发 SETUP。
+     * Continue as soon as the reply arrives; no playback delay, reauthentication or repeated SETUP. */
+    if (!p->rtsp_established || !strcmp(method, "SETUP"))
+        return AP2_RTSP_SETUP_TIMEOUT_MS;''')
     if name == 'ap2_native_connect':
         marker = '    /* 5. RECORD'
         if marker not in body: raise ValueError('Session boundary changed')

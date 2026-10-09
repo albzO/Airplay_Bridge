@@ -61,6 +61,10 @@ git -C upstream/airplay-cli/libraop submodule update --init -- crosstools
 
 `-SkipBackend` 要求 `dist/` 中已有可用的后端及 DLL。
 
+原生协议适配在 `airplay-backend/select_upstream.py` 中维护，修改后需要重新构建后端；不要直接编辑 `build/airplay-backend/generated/` 或固定上游源码。控制会话与音频流分步建立，音频 `SETUP` 即使发生在控制会话已接受之后，也使用 8 秒启动预算。普通控制请求仍使用 2 秒预算；预算是响应等待上限，不是固定播放延迟。
+
+Maintain native protocol adaptations in `airplay-backend/select_upstream.py` and rebuild the backend after changes. Do not edit generated files or pinned upstream sources. Audio `SETUP` retains an 8-second startup budget even after control session acceptance; regular control requests retain their 2-second budget. These are response deadlines, not fixed playback delays.
+
 ## 发行目录
 
 `dist/airplay-bridge.exe` 为主入口，原生后端和 DLL 位于 `dist/runtime/`，诊断工具位于 `dist/tools/`，说明位于 `dist/docs/`，许可证位于 `dist/licenses/` 和根目录 LICENSE、NOTICE。构建脚本会持续输出这一布局。
