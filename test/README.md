@@ -25,6 +25,7 @@ cargo test --manifest-path airplay-frontend/src-tauri/Cargo.toml --locked --offl
 
 # 前端协议及模拟页面 / Frontend protocol and mocked UI
 pnpm --dir airplay-frontend test:protocol
+pnpm --dir airplay-frontend test:session
 pnpm --dir airplay-frontend test:ui
 pnpm --dir airplay-frontend test:ui:build
 
@@ -41,6 +42,10 @@ python test/backend/mock_receiver.py
 python test/core/checks/check_capture.py "path/to/capture.wav"
 python test/core/checks/check_conversion.py "path/to/capture.pcm"
 ```
+
+`test:session` 自动执行真实页面脚本，覆盖命令返回前的事件、旧会话事件、密码重试、停止、启动失败、事件积压和卸载；替换桌面 IPC 与浏览器接口，不覆盖 DOM 点击、布局或真实 WebView。
+
+`test:session` executes the actual page script for early/stale events, password retries, stopping, startup failure, overflow and unmount. Desktop IPC/browser APIs are mocked; DOM clicks, layout and the real WebView are not covered.
 
 后端默认读取 `dist/runtime/airplay-backend.exe`。设置 `AIRPLAY_TEST_BACKEND` 可检查另一个构建；`check_setup.py --baseline <旧后端路径>` 可重现旧的 2 秒 SETUP 超时。模拟检查只连接 localhost，不连接真实接收端。
 

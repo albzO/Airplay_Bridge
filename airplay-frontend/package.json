@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite --host 127.0.0.1",
     "test:protocol": "node --test ../test/frontend/protocol.test.mjs",
+    "test:session": "node --test ../test/frontend/session.test.mjs",
     "test:ui": "vite --config ../test/frontend/vite.config.mjs",
     "test:ui:build": "vite build --config ../test/frontend/vite.config.mjs",
     "build": "vue-tsc --noEmit && vite build",

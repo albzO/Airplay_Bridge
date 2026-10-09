@@ -37,6 +37,7 @@ cargo test --manifest-path airplay-frontend/src-tauri/Cargo.toml --locked --offl
 
 # 前端类型检查和构建
 pnpm --dir airplay-frontend test:protocol
+pnpm --dir airplay-frontend test:session
 pnpm --dir airplay-frontend build
 
 # 桌面程序编译检查

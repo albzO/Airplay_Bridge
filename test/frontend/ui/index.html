@@ -11,9 +11,11 @@
       import devices from '../fixtures/devices.json';
       import inputs from '../fixtures/inputs.json';
       import metadata from '../../../airplay-frontend/package.json';
-      let id = 100,
-        host = devices[0].addresses[0];
-      const send = (payload) => emit('stream-event', { session_id: id, ...payload });
+      let id = 100;
+      // 定时回调绑定发起时的编号，不能把旧回调伪装成新会话事件。
+      // Bind timers to their originating id rather than relabeling old callbacks as the new session.
+      const send = (sessionId, payload) =>
+        emit('stream-event', { session_id: sessionId, ...payload });
       mockIPC(
         (cmd, args) => {
           if (cmd === 'plugin:app|version') return metadata.version;
@@ -49,18 +51,21 @@
           if (cmd === 'discover_devices') return devices;
           if (cmd === 'start_stream') {
             emit('source-level', { endpoint: inputs[0].id, captureEnabled: true });
-            id++;
-            host = devices.find((d) => d.name === args.names[0]).addresses[0];
-            setTimeout(() => send({ kind: 'password_required', host }), 40);
-            return id;
+            const sessionId = ++id;
+            const host = devices.find((d) => d.name === args.names[0]).addresses[0];
+            setTimeout(() => send(sessionId, { kind: 'password_required', host }), 40);
+            return sessionId;
           }
           if (cmd === 'submit_password')
             setTimeout(() => {
               if (args.password === 'bad')
-                send({ kind: 'finished', error: 'PASSWORD_REJECTED（退出码 10）：测试密码不正确' });
+                send(args.sessionId, {
+                  kind: 'finished',
+                  error: 'PASSWORD_REJECTED（退出码 10）：测试密码不正确',
+                });
               else {
-                send({ kind: 'native', line: '[PROBE] PCM_READY' });
-                send({
+                send(args.sessionId, { kind: 'native', line: '[PROBE] PCM_READY' });
+                send(args.sessionId, {
                   kind: 'telemetry',
                   elapsed_seconds: 20,
                   water_ms: 130,
@@ -70,13 +75,13 @@
                   peaks: [0.12, 0.08],
                   controller: { correction_ppm: 25 },
                 });
-                send({
+                send(args.sessionId, {
                   kind: 'native',
-                  line: `[PROBE] PACKET_STATS host=${host} sent=100 send_dropped=2 sync_dropped=0 rtx_requested=3 rtx_resent=2 rtx_expired=1`,
+                  line: `[PROBE] PACKET_STATS host=${args.host} sent=100 send_dropped=2 sync_dropped=0 rtx_requested=3 rtx_resent=2 rtx_expired=1`,
                 });
               }
             }, 40);
-          if (cmd === 'stop_stream') send({ kind: 'finished', cancelled: true });
+          if (cmd === 'stop_stream') send(id, { kind: 'finished', cancelled: true });
         },
         { shouldMockEvents: true },
       );

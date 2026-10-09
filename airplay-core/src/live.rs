@@ -2,18 +2,18 @@
 //! GUI 订阅持续 Source；CLI 使用自身采集流程，二者共用转换和协议调度。
 //! 输出为 44.1 kHz、16 位、立体声 PCM；帧数每秒为 44100，字节数每秒为 176400。
 //! 后端的 QPC 播放计划作为时基，控制器按缓冲水位微调采样率，避免长期时钟漂移。
-//! PCM 写管道、协议日志读取和有界诊断落盘各有独立线程；漂移摘要每 10 s 同步追加。
+//! PCM 写管道、协议日志读取和有界诊断落盘各有独立线程；漂移摘要每 10 s 非阻塞入队。
 //!
 //! Live bridge: capture, stateful resampling, bounded PCM queue, then native backend pipe.
 //! GUI subscribes to a persistent Source; CLI owns its capture path. Both share conversion
 //! and protocol scheduling. Output is 44.1 kHz, 16-bit stereo: 44100 frames/176400 bytes per second.
 //! The backend's QPC playback schedule is the timebase; water-level feedback corrects clock drift.
-//! Pipe writing, protocol reading and bounded diagnostic writing use workers; drift summaries append synchronously every 10 s.
+//! Pipe writing, protocol reading and bounded diagnostic writing use workers; drift summaries enqueue every 10 s.
 //!
 //! live.rs 只编排启动、采集与收尾；具体职责见同名目录中的内部模块。
 //! live.rs orchestrates startup, capture and cleanup; private submodules own the implementation.
 mod control;
-mod diagnostics;
+pub(crate) mod diagnostics;
 mod pipeline;
 mod protocol;
 mod transport;
@@ -134,8 +134,13 @@ fn run_targets(
     let privacy = crate::privacy::Redactor::new(&devices);
     let log = File::create(&log_path)?;
     let detailed_logs = gui.as_ref().is_none_or(|g| g.detailed_logs);
-    let drift_log = if detailed_logs {
-        Some(File::create(log_path.with_extension("drift.jsonl"))?)
+    let drift_log = if detailed_logs || gui.is_none() {
+        Some(DetailLog::start_drift(
+            detailed_logs
+                .then_some(log_path.with_extension("drift.jsonl"))
+                .as_deref(),
+            gui.is_none(),
+        )?)
     } else {
         None
     };
@@ -351,7 +356,6 @@ fn run_targets(
     }
     audio.close_input();
     let captured_frames = audio.captured_frames();
-    let trace_status = audio.finish_trace(&capture_result, stop.load(Ordering::Relaxed));
     if let Some(log) = &packet_log {
         log.record(serde_json::json!({
             "kind": "capture_end",
@@ -359,17 +363,6 @@ fn run_targets(
             "error": capture_result.as_ref().err().map(ToString::to_string),
             "stopped_by_user": stop.load(Ordering::Relaxed),
         }));
-    }
-    let packet_log_status = packet_log.take().map(DetailLog::finish);
-    if let Some(g) = &gui {
-        if capture_diagnostics {
-            (g.emit)(serde_json::json!({"kind":"diagnostic_end","status":packet_log_status}));
-        }
-    }
-    if capture_result.is_ok() {
-        println!("采集已停止，正在发送剩余音频并关闭会话……");
-    } else {
-        println!("串流异常中断，正在收集后端退出信息……");
     }
     // EOF 让写线程排空已接受的 PCM，后端完成协议收尾；后端退出后再等待读写线程。
     // 超过 15 秒先终止并回收后端，再等待线程，防止等待仍未关闭的管道。
@@ -391,6 +384,21 @@ fn run_targets(
     };
     let written = writer.join()?;
     reader.join();
+    // 后端先按自己的期限退出，再给所有诊断线程合计 250 ms；不让慢日志拖延回收后端。
+    // Reap the backend first, then allow all diagnostics a shared 250 ms; slow logs cannot delay backend cleanup.
+    audio.close_logs(&capture_result, stop.load(Ordering::Relaxed));
+    if let Some(log) = &mut packet_log {
+        log.close();
+    }
+    let log_deadline = Instant::now() + Duration::from_millis(250);
+    let trace_status = audio.finish_trace(log_deadline);
+    let drift_log_status = audio.finish_drift(log_deadline);
+    let packet_log_status = packet_log.take().map(|log| log.finish_until(log_deadline));
+    if let Some(g) = &gui {
+        if capture_diagnostics {
+            (g.emit)(serde_json::json!({"kind":"diagnostic_end","status":packet_log_status}));
+        }
+    }
     let backend_error = protocol.failure.lock().unwrap().clone();
     let report = serde_json::json!({
         "device": name,
@@ -427,6 +435,7 @@ fn run_targets(
         "pipeline_trace": if detailed_logs || capture_diagnostics { Some(log_path.with_extension("pipeline.jsonl")) } else { None },
         "pipeline_trace_status": trace_status,
         "drift_trace": if detailed_logs { Some(log_path.with_extension("drift.jsonl")) } else { None },
+        "drift_trace_status": drift_log_status,
     });
     let report_path = log_path.with_extension("json");
     let report = privacy.value(&report);

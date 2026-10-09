@@ -7,11 +7,12 @@
 //! Attaching/detaching a stream does not restart capture. Capture never waits on network or disk.
 //! Bounded audio queues report overflow as a fault; diagnostic queues may drop records and
 //! report the count during cleanup instead of allowing unbounded memory growth.
-use crate::capture::{self, CaptureProgress};
+use crate::{
+    capture::{self, CaptureProgress},
+    live::diagnostics::DetailLog,
+};
 use serde_json::{Value, json};
 use std::{
-    fs::{self, OpenOptions},
-    io::Write,
     path::PathBuf,
     sync::{
         Arc, Mutex,
@@ -118,34 +119,19 @@ impl Source {
         });
         let s = source.clone();
         let worker = thread::spawn(move || {
-            let privacy = crate::privacy::Redactor::from_root(&root);
-            let directory = root.join("logs");
-            let path = directory.join("source-startup.jsonl");
-            let _ = fs::create_dir_all(&directory);
-            if fs::metadata(&path).is_ok_and(|m| m.len() > 2 * 1024 * 1024) {
-                let backup = directory.join("source-startup.previous.jsonl");
-                let _ = fs::remove_file(&backup);
-                let _ = fs::rename(&path, backup);
-            }
-            let startup_log = Mutex::new(
-                OpenOptions::new()
-                    .create(true)
-                    .append(true)
-                    .open(&path)
-                    .ok(),
-            );
+            let path = root.join("logs").join("source-startup.jsonl");
+            let (startup_log, log_error) = match DetailLog::start_source(&path) {
+                Ok(log) => (Some(log), None),
+                Err(error) => (None, Some(error.to_string())),
+            };
             let stamp = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_millis();
             let started = Instant::now();
             let write_startup = |entry: Value| {
-                if let Some(file) = startup_log.lock().unwrap().as_mut() {
-                    let _ = writeln!(
-                        file,
-                        "{}",
-                        privacy.value(&json!({"source_id":stamp,"endpoint":s.endpoint,"elapsed_ms":started.elapsed().as_secs_f64()*1000.0,"entry":entry}))
-                    );
+                if let Some(log) = &startup_log {
+                    log.record(json!({"source_id":stamp,"endpoint":s.endpoint,"elapsed_ms":started.elapsed().as_secs_f64()*1000.0,"entry":entry}));
                 }
             };
             write_startup(
@@ -249,6 +235,14 @@ impl Source {
                 *sub.fault.lock().unwrap() = error.clone();
             }
             s.done.store(true, Ordering::Release);
+            let log_status = startup_log
+                .map(DetailLog::finish)
+                .unwrap_or_else(|| json!({"error":log_error,"dropped_records":0}));
+            if !log_status["error"].is_null() || log_status["dropped_records"] != 0 {
+                emit(
+                    json!({"endpoint":s.endpoint,"warning":"采集启动日志未完整保存，音频采集结果不受影响","startup_log_status":log_status}),
+                );
+            }
             emit(json!({"endpoint":s.endpoint,"peaks":[0.,0.],"error":error}));
         });
         *source.worker.lock().unwrap() = Some(worker);

@@ -74,6 +74,13 @@ const session = ref<number | null>(null),
   password = ref(''),
   sending = ref(false),
   connected = ref(false);
+// 命令返回前只暂存事件，不从事件猜测会话编号；过量事件显式停止，避免无限积压。
+// Buffer early events until the command identifies the session; overflow stops explicitly to bound memory.
+const startEventLimit = 512;
+let startRequest = 0;
+let starting = false;
+let startEvents: StreamEvent[] = [];
+let startEventsOverflow = false;
 // 连接前没有遥测，保留空快照让界面显示“—”；报告只在串流收尾时到达。
 // Keep an empty snapshot before telemetry so the UI shows “—”; reports arrive during stream cleanup.
 const telemetry = ref<Partial<Telemetry>>({}),
@@ -376,6 +383,11 @@ async function refresh() {
  * session; retain the input until its password_required event, then submit and clear it immediately.
  */
 async function start(passwordFirst = false) {
+  if (busy.value || disposed) return;
+  const request = ++startRequest;
+  starting = true;
+  startEvents = [];
+  startEventsOverflow = false;
   activeDiagnostics.value = settings.value.captureDiagnostics;
   diagnosticLogs.value = [];
   diagnosticPath.value = '';
@@ -385,6 +397,8 @@ async function start(passwordFirst = false) {
   pipelinePath.value = '';
   error.value = '';
   busy.value = true;
+  playing.value = false;
+  stopping.value = false;
   phase.value = '正在连接';
   session.value = null;
   pending.value = '';
@@ -406,26 +420,44 @@ async function start(passwordFirst = false) {
     settings: settings.value,
     passwordFirst,
   });
+  if (disposed || request !== startRequest) return;
+  starting = false;
+  const queued = startEvents;
+  startEvents = [];
   if (id === undefined) {
     busy.value = false;
+    stopping.value = false;
     phase.value = '连接失败';
     deviceStates.value[attemptCard.value] = 'red';
     retrySending.value = false;
   } else {
-    // 工作线程可能在命令返回前发事件；event 已认领 id 时不能再次覆盖它。
-    // Events can precede the command response; do not overwrite an id already claimed by event.
-    if (session.value === null) session.value = id;
+    session.value = id;
+    if (startEventsOverflow) {
+      error.value = '连接期间事件积压过多，已请求停止；请重新连接';
+      await stop();
+      // 即使已请求停止，提前到达的 finished 仍需负责清理页面状态。
+      // Even after requesting stop, an early finished event must finalize the page.
+      for (const entry of queued) if (entry.kind === 'finished') event(entry);
+    } else {
+      for (const entry of queued) event(entry);
+    }
   }
 }
 
 async function stop() {
+  if (!busy.value || disposed) return;
+  const request = startRequest;
   // 停止是异步请求：禁用遥测更新，但让 finished 负责最终状态和失败信息。
   // Stop is asynchronous: suppress telemetry updates and let finished set final state and errors.
   stopping.value = true;
   phase.value = '正在停止';
   password.value = '';
   pending.value = '';
-  await call('stop_stream');
+  try {
+    await invokeCommand('stop_stream');
+  } catch (e) {
+    if (!disposed && request === startRequest && busy.value) error.value = String(e);
+  }
 }
 
 async function submit() {
@@ -438,6 +470,8 @@ async function submit() {
     return;
   }
   sending.value = true;
+  const request = startRequest;
+  const submittedSession = session.value;
   const secret = password.value;
   // 交给桌面命令后不在响应式页面状态中保留密码。
   // Clear the reactive password state once the value is handed to the desktop command.
@@ -449,12 +483,14 @@ async function submit() {
       host: pending.value,
       password: secret,
     });
+    if (disposed || request !== startRequest || !busy.value || stopping.value) return;
     pending.value = '';
     phase.value = '正在验证密码';
   } catch (e) {
-    error.value = String(e);
+    if (!disposed && request === startRequest && busy.value && !stopping.value)
+      error.value = String(e);
   } finally {
-    sending.value = false;
+    if (request === startRequest && submittedSession === session.value) sending.value = false;
   }
 }
 
@@ -489,14 +525,28 @@ async function swap() {
  * Accept only events validated by protocol.ts; narrowing kind exposes only that variant's fields.
  */
 function event(e: StreamEvent) {
-  // 新会话启动后旧线程可能仍有排队事件；先按 id 过滤，防止旧 finished 关闭新播放。
-  // Filter queued events by id so an old worker's finished event cannot close a newer stream.
-  if (session.value !== null && e.session_id !== session.value) return;
-  if (session.value === null && busy.value) session.value = e.session_id;
+  if (disposed) return;
+  if (starting) {
+    if (startEvents.length < startEventLimit) startEvents.push(e);
+    else {
+      startEventsOverflow = true;
+      // 溢出时仍保留收尾事件，否则已经结束的后端无法再通知页面解除 busy。
+      // Preserve terminal events on overflow; an exited backend cannot emit finished again.
+      if (e.kind === 'finished') {
+        const replace = startEvents.findIndex((entry) => entry.kind !== 'finished');
+        startEvents[replace < 0 ? startEvents.length - 1 : replace] = e;
+      }
+    }
+    return;
+  }
+  // 只接受命令确认的活动会话；finished 后的迟到事件也不能重新打开密码框或连接状态。
+  // Accept only the command-confirmed active session; late events after finished cannot reopen UI state.
+  if (!busy.value || session.value === null || e.session_id !== session.value) return;
   if (e.kind === 'preparing_source') {
-    phase.value = '等待采集稳定';
+    if (!stopping.value) phase.value = '等待采集稳定';
   }
   if (e.kind === 'password_required') {
+    if (stopping.value) return;
     pending.value = e.host;
     phase.value = '需要 AirPlay 密码';
     expanded.value = chosen.value?.id || '';
@@ -572,7 +622,7 @@ function event(e: StreamEvent) {
     }
     if (line.includes('AUTH_METHOD') || line.includes('TIMING'))
       technical.value[line.includes('TIMING') ? '时钟协议' : '认证方式'] = f.value || line;
-    if (line.includes('PCM_READY')) {
+    if (line.includes('PCM_READY') && !stopping.value) {
       connected.value = true;
       phase.value = '启动音频采集';
       deviceStates.value[attemptCard.value] = 'green';
@@ -603,6 +653,8 @@ function event(e: StreamEvent) {
     connected.value = false;
     telemetry.value.peaks = [0, 0];
     stopping.value = false;
+    sending.value = false;
+    retrySending.value = false;
     pending.value = '';
     phase.value = e.error ? '串流失败' : '已停止';
     deviceStates.value[attemptCard.value] = e.error ? 'red' : '';
@@ -645,6 +697,9 @@ let uiInitialized = false;
 let initialCapturePending = true;
 onUnmounted(() => {
   disposed = true;
+  startRequest++;
+  starting = false;
+  startEvents = [];
   systemTheme.removeEventListener('change', applyTheme);
   unlisteners.forEach((unlisten) => unlisten());
 });

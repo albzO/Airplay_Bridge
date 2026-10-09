@@ -14,8 +14,6 @@ use crate::{
     drift::Controller,
 };
 use std::{
-    fs::File,
-    io::Write,
     sync::{Mutex, atomic::Ordering},
     time::{Duration, Instant},
 };
@@ -41,7 +39,7 @@ pub(super) struct AudioPipeline<'a> {
     ui_updated: Instant,
     trace_updated: Instant,
     trace: Option<DetailLog>,
-    drift_log: Option<File>,
+    drift_log: Option<DetailLog>,
     capture_diagnostics: bool,
 }
 pub(super) struct PipelineOptions<'a> {
@@ -58,7 +56,7 @@ impl<'a> AudioPipeline<'a> {
         sender: PcmSender,
         counters: PcmCounters,
         trace: Option<DetailLog>,
-        drift_log: Option<File>,
+        drift_log: Option<DetailLog>,
     ) -> Self {
         Self {
             gui: options.gui,
@@ -216,13 +214,9 @@ impl<'a> AudioPipeline<'a> {
                         "lead_ms": origin.lead_ms,
                         "estimated_audio_delay_ms": origin.lead_ms as f64 + water_ms,
                     });
-                    if let Some(log) = &mut self.drift_log {
-                        writeln!(log, "{entry}")?;
+                    if let Some(log) = &self.drift_log {
+                        log.record(entry);
                     }
-                    println!(
-                        "[DRIFT] 缓冲={water_ms:.1}ms 目标={:.1}ms 校正={ppm:.1}ppm lead={}ms",
-                        self.controller.target_ms, origin.lead_ms
-                    );
                     self.last_log = elapsed;
                 }
             }
@@ -251,11 +245,7 @@ impl<'a> AudioPipeline<'a> {
     pub(super) fn controller(&self) -> &Controller {
         &self.controller
     }
-    pub(super) fn finish_trace(
-        &mut self,
-        capture_result: &Result<serde_json::Value>,
-        stopped: bool,
-    ) -> Option<serde_json::Value> {
+    pub(super) fn close_logs(&mut self, capture_result: &Result<serde_json::Value>, stopped: bool) {
         if let Some(trace) = &self.trace {
             trace.record(serde_json::json!({
                 "kind": "capture_end",
@@ -268,7 +258,18 @@ impl<'a> AudioPipeline<'a> {
                 "stopped_by_user": stopped,
             }));
         }
-        self.trace.take().map(DetailLog::finish)
+        if let Some(trace) = &mut self.trace {
+            trace.close();
+        }
+        if let Some(drift) = &mut self.drift_log {
+            drift.close();
+        }
+    }
+    pub(super) fn finish_trace(&mut self, deadline: Instant) -> Option<serde_json::Value> {
+        self.trace.take().map(|log| log.finish_until(deadline))
+    }
+    pub(super) fn finish_drift(&mut self, deadline: Instant) -> Option<serde_json::Value> {
+        self.drift_log.take().map(|log| log.finish_until(deadline))
     }
 }
 
