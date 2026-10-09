@@ -70,3 +70,17 @@ Maintain native protocol adaptations in `airplay-backend/select_upstream.py` and
 `dist/airplay-bridge.exe` 为主入口，原生后端和 DLL 位于 `dist/runtime/`，诊断工具位于 `dist/tools/`，说明位于 `dist/docs/`，许可证位于 `dist/licenses/` 和根目录 LICENSE、NOTICE。构建脚本会持续输出这一布局。
 
 不将设备清单、日志、录音或界面检查输出加入发行包。GUI 数据位于 `%APPDATA%\AirPlay Hub`，CLI 数据位于其 `cli/` 子目录。
+
+## 版本更新与发行 / Version updates and distribution
+
+维护者提出更新到新版本时，默认同步桌面应用、前端包、Rust 核心、锁文件及安装脚本版本，并更新 CHANGELOG、README、文档导航、发行包说明和受影响的使用文档；保留历史版本记录。发行文档记录功能改动、使用方式与串流验证范围，不保存安装测试结果。
+
+Whenever the maintainer requests a new version, synchronize application, frontend, core, lockfile and installer versions, and update the changelog, README, documentation index, distribution guide and affected usage documents. Preserve release history, document behavior and streaming validation scope, and omit installation test results.
+
+先构建并检查安装包，再同步发行包内的 Markdown。更改说明文件后重新打包、更新 SHA256 校验值；确认包内说明与源码一致，且没有配置、设备清单或日志。更改程序或安装逻辑时需要重新运行相关安装测试，测试后清理临时记录。
+
+Build and check the installer before synchronizing packaged Markdown. After documentation changes, repack and refresh SHA256 checksums; ensure packaged documents match source and exclude runtime data. Rerun relevant installation checks when application or installer behavior changes, and clean up temporary records afterward.
+
+现有正式安装使用 `scripts/installpackcompiler.iss` 的 Inno Setup 身份。`scripts/package-release.ps1` 当前生成便携 ZIP 和 NSIS 安装包；面向原安装版升级时，需用 Inno Setup 编译器重新生成同名安装包，并重新计算校验值。仅修改版本号不能让 NSIS 接管 Inno Setup 的卸载项和安装目录。
+
+Existing installations use the Inno Setup identity in `scripts/installpackcompiler.iss`. The current packaging script emits a portable ZIP and an NSIS installer; compile the Inno Setup installer for upgrades of existing installations and refresh checksums afterward. A version change alone does not bridge installer families.

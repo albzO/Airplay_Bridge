@@ -2,7 +2,7 @@
 
 Windows 上的 AirPlay 2 音频发送工具。通过桌面界面选择录音或播放设备，将音频发送到 HomePod 等 AirPlay 接收端。
 
-当前维护版本为 **1.0.2（待发布）**，暂停播放误触发重建及设备接管超时的修复仍需实机回归确认。主要验证 HomePod mini 单设备及立体声对，其他接收端的兼容性尚未完整验证。版本说明见 [更新日志](CHANGELOG.md)，项目授权状态见 [许可证说明](docs/licensing.md)。
+当前维护版本为 **1.0.2**，包含暂停播放误触发重建及设备接管超时的修复，相关串流行为仍需实机回归确认。主要验证 HomePod mini 单设备及立体声对，其他接收端的兼容性尚未完整验证。版本说明见 [更新日志](CHANGELOG.md)，项目授权状态见 [许可证说明](docs/licensing.md)。
 
 ## AI 辅助开发声明
 
@@ -21,7 +21,9 @@ AirPlay 协议基础及部分组件来自第三方开源项目，其归属和许
 
 ## 快速开始
 
-使用发行包：将完整目录解压到本机，启动 `airplay-bridge.exe`。需要 Windows x64 和 Microsoft Edge WebView2 Runtime；保留 `runtime/` 中的后端和 DLL。
+使用安装包：先从托盘退出正在运行的应用，再运行安装程序。现有 Inno Setup 安装版可直接升级，沿用原目录并保留配置；不要先卸载。
+
+使用便携包：将完整目录解压到可写目录，启动 `airplay-bridge.exe`。便携版与安装版的数据目录不同，不自动迁移彼此的配置。需要 Windows x64 和 Microsoft Edge WebView2 Runtime；保留 `runtime/` 中的后端和 DLL。
 
 从源码构建需要 Rust MSVC、Visual Studio C++ Build Tools / Windows SDK、MSYS2 UCRT64、Python、Node.js 和 pnpm。具体依赖见 [构建指南](docs/building.md)。
 

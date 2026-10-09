@@ -22,6 +22,16 @@ Windows x64，需要 Microsoft Edge WebView2 Runtime。确保电脑与接收端�
 
 设置中提供外观、保持系统唤醒、播放提前量、声道映射、统计、技术详情和日志。Playback 采集的是向所选播放设备输出的声音。
 
+## 安装与升级 / Installation and upgrade
+
+安装前从托盘退出应用。现有 Inno Setup 安装版可直接运行新安装包升级，无需先卸载；保留原安装目录和 `%APPDATA%\AirPlay Hub` 中的配置。
+
+Exit the application from the tray before installing. Existing Inno Setup installations can be upgraded directly, preserving the installation directory and settings in `%APPDATA%\AirPlay Hub`.
+
+便携版与安装版使用不同的数据目录，不自动互相迁移配置。升级便携版时保留原目录的 `data/`，用新版文件更新程序。
+
+Portable and installed builds use separate data directories and do not automatically migrate settings between them. Preserve the existing `data/` directory when updating a portable build.
+
 ## 配置与诊断
 
 安装版 GUI 配置及日志：`%APPDATA%\AirPlay Hub`。

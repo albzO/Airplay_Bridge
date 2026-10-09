@@ -1,6 +1,6 @@
 # 更新日志
 
-## 1.0.2 — 待发布 / Pending release
+## 1.0.2 — 2026-10-10
 
 - 修复暂停播放后误报回环无音频并重建采集的问题：回环一致性检查仅在启动阶段运行，后续暂停、恢复或停止串流不重新触发。
   Fix false loopback recovery during playback pauses by limiting consistency checks to capture startup.
@@ -9,8 +9,8 @@
 - 桌面应用、前端包、Rust 核心、锁文件和安装包版本统一更新为 `1.0.2`，保留原安装身份和历史发行记录。
   Update application, frontend, core, lockfiles and installers to `1.0.2`, preserving the existing installation identity and release history.
 
-验证：采集健康状态回归及本地延迟回应的单设备/立体声协议测试已通过；真实设备的暂停/恢复及已有播放会话切换仍需确认。
-Validation: capture health regressions and local single/stereo receiver checks with delayed responses pass; real-device pause/resume and takeover checks remain pending.
+验证范围：采集健康状态回归及本地延迟回应的单设备/立体声协议测试已通过；真实设备的暂停/恢复及已有播放会话切换仍需确认。
+Validation scope: capture health regressions and local single/stereo receiver checks with delayed responses pass; real-device pause/resume and takeover checks remain pending.
 
 ## 1.0.1 — 历史候选 / Previous candidate
 
