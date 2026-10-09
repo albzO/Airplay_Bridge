@@ -4,6 +4,10 @@
 
 ## 当前结果 / Current result
 
+2026-10-10 发布检查：发现暂停播放也会触发 `loopback_reopen`。旧检查在来源稳定后仍持续运行，日志中有正常交付约 129 秒后进入重建的记录。修复将电平/原始音频矛盾检查限定到启动阶段：连续 500 ms 无矛盾后永久关闭该判断，正常安静来源也能完成启动；暂停/恢复不撤销就绪、不自动重建。电平读数与原始包不一致只能作为线索，不能单独证明运行中的驱动故障。v1.0.1 当前待发布，下面的持续有声测试不替代暂停/恢复回归验证。
+
+Release check, 2026-10-10: pausing playback could trigger reopening after established capture. The fix limits meter/raw-PCM checks to startup and permanently completes them after 500 ms without contradiction, including valid quiet startup. Pause/resume does not rearm the check or revoke readiness. v1.0.1 remains pending; the earlier continuous-tone tests did not cover this transition.
+
 在 VoiceMeeter VAIO3 / I/O 8 上，普通 WAV 测试音持续播放、Apple Music 已退出，SOFT 同步及 A1/A4 ASIO 路由保持原设置。先将实际 VAIO latency 从 768 改为 7168 完成对照，再按用户的低延迟需求改为 1536，重复验证：
 
 | VAIO latency | 验证 | 结果 |

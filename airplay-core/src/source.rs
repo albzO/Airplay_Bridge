@@ -29,10 +29,10 @@ enum Event {
 #[derive(Default)]
 /// 稳定性看数据包连续到达，不看振幅：系统在空闲时生成的静音也算有效数据。
 /// 故障或包间隔超过 250 ms 会重置连续窗口；500 ms 稳定且至少 3 包才可连接。
-/// 播放端点电平与原始包相矛盾时暂停计时，由回环健康检查决定是否重建。
+/// 首次采集稳定前，播放端点电平与原始包相矛盾时暂停计时；稳定后不因暂停重新开启检查。
 /// Readiness measures continuous packet delivery, not amplitude; intentional idle silence is valid.
 /// Faults or gaps over 250 ms reset the window; require 500 ms stability and at least three packets.
-/// Contradictory playback meter/raw PCM suspends warmup; the loopback health check decides whether to reopen.
+/// Meter/raw-PCM contradictions suspend startup warmup only; pausing established capture does not rearm the check.
 struct Warmup {
     since: Option<Instant>,
     last: Option<Instant>,
@@ -467,7 +467,7 @@ impl Source {
                 }
             };
             write_startup(
-                json!({"kind":"source_requested","mapping":*s.mapping.lock().unwrap(),"process_id":std::process::id(),"loopback_health_check":"endpoint_vs_raw_pcm_v1"}),
+                json!({"kind":"source_requested","mapping":*s.mapping.lock().unwrap(),"process_id":std::process::id(),"loopback_health_check":"startup_endpoint_vs_raw_pcm_v2"}),
             );
             let mut peaks = [0f32; 2];
             let mut updated = Instant::now();

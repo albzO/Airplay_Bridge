@@ -1,5 +1,5 @@
-//! 播放回环健康检查：区分正常静音与“系统仍播放、原始包持续全零”。
-//! Playback loopback health: distinguish valid silence from active output with persistently zero raw PCM.
+//! 播放回环启动检查：首次稳定后永久结束判断，避免暂停播放误触发重建。
+//! Playback loopback startup check: permanently finish after stability to avoid reopening on playback pause.
 use std::{
     fmt,
     time::{Duration, Instant},
@@ -80,22 +80,34 @@ impl PlaybackMonitor {
 #[derive(Default)]
 pub(super) struct LoopbackHealth {
     mismatch_since: Option<Instant>,
+    healthy_since: Option<Instant>,
+    startup_complete: bool,
 }
 impl LoopbackHealth {
     /// 检查全部原始声道，而非用户映射后的左右声道；后者可能合法地选择静音声道。
-    /// 首个矛盾包就暂停就绪判定，持续 500 ms 才请求重建，容许正常短暂静音。
+    /// 仅在启动阶段判断：连续 500 ms 无矛盾后永久结束检查，暂停/恢复不重新开启。
+    /// 首个启动矛盾包暂停就绪，持续 500 ms 才请求重建；正常静音也可完成启动。
     /// Check all raw channels, not mapped stereo which may intentionally select silent channels.
-    /// Suspend readiness on the first mismatch; request reopening only after 500 ms of sustained mismatch.
+    /// Startup only: 500 ms without contradiction permanently completes the check; pause/resume never rearms it.
+    /// Suspend readiness on the first startup mismatch; reopen after 500 ms. Valid silence also completes startup.
     pub(super) fn observe(
         &mut self,
         now: Instant,
         reading: PlaybackReading,
         raw_nonzero: bool,
     ) -> bool {
+        if self.startup_complete {
+            return false;
+        }
         if reading.audible() && !raw_nonzero {
             self.mismatch_since.get_or_insert(now);
+            self.healthy_since = None;
         } else {
             self.mismatch_since = None;
+            let since = *self.healthy_since.get_or_insert(now);
+            if now.duration_since(since) >= Duration::from_millis(500) {
+                self.startup_complete = true;
+            }
         }
         self.mismatch_since.is_some()
     }
@@ -190,5 +202,50 @@ mod tests {
         health.observe(start + Duration::from_millis(500), playing(), false);
         assert!(!health.stalled(start + Duration::from_millis(900)));
         assert!(health.stalled(start + Duration::from_millis(1000)));
+    }
+
+    #[test]
+    fn established_capture_survives_pause_with_an_active_or_stale_meter_and_resumes() {
+        let start = Instant::now();
+        let mut health = LoopbackHealth::default();
+        for ms in (0..=500).step_by(10) {
+            assert!(!health.observe(start + Duration::from_millis(ms), playing(), true));
+        }
+        // 播放器暂停后电平仍非零也不能重建；恢复播放、再次暂停不重新开启启动检查。
+        // A nonzero meter during pause must not reopen capture; resume and another pause never rearm startup.
+        for ms in (510..=10_000).step_by(10) {
+            assert!(!health.observe(start + Duration::from_millis(ms), playing(), false));
+            assert!(!health.stalled(start + Duration::from_millis(ms)));
+        }
+        assert!(!health.observe(start + Duration::from_secs(11), playing(), true));
+        assert!(!health.observe(start + Duration::from_secs(12), playing(), false));
+        assert!(!health.stalled(start + Duration::from_secs(13)));
+    }
+
+    #[test]
+    fn quiet_startup_is_valid_and_does_not_rearm_on_later_meter_changes() {
+        let start = Instant::now();
+        let mut health = LoopbackHealth::default();
+        let quiet = PlaybackReading {
+            peak: Some(0.0),
+            ..playing()
+        };
+        for ms in (0..=500).step_by(10) {
+            assert!(!health.observe(start + Duration::from_millis(ms), quiet, false));
+        }
+        assert!(!health.observe(start + Duration::from_secs(1), playing(), false));
+        assert!(!health.stalled(start + Duration::from_secs(2)));
+    }
+
+    #[test]
+    fn a_brief_initial_signal_does_not_hide_a_startup_loopback_failure() {
+        let start = Instant::now();
+        let mut health = LoopbackHealth::default();
+        for ms in (0..=400).step_by(10) {
+            assert!(!health.observe(start + Duration::from_millis(ms), playing(), true));
+        }
+        assert!(health.observe(start + Duration::from_millis(410), playing(), false));
+        assert!(health.observe(start + Duration::from_millis(910), playing(), false));
+        assert!(health.stalled(start + Duration::from_millis(910)));
     }
 }
