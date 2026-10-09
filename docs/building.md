@@ -26,6 +26,8 @@ git -C upstream/airplay-cli/libraop submodule update --init -- crosstools
 
 无需获取其他上游子模块，不要使用 `--remote` 将依赖升级到最新分支。GitHub 自动生成的源码 ZIP 不包含子模块内容；请通过 Git 克隆后执行上述命令。使用根目录构建脚本，上游原始 Makefile 的完整功能不属于本项目构建范围。
 
+保留根目录 `test/`：生产模块通过挂接复用其中的测试及诊断检查实现，完整源码检出已包含这些文件。测试源码和合成样例随 Git 提交，测试生成内容位于忽略的 `test/.artifacts/`；运行方式见 [测试说明](../test/README.md)。
+
 ### 构建桌面应用
 
 在项目根目录的 PowerShell 中执行：

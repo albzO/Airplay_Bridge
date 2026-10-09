@@ -8,6 +8,8 @@
   Fix premature audio stream setup timeouts by retaining the 8-second startup budget without increasing normal playback latency.
 - 桌面应用、前端包、Rust 核心、锁文件和安装包版本统一更新为 `1.0.2`，保留原安装身份和历史发行记录。
   Update application, frontend, core, lockfiles and installers to `1.0.2`, preserving the existing installation identity and release history.
+- 测试源码集中到根目录 `test/frontend/`、`test/backend/`、`test/core/`，恢复 Git 提交并更新运行入口、项目结构与贡献说明；日志、录音和生成内容继续忽略。
+  Centralize tests under root `test/frontend/`, `test/backend/` and `test/core/`, restore Git tracking and update runners and project guides while excluding runtime artifacts.
 
 验证范围：采集健康状态回归及本地延迟回应的单设备/立体声协议测试已通过；真实设备的暂停/恢复及已有播放会话切换仍需确认。
 Validation scope: capture health regressions and local single/stereo receiver checks with delayed responses pass; real-device pause/resume and takeover checks remain pending.

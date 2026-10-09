@@ -21,6 +21,7 @@ set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
 execute_process(COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/select_upstream.py"
   "${UPSTREAM}" "${GENERATED}" COMMAND_ERROR_IS_FATAL ANY)
 add_executable(airplay-backend main.c windows_port.c logging.c shm_disabled.c raw_codec.c pcm_source.c audio_nonce.c
+  "${CMAKE_CURRENT_SOURCE_DIR}/../test/backend/native/nonce_selfcheck.c"
   "${GENERATED}/raw_alac.c"
   "${GENERATED}/probe_client.c" "${GENERATED}/ap2_hap.c" "${GENERATED}/ap2_io.c"
   "${GENERATED}/ap2_ptp.c" "${GENERATED}/ap2_plist.c"

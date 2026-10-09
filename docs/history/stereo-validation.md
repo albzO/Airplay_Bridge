@@ -52,4 +52,4 @@
 
 日志新增 GROUP_CONNECT、GROUP_READY、GROUP_ANCHOR、GROUP_TEARDOWN；包统计/事件/反馈标明 host。JSON 保存 peer_device、shared_ptp、member_packet_stats，两个音量回传日志分别为 volume.log、peer.volume.log。
 
-已编译，只执行一项针对双接收端的检查：两台逐样本收到相同内容及 RTP 进度、一个 PTP 引擎、相同 groupUUID/clockID/冻结锚点、重传和两边 TEARDOWN 均通过。脚本 `airplay-backend/tests/check_stereo.py`，报告 `build/stereo-check.json`，未重跑完整模拟测试。真实 HomePod 双设备播放、同步听感和音量交互尚待本轮实机确认。
+已编译，只执行一项针对双接收端的检查：两台逐样本收到相同内容及 RTP 进度、一个 PTP 引擎、相同 groupUUID/clockID/冻结锚点、重传和两边 TEARDOWN 均通过。脚本现位于 `test/backend/check_stereo.py`，当前报告输出到 `test/.artifacts/backend/stereo-check.json`，未重跑完整模拟测试。真实 HomePod 双设备播放、同步听感和音量交互尚待本轮实机确认。

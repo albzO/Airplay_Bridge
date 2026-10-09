@@ -451,4 +451,5 @@ fn run_targets(
 }
 
 #[cfg(test)]
+#[path = "../../test/core/unit/live/hardware.rs"]
 mod tests;

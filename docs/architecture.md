@@ -10,10 +10,13 @@
 | `airplay-backend/` | C/C++ AirPlay 后端入口和 Windows 适配 |
 | `upstream/` | 原作者仓库的固定版本子模块，源码不作为普通文件纳入本仓库 |
 | `scripts/` | PowerShell 构建入口 |
+| `test/` | 前端、后端和核心测试源码、合成样例；生成内容位于忽略的 `.artifacts/` |
 
 界面的 `types.ts` 集中保存与桌面命令共享的数据结构，`commands.ts` 统一命令错误转换。桌面端的 `settings.rs` 管理默认值、范围校验、读取和完整写入后的替换；`window.rs` 管理显示、关闭和退出顺序。`main.rs` 保留命令注册、共享状态和会话编排。
 
-`airplay-core/` 包含音频核心代码和独立诊断 CLI；采集及转换检查脚本在本地 `tests/` 维护，不随 Git 仓库发布。其 `lib.rs` 导出音频模块供 GUI 直接链接；`main.rs` 生成独立的 `homepod-test.exe`。Cargo 包名暂时保留 `homepod-test`，GUI 不通过启动该 CLI 实现串流。
+`airplay-core/` 包含音频核心代码和独立诊断 CLI；单元测试位于 `test/core/unit/`，采集及转换检查脚本位于 `test/core/checks/`，均随 Git 提交。其 `lib.rs` 导出音频模块供 GUI 直接链接；`main.rs` 生成独立的 `homepod-test.exe`。该 CLI 是产品诊断工具，Cargo 包名暂时保留 `homepod-test`，GUI 不通过启动该 CLI 实现串流。
+
+Rust 单元测试通过原模块的 `#[cfg(test)]` 和 `#[path]` 挂接，保留访问私有实现的能力，原 Cargo 测试入口不变。桌面窗口/单实例模拟检查及后端 nonce 自检实现分别位于 `test/frontend/desktop/`、`test/backend/native/`，原入口仅负责调用。测试目录需随完整源码检出；测试源码不会作为独立文件加入安装包。
 
 ## 数据路径
 

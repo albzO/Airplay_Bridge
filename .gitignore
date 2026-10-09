@@ -46,7 +46,6 @@ capture-*.wav
 capture-*.pcm
 *.pcm.wav
 *.pcm.json
-/airplay-frontend/checks/*.png
 instance-smoke.json
 ui-smoke.json
 devices.json
@@ -57,12 +56,10 @@ settings.pending.json
 auth-policy.json
 auth-policy.pending.json
 
-# Standalone tests and fixtures are maintained locally, not published.
-test/
-tests/
-/airplay-frontend/checks/
-*.test.*
-*.spec.*
+# Test sources are committed; generated artifacts and local runtime data are not.
+/test/.artifacts/
+!/test/frontend/fixtures/devices.json
+!/test/frontend/fixtures/inputs.json
 
 # Local environment secrets; allow documented examples
 .env

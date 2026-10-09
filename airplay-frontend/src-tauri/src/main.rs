@@ -13,6 +13,8 @@ mod auth_memory;
 mod awake;
 mod settings;
 mod startup;
+#[path = "../../../test/frontend/desktop/startup.rs"]
+mod startup_checks;
 mod window;
 use homepod_test::{
     capture,
@@ -31,7 +33,7 @@ use std::{
         mpsc::Sender,
     },
     thread,
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::{SystemTime, UNIX_EPOCH},
 };
 use tauri::{
     Emitter, Manager, State,
@@ -504,72 +506,9 @@ fn ui_ready(
     engine: State<Arc<Engine>>,
     inputs: Vec<capture::Input>,
 ) -> Result<(), String> {
-    if std::env::args().any(|a| a == "--instance-smoke-test") {
-        let window = app.get_webview_window("main").ok_or("缺少主窗口")?;
-        window.hide().map_err(|e| e.to_string())?;
-        let path = std::env::current_exe()
-            .map_err(|e| e.to_string())?
-            .parent()
-            .unwrap()
-            .join("instance-smoke.json");
-        fs::write(path, serde_json::to_vec(&json!({"pid":std::process::id(),"hidden":!window.is_visible().map_err(|e| e.to_string())?,"waitingForSecondLaunch":true})).unwrap()).map_err(|e| e.to_string())?;
-    }
-    if std::env::args().any(|a| a == "--smoke-test") {
-        let path = std::env::current_exe()
-            .map_err(|e| e.to_string())?
-            .parent()
-            .unwrap()
-            .join("ui-smoke.json");
-        let window = app.get_webview_window("main").ok_or("缺少主窗口")?;
-        window.hide().map_err(|e| e.to_string())?;
-        let hidden = !window.is_visible().map_err(|e| e.to_string())?;
-        reveal(&app);
-        let restored = window.is_visible().map_err(|e| e.to_string())?;
-        let report = json!({
-            "frontendReady": true,
-            "backendAvailable": engine.backend.exists(),
-            "deviceCount": devices(&engine).len(),
-            "dataPath": engine.root,
-            "inputs": inputs,
-            "trayInstalled": app.tray_by_id("main-tray").is_some(),
-            "hidden": hidden,
-            "restored": restored,
-            "decorations": window.is_decorated().map_err(|e| e.to_string())?,
-            "captureEnabledAtUiReady": engine.capture_enabled.load(Ordering::SeqCst),
-            "sourcePresentAtUiReady": engine.source.lock().unwrap().is_some(),
-        });
-        fs::write(&path, serde_json::to_vec_pretty(&report).unwrap()).map_err(|e| e.to_string())?;
-        // Exercise foreground window close, including the close-action handler.
-        engine.settings.lock().unwrap().close_action = "quit".into();
-        let engine = engine.inner().clone();
-        thread::spawn(move || {
-            thread::sleep(Duration::from_millis(600));
-            // 验证页面就绪时尚未采集、之后才开启；记录状态后仍走正常窗口退出流程。
-            // Verify capture is off at UI readiness and enabled afterward; close through the normal window path.
-            if let Ok(bytes) = fs::read(&path) {
-                if let Ok(mut report) = serde_json::from_slice::<Value>(&bytes) {
-                    report["captureEnabledAfterUiReady"] =
-                        json!(engine.capture_enabled.load(Ordering::SeqCst));
-                    report["sourcePresentAfterUiReady"] =
-                        json!(engine.source.lock().unwrap().is_some());
-                    report["sourceRunningAfterUiReady"] = json!(
-                        engine
-                            .source
-                            .lock()
-                            .unwrap()
-                            .as_ref()
-                            .is_some_and(|source| source.is_running())
-                    );
-                    let _ = fs::write(&path, serde_json::to_vec_pretty(&report).unwrap());
-                }
-            }
-            if let Some(window) = app.get_webview_window("main") {
-                let _ = window.close();
-            }
-        });
-    }
-    Ok(())
+    startup_checks::ui_ready(app, engine, inputs)
 }
+
 fn main() {
     let mut context = tauri::generate_context!();
     let exe = std::env::current_exe().expect("无法定位程序目录");
@@ -583,12 +522,7 @@ fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _, _| {
             reveal(app);
-            if std::env::args().any(|a| a == "--instance-smoke-test") {
-                if let (Ok(exe), Some(window)) = (std::env::current_exe(), app.get_webview_window("main")) {
-                    let _ = fs::write(exe.parent().unwrap().join("instance-smoke.json"), serde_json::to_vec(&json!({"pid":std::process::id(),"restored":window.is_visible().unwrap_or(false),"reusedExistingInstance":true})).unwrap());
-                }
-                quit(app);
-            }
+            startup_checks::on_second_launch(app);
         }))
         .setup(|app| {
             let root = homepod_test::data_dir::prepare()?;
@@ -599,7 +533,8 @@ fn main() {
                 adjacent
             } else {
                 #[cfg(debug_assertions)]
-                let fallback = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../dist/runtime/airplay-backend.exe");
+                let fallback = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                    .join("../../dist/runtime/airplay-backend.exe");
                 #[cfg(not(debug_assertions))]
                 let fallback = adjacent;
                 fallback
@@ -609,8 +544,12 @@ fn main() {
             if !root.join("devices.json").exists() && seed.exists() {
                 fs::copy(seed, root.join("devices.json"))?;
             }
-            let known_devices = fs::read(root.join("devices.json")).ok().and_then(|b| serde_json::from_slice::<Vec<Device>>(&b).ok()).unwrap_or_default();
-            let auth_memory = auth_memory::Memory::load(&root, &known_devices).map_err(std::io::Error::other)?;
+            let known_devices = fs::read(root.join("devices.json"))
+                .ok()
+                .and_then(|b| serde_json::from_slice::<Vec<Device>>(&b).ok())
+                .unwrap_or_default();
+            let auth_memory =
+                auth_memory::Memory::load(&root, &known_devices).map_err(std::io::Error::other)?;
             let mut awake = awake::Awake::default();
             let awake_startup_error = awake.set(settings.keep_awake).err();
             app.manage(Arc::new(Engine {
@@ -679,8 +618,11 @@ fn main() {
                 let engine = window.state::<Arc<Engine>>();
                 if !engine.quitting.load(Ordering::SeqCst) {
                     api.prevent_close();
-                    if engine.settings.lock().unwrap().close_action == "quit" { quit(window.app_handle()); }
-                    else { let _ = window.hide(); }
+                    if engine.settings.lock().unwrap().close_action == "quit" {
+                        quit(window.app_handle());
+                    } else {
+                        let _ = window.hide();
+                    }
                 }
             }
         })

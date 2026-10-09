@@ -1,0 +1,26 @@
+[
+  {
+    "name": "Receiver A",
+    "service": "Receiver-A._airplay._tcp.local.",
+    "host": "receiver-a.example.",
+    "addresses": ["192.0.2.10"],
+    "port": 7000,
+    "properties": {
+      "tsid": "00000000-0000-4000-8000-000000000100",
+      "psi": "00000000-0000-4000-8000-000000000200",
+      "igl": "1"
+    }
+  },
+  {
+    "name": "Receiver B",
+    "service": "Receiver-B._airplay._tcp.local.",
+    "host": "receiver-b.example.",
+    "addresses": ["192.0.2.11"],
+    "port": 7000,
+    "properties": {
+      "tsid": "00000000-0000-4000-8000-000000000100",
+      "psi": "00000000-0000-4000-8000-000000000201",
+      "igl": "0"
+    }
+  }
+]

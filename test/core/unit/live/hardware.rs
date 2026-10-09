@@ -1,5 +1,5 @@
-//! 实机检查保留原有忽略标记；普通单元测试位于对应内部模块。
-//! Hardware checks retain their ignored status; regular unit tests live next to each private module.
+//! 实机检查保留原有忽略标记；测试集中在根目录 Test，保留各私有模块的测试挂接关系。
+//! Hardware checks retain their ignored status; tests live under root test while retaining their private-module attachment.
 use super::protocol::Clock;
 use super::*;
 use crate::{convert::Converter, drift::Controller};

@@ -5,6 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1",
+    "test:protocol": "node --test ../test/frontend/protocol.test.mjs",
+    "test:ui": "vite --config ../test/frontend/vite.config.mjs",
+    "test:ui:build": "vite build --config ../test/frontend/vite.config.mjs",
     "build": "vue-tsc --noEmit && vite build",
     "format": "prettier --write src package.json tsconfig.json vite.config.ts index.html src-tauri/tauri.conf.json src-tauri/capabilities/default.json",
     "format:check": "prettier --check src package.json tsconfig.json vite.config.ts index.html src-tauri/tauri.conf.json src-tauri/capabilities/default.json"

@@ -5,12 +5,13 @@
 ## 开发约定
 
 - `airplay-frontend/` 管理界面和桌面生命周期；`airplay-core/` 包含共用音频库与诊断 CLI；`airplay-backend/` 管理原生协议适配。
+- 测试源码统一放在根目录 `test/`，按 `frontend/`、`backend/`、`core/` 分组并随 Git 提交。生产目录仅保留模块挂接及诊断入口，生成内容放在忽略的 `test/.artifacts/`。
 - `upstream/` 是固定版本第三方子模块。修改适配优先在 `airplay-backend/` 完成，不直接编辑 `build/` 中的生成文件。更新依赖提交应单独提交，并更新第三方记录；不要把第三方源码作为普通文件提交到本仓库。
 - 保留 Rust 和 pnpm 锁文件。依赖升级与功能修改尽量分开。
 - 不提交设备清单、密码、录音、日志、构建产物或个人工具路径。
 - 沿用现有命名和排版，代码注释使用中英双语，中文在前、英文在后，在同一注释块内对应说明。关键入口说明输入来源、参数单位、状态条件、资源生命周期和设计原因；复杂流程先说明整体步骤，再补充局部原因，避免只写职责标签或逐行重复代码。
 - 双语注释保留一致的字段名、协议术语、数值范围和单位；修改逻辑时同步更新两种语言。短注释相邻排列，长说明按语言分段，不逐词交错，也不翻译代码标识或第三方版权声明。
-- 文件按外部导入、本地导入、常量与类型、状态、辅助方法、入口与生命周期、测试排列；依赖初始化顺序优先于机械排序。
+- 文件按外部导入、本地导入、常量与类型、状态、辅助方法、入口与生命周期排列；Rust 测试通过模块尾部的挂接引用 `test/`，依赖初始化顺序优先于机械排序。
 - 前端使用 2 空格、单引号、分号和约 100 列换行；Rust 使用 rustfmt。不要将第三方或生成文件纳入统一格式化。
 - `.editorconfig` 与 `.gitattributes` 统一文本编码、缩进和 LF 换行；图片保持二进制内容。
 - 通用数据类型放在 `src/types.ts`，桌面数据格式校验放在 `src/protocol.ts`，命令错误转换放在 `src/commands.ts`；设置校验与持久化放在 `src-tauri/src/settings.rs`，窗口行为放在 `window.rs`。外部 JSON 接收为 `unknown`，验证后再使用；不要用 `any` 或直接断言掩盖字段不一致。
@@ -32,6 +33,7 @@ cargo fmt --manifest-path airplay-frontend/src-tauri/Cargo.toml --check
 
 # Rust 音频库测试，不连接实际接收端
 cargo test --manifest-path airplay-core/Cargo.toml --locked --offline --lib
+cargo test --manifest-path airplay-frontend/src-tauri/Cargo.toml --locked --offline
 
 # 前端类型检查和构建
 pnpm --dir airplay-frontend test:protocol
@@ -44,11 +46,11 @@ cargo check --manifest-path airplay-frontend/src-tauri/Cargo.toml --locked --off
 .\scripts\build-desktop.ps1 -Offline
 ```
 
-独立测试脚本和测试素材仅在本地维护，`test/`、`tests/`、`airplay-frontend/checks/` 及 `*.test.*` / `*.spec.*` 不纳入 Git。源码内嵌的 Rust 单元测试仍随源码维护。
+测试源码与合成素材现在统一在 `test/` 维护，恢复 Git 提交。前端样例只使用文档保留地址和合成标识；真实设备清单、配置、录音、截图输出和日志仍不提交。目录和完整运行说明见 [测试说明](test/README.md)。
 
-如本地已有协议模拟检查，可在 `airplay-backend/tests/` 运行；这些文件不会随仓库下载。前端协议检查可直接执行 `node --test airplay-frontend/checks/protocol.test.mjs`。这些检查和编译通过都不能替代实机播放验证。音频修改请说明设备、来源、驱动、格式、提前量、Buffer、测试时长及实际听感；不要为了普通布局调整重复长测。
+后端协议模拟入口在 `test/backend/`，前端协议入口为 `pnpm --dir airplay-frontend test:protocol`，模拟界面入口为 `pnpm --dir airplay-frontend test:ui`。这些检查和编译通过都不能替代实机播放验证。音频修改请说明设备、来源、驱动、格式、提前量、Buffer、测试时长及实际听感；不要为了普通布局调整重复长测。
 
-模拟检查需要 Python `cryptography`。如需检查新构建的后端而保留现有发行包，可设置 `$env:AIRPLAY_TEST_BACKEND` 为后端的绝对路径，再运行 `check_auth.py` 和 `check_gui_pipe.py`；检查完成后清除该变量。不设置时仍使用 `dist/runtime/airplay-backend.exe`。
+模拟检查需要 `test/backend/requirements.txt` 中的 Python 依赖。如需检查新构建的后端而保留现有发行包，可设置 `$env:AIRPLAY_TEST_BACKEND` 为后端的绝对路径，再运行 `test/backend/check_auth.py` 和 `test/backend/check_gui_pipe.py`；检查完成后清除该变量。不设置时仍使用 `dist/runtime/airplay-backend.exe`。
 
 敏感数据检查使用少量明确规则，不是完整凭据扫描器。`--history` 只读检查所有本地历史提交；封存快照或第三方历史示例命中规则时需人工判断，不因此改写历史。当前源码和历史结果应分别记录。
 

@@ -28,7 +28,10 @@ LOCAL_FILES = {
     "ui-smoke.json", "instance-smoke.json",
 }
 FIXTURES = {
+    # 保留旧路径供只读历史审查，新样例集中在根目录 test。
+    # Retain old paths for read-only history checks; current fixtures live under root test.
     "airplay-frontend/checks/devices.json", "airplay-frontend/checks/inputs.json",
+    "test/frontend/fixtures/devices.json", "test/frontend/fixtures/inputs.json",
 }
 LOCAL_PARTS = {".local", "node_modules", "target", "dist", "Release", "releases", "captures", "logs"}
 
