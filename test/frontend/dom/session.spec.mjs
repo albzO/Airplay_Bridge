@@ -63,6 +63,10 @@ test('no source keeps start disabled after initialization', async ({ page }) => 
   await expect(source(page)).toContainText('请选择音频流来源');
   expect(await calls(page, 'start_stream')).toHaveLength(0);
   expect(await calls(page, 'monitor_source')).toHaveLength(0);
+  await page.getByRole('button', { name: '设置', exact: true }).click();
+  await page.getByRole('tab', { name: '技术详情', exact: true }).click();
+  await expect(page.locator('.capture-panel dd').nth(0)).toHaveText('设备未公布格式');
+  await expect(page.locator('.capture-panel dd').nth(1)).toHaveText('设备未公布格式');
 });
 
 test('no receiver keeps start disabled while refresh remains available', async ({ page }) => {
@@ -73,6 +77,10 @@ test('no receiver keeps start disabled while refresh remains available', async (
   await expect(refresh(page)).toBeEnabled();
   await expect(start(page)).toBeDisabled();
   expect(await calls(page, 'start_stream')).toHaveLength(0);
+  await page.getByRole('button', { name: '设置', exact: true }).click();
+  await page.getByRole('tab', { name: '技术详情', exact: true }).click();
+  await expect(page.getByRole('button', { name: '重新检测所选设备', exact: true })).toBeDisabled();
+  expect(await calls(page, 'forget_auth_policy')).toHaveLength(0);
 });
 
 test('source picker closes with Escape and rejects unusable sources', async ({ page }) => {
@@ -405,6 +413,92 @@ test('transport statistics survive tab changes and reconnects without double-cou
   });
   await expect(rows.nth(0).locator('td')).toHaveText(['Receiver A', '17', '2', '7', '5', '1']);
   await expect(rows).toHaveCount(3);
+});
+
+test('technical details preserve formats, preview levels, Buffer persistence and busy restrictions', async ({
+  page,
+}) => {
+  await open(page);
+  await page.getByRole('button', { name: '设置', exact: true }).click();
+  await page.getByRole('tab', { name: '技术详情', exact: true }).click();
+  const values = page.locator('.capture-panel dd');
+  await expect(values.nth(0)).toHaveText('48000 Hz · 24-bit PCM · 2 声道');
+  await expect(values.nth(1)).toHaveText('48000 Hz · 32-bit float · 2 声道');
+  await expect(values.nth(2)).toHaveText('44100 Hz · 16-bit PCM → ALAC');
+  await expect(values.nth(4)).toHaveText('−∞ dBFS / −∞ dBFS');
+  await page.evaluate(
+    (endpoint) => window.__airplayTest.sourceLevel({ endpoint, peaks: [0.1, 0.5] }),
+    inputs[0].id,
+  );
+  await expect(values.nth(4)).toHaveText('-20.0 dBFS / -6.0 dBFS');
+  await expect(values.nth(4).locator('.meter > i')).toHaveAttribute('style', 'width: 50%;');
+  const capabilities = page
+    .locator('section.panel')
+    .filter({ has: page.getByRole('heading', { name: '设备能力', exact: true }) });
+  await expect(capabilities.locator('summary')).toHaveText([
+    'Receiver A · 192.0.2.10:7000',
+    'Receiver B · 192.0.2.11:7000',
+  ]);
+  await capabilities.locator('summary').first().click();
+  await expect(capabilities.locator('pre').first()).toBeVisible();
+  await expect(capabilities.locator('pre').first()).toContainText('"igl": "1"');
+  const buffer = page.getByRole('spinbutton', { name: '采集 Buffer', exact: true });
+  await expect(buffer).toHaveAttribute('min', '64');
+  await expect(buffer).toHaveAttribute('max', '512');
+  await buffer.fill('256');
+  await buffer.blur();
+  await expect
+    .poll(async () => (await calls(page, 'save_settings')).at(-1).args.settings.buffer)
+    .toBe(256);
+  const saved = (await calls(page, 'save_settings')).at(-1).args.settings;
+  await start(page).click();
+  await expect.poll(async () => (await calls(page, 'start_stream')).length).toBe(1);
+  expect((await calls(page, 'start_stream'))[0].args.settings).toEqual(saved);
+  await expect(buffer).toBeDisabled();
+  await expect(page.getByRole('button', { name: '重新检测所选设备', exact: true })).toBeDisabled();
+  await readyEvents(page, 101);
+  await send(page, 101, { kind: 'native', line: '[AUTH_METHOD] value=pair-verify' });
+  await send(page, 101, { kind: 'native', line: '[TIMING] value=PTP' });
+  await expect(values.nth(6)).toHaveText('{"认证方式":"pair-verify","时钟协议":"PTP"}');
+  await page.getByRole('button', { name: '停止串流', exact: true }).click();
+  await send(page, 101, { kind: 'finished', cancelled: true });
+  await expect(buffer).toBeEnabled();
+  await expect(page.getByRole('button', { name: '重新检测所选设备', exact: true })).toBeEnabled();
+});
+
+test('auth-policy reset reports failure and targets the current selection on success', async ({
+  page,
+}) => {
+  await open(page);
+  await page.getByRole('button', { name: '设置', exact: true }).click();
+  await page.getByRole('tab', { name: '技术详情', exact: true }).click();
+  const reset = page.getByRole('button', { name: '重新检测所选设备', exact: true });
+  const notice = page.locator('.capture-panel dd').nth(5).locator('small');
+  const initial = '只记住密码要求，不保存密码。取消设备密码后可重新检测。';
+  await hold(page, 'forget_auth_policy');
+  await reset.click();
+  await expect.poll(async () => (await calls(page, 'forget_auth_policy')).length).toBe(1);
+  expect((await calls(page, 'forget_auth_policy'))[0].args).toEqual({
+    names: ['Receiver A', 'Receiver B'],
+  });
+  await expect(notice).toHaveText(initial);
+  await reject(page, 'forget_auth_policy', 'fixture auth reset failure');
+  await expect(page.locator('.alert')).toContainText('fixture auth reset failure');
+  await expect(notice).toHaveText(initial);
+  await page.getByRole('button', { name: '返回播放', exact: true }).click();
+  const receiver = page
+    .locator('.device')
+    .filter({ has: page.locator('.device-name > strong', { hasText: /^Receiver B$/ }) });
+  await receiver.locator('.device-row').click();
+  await page.getByRole('button', { name: '设置', exact: true }).click();
+  await hold(page, 'forget_auth_policy');
+  await reset.click();
+  await expect.poll(async () => (await calls(page, 'forget_auth_policy')).length).toBe(2);
+  expect((await calls(page, 'forget_auth_policy'))[1].args).toEqual({ names: ['Receiver B'] });
+  await expect(notice).toHaveText(initial);
+  await resolve(page, 'forget_auth_policy');
+  await expect(notice).toHaveText('已清除所选设备记录，下次连接重新检测。');
+  expect(await calls(page, 'start_stream')).toHaveLength(0);
 });
 
 test('connecting and stopping lock controls and suppress late password/ready events', async ({

@@ -18,9 +18,11 @@
 
 `DeviceCard.vue` 负责设备行、展开详情、单设备/立体声、左右名称与电平展示，通过 props 接收视图数据，只发送选择/互换事件。`DeviceCardData` 是页面构建的视图模型；设备分组、选择/展开状态、忙碌限制、会话状态及桌面互换命令仍由 `App.vue` 管理。互换命令成功后更新页面状态，失败保持原顺序并显示错误；组件不修改发现结果、设置或音频。
 
-`GeneralSettings.vue` 负责应用行为、播放提前量和输入声道映射控件；通过受控值与操作事件连接页面，字段更新生成新设置对象，映射另复制数组，不直接修改 props。`App.vue` 保留设置、自启/主题状态与桌面命令，处理自启/保持唤醒失败回退及主题/localStorage 同步。连接时提前量禁用，映射仍走既有 `set_mapping` 实时命令；技术详情中的 Buffer/认证、统计和日志展示暂留页面。
+`GeneralSettings.vue` 负责应用行为、播放提前量和输入声道映射控件；通过受控值与操作事件连接页面，字段更新生成新设置对象，映射另复制数组，不直接修改 props。`App.vue` 保留设置、自启/主题状态与桌面命令，处理自启/保持唤醒失败回退及主题/localStorage 同步。连接时提前量禁用，映射仍走既有 `set_mapping` 实时命令；技术详情另由 `TechnicalDetails.vue` 展示；保存与认证策略命令仍在页面，日志展示暂留页面。
 
 `RuntimeStats.vue` 只读展示当前遥测、报告汇总和应用累计设备计数，按设备地址生成行并优先显示名称。`App.vue` 保留原有计数增量计算和会话事件归属；新会话清空遥测、报告及本次计数基线，应用累计值保留。切换标签只卸载视图，不清空这些数据。`display.ts` 的数值格式化同时服务统计和采集诊断，缺失/非有限值显示破折号，合法零值按原精度显示。
+
+`TechnicalDetails.vue` 负责设备/WASAPI/发送格式、电平、会话协议和设备能力展示，Buffer 用更新事件交回页面，保存和认证策略重检使用操作事件。`App.vue` 保留所选设备范围、`save_settings`、`forget_auth_policy` 及通知/错误处理；无选择或忙碌时禁止重检，忙碌时禁止修改 Buffer。`display.ts` 的 `formatAudioFormat` 和 `level` 与底部来源栏/设备卡片共用原有格式和电平语义。
 
 `airplay-core/` 包含音频核心代码和独立诊断 CLI；单元测试位于 `test/core/unit/`，采集及转换检查脚本位于 `test/core/checks/`，均随 Git 提交。其 `lib.rs` 导出音频模块供 GUI 直接链接；`main.rs` 生成独立的 `homepod-test.exe`。该 CLI 是产品诊断工具，Cargo 包名暂时保留 `homepod-test`，GUI 不通过启动该 CLI 实现串流。
 

@@ -80,6 +80,8 @@
 
 运行统计从 `RuntimeStats.vue` 阅读：组件只读遥测、报告、累计计数与名称，`display.ts/num` 统一数值格式。`App/renderSessionEvent` 从原始 `PACKET_STATS` 解析当前会话累计值，与 `sessionStats` 比较后将非负增量加到 `stats`。`resetSessionView` 只清空本次基线及遥测/报告，累计 `stats` 保留；切换标签不改变数据。事件仍由 `useStreamSession` 校验归属，因此旧会话计数不能进入当前统计。
 
+技术详情从 `TechnicalDetails.vue` 阅读：格式和电平使用 `display.ts/formatAudioFormat`、`level`，与底部来源栏/设备卡片共用；Buffer 先发更新事件，保存事件交给 `App/persist`。重检事件交给 `App/resetAuth`，页面把当前 `selection` 传给 `forget_auth_policy`；命令成功后才显示已清除通知，失败进入原有错误提示。没有所选设备或会话忙碌时按钮禁用，组件不修改设备、认证记录或音频。
+
 | 状态 | 设置条件 | 清除条件 |
 |---|---|---|
 | `busy` | 用户请求开始连接 | 启动命令失败或 `finished` |

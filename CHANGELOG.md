@@ -2,6 +2,8 @@
 
 ## 未发布 / Unreleased
 
+- 提取技术详情视图并共享格式/电平展示，保留 Buffer 保存与认证策略重检命令；新增参数、禁用条件、设备展示与重检请求范围的 DOM 回归。
+  Extract technical details and share format/level display while retaining Buffer persistence and auth-policy reset commands; cover parameters, busy restrictions, device details and reset request scope.
 - 提取只读运行统计视图并共享数值格式化，保留页面累计计数与事件归属；新增快照重置、重复事件去重、跨会话累计及旧统计隔离的 DOM 回归。
   Extract read-only runtime statistics and share numeric formatting while retaining page-owned counters; cover snapshot resets, duplicate events, cumulative totals and stale-session isolation.
 - 提取常规设置视图，以受控更新保留页面保存、失败回退、主题同步和实时映射命令；新增自启/唤醒回退及设置交互的 DOM 回归。

@@ -53,6 +53,8 @@ function page(t, invokeCommand) {
     shallowRef: vue.shallowRef,
     computed: vue.computed,
     num: display.num,
+    level: display.level,
+    formatAudioFormat: display.formatAudioFormat,
     nextTick: vue.nextTick,
     watch: vue.watch,
     onMounted: () => {},

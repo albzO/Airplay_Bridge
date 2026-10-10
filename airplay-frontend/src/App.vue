@@ -8,7 +8,8 @@ import SourcePicker from './SourcePicker.vue';
 import DeviceCard from './DeviceCard.vue';
 import GeneralSettings from './GeneralSettings.vue';
 import RuntimeStats from './RuntimeStats.vue';
-import { num } from './display';
+import TechnicalDetails from './TechnicalDetails.vue';
+import { num, level, formatAudioFormat } from './display';
 import {
   decodeDevices,
   decodeInitialization,
@@ -18,7 +19,6 @@ import {
 import type {
   Device,
   DeviceCardData,
-  AudioFormat,
   Input,
   Settings,
   SessionReport,
@@ -227,12 +227,6 @@ function logDisplayPath(path: unknown) {
   return '%APPDATA%/AirPlay Hub/logs/' + String(path).split(/[\\/]/).pop();
 }
 
-function format(f: AudioFormat | null | undefined) {
-  return f
-    ? `${f.rate} Hz · ${f.valid_bits || f.bits}-bit ${f.encoding === 'pcm' ? 'PCM' : f.encoding === 'float32' ? 'float' : f.encoding} · ${f.channels} 声道`
-    : '设备未公布格式';
-}
-
 async function focusPassword() {
   await nextTick();
   const input = document.querySelector<HTMLInputElement>('.password input');
@@ -265,10 +259,6 @@ function enterPassword(e: KeyboardEvent) {
     e.preventDefault();
     void submit();
   }
-}
-
-function level(v: number) {
-  return v > 0 ? `${(20 * Math.log10(v)).toFixed(1)} dBFS` : '−∞ dBFS';
 }
 
 async function call<T>(name: string, args?: Record<string, unknown>) {
@@ -706,57 +696,19 @@ onMounted(async () => {
         :stats="stats"
         :names="statsNames"
       />
-      <template v-if="page === '设置' && settingsTab === '技术详情'"
-        ><section class="panel capture-panel">
-          <h2>采集与处理</h2>
-          <dl class="processing">
-            <dt>设备格式</dt>
-            <dd>{{ format(source?.device_format) }}</dd>
-            <dt>WASAPI 采集格式</dt>
-            <dd>{{ format(source?.mix_format) }}</dd>
-            <dt>发送格式</dt>
-            <dd>44100 Hz · 16-bit PCM → ALAC</dd>
-            <dt>Buffer<small>下次连接生效</small></dt>
-            <dd>
-              <div class="unit small-unit" title="采集流水线预缓冲">
-                <input
-                  aria-label="采集 Buffer"
-                  v-model.number="settings.buffer"
-                  type="number"
-                  min="64"
-                  max="512"
-                  :disabled="busy"
-                  @change="persist"
-                /><span>ms</span>
-              </div>
-            </dd>
-            <dt>左右电平</dt>
-            <dd>
-              {{ level(peaks[0]) }} / {{ level(peaks[1]) }}
-              <div class="meter">
-                <i :style="{ width: Math.min(100, Math.max(...peaks) * 100) + '%' }"></i>
-              </div>
-            </dd>
-            <dt>密码要求记录</dt>
-            <dd>
-              <button :disabled="busy || !selection.length" @click="resetAuth">
-                重新检测所选设备</button
-              ><small>{{
-                authNotice || '只记住密码要求，不保存密码。取消设备密码后可重新检测。'
-              }}</small>
-            </dd>
-            <dt>会话协议</dt>
-            <dd>{{ JSON.stringify(technical) }}</dd>
-          </dl>
-        </section>
-        <section class="panel">
-          <h2>设备能力</h2>
-          <details v-for="d in devices">
-            <summary>{{ d.name }} · {{ d.addresses.join(', ') }}:{{ d.port }}</summary>
-            <pre>{{ JSON.stringify(d.properties, null, 2) }}</pre>
-          </details>
-        </section> </template
-      ><GeneralSettings
+      <TechnicalDetails
+        v-if="page === '设置' && settingsTab === '技术详情'"
+        v-model:buffer="settings.buffer"
+        :source="source"
+        :busy="busy"
+        :can-reset-auth="selection.length > 0"
+        :auth-notice="authNotice"
+        :peaks="peaks"
+        :technical="technical"
+        :devices="devices"
+        @persist="persist"
+        @reset-auth="resetAuth"
+      /><GeneralSettings
         v-if="page === '设置' && settingsTab === '常规'"
         v-model:settings="settings"
         v-model:autostart="autostart"
@@ -881,7 +833,7 @@ onMounted(async () => {
           @select="selectSource"
         />
         <div class="source-format">
-          <small>{{ source ? format(source.device_format) : '未选择音频来源' }}</small
+          <small>{{ source ? formatAudioFormat(source.device_format) : '未选择音频来源' }}</small
           ><small>{{ level(totalPeak) }}</small>
         </div>
         <small v-if="previewError" class="source-notice">电平预览：{{ previewError }}</small

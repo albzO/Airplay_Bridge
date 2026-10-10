@@ -45,6 +45,7 @@ window.__airplayTest = {
     take(name).reject(message);
   },
   send: (id, payload) => emit('stream-event', { ...payload, session_id: id }),
+  sourceLevel: (payload) => emit('source-level', payload),
 };
 function take(name) {
   const command = pending.get(name)?.shift();
@@ -77,6 +78,7 @@ function reply(name, args) {
     case 'set_speaker_order':
     case 'set_autostart':
     case 'set_mapping':
+    case 'forget_auth_policy':
       return;
     default:
       throw new Error(`Unexpected fixture command: ${name}`);
