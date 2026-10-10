@@ -158,6 +158,11 @@ impl Source {
             let mut summary_updated = Instant::now();
             let mut summary_peaks = [0f32; 2];
             let mut diagnostic = |entry: Value| {
+                // 终止性时间线故障即使没有订阅或未开逐包诊断也保存；不能依赖正常包快照溯源。
+                // Persist terminal timeline faults without a subscriber/packet tracing; prior snapshots omit the bad packet.
+                if entry["kind"] == "timeline_fault" {
+                    write_startup(entry.clone());
+                }
                 if entry["kind"] == "capture_start" {
                     *s.info.lock().unwrap() = entry.clone();
                     write_startup(entry.clone());

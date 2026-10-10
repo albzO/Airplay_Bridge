@@ -20,6 +20,13 @@ fn system_errors_keep_namespace_context_and_application_category() {
         "Windows / Winsock 10054"
     );
     assert!(!origin("HTTP 403; exit=12").contains("Windows"));
+    for detail in [
+        "阻止屏幕自动熄灭失败：Windows failure (0x80070005)",
+        "释放系统与屏幕唤醒请求失败：Windows failure (0x80070006)",
+    ] {
+        assert_eq!(code_for(detail, "SETTINGS_SAVE_FAILED"), "AWAKE_FAILED");
+        assert!(describe(detail, "SETTINGS_SAVE_FAILED").contains("Windows / Win32"));
+    }
     assert_eq!(code_for("[LOG_LIMIT] full", "INTERNAL_ERROR"), "LOG_LIMIT");
     assert_eq!(
         code_for("report write: [LOG_LIMIT] full", "REPORT_WRITE_FAILED"),

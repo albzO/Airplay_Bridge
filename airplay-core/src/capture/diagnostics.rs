@@ -93,7 +93,7 @@ impl<'a, 'b> Trace<'a, 'b> {
         error: &dyn std::fmt::Display,
     ) {
         if self.callback.is_some() {
-            self.emit(json!({"kind":"timeline_fault","device_position":packet.device_position,
+            self.emit(json!({"kind":"timeline_fault","packet_index":packet.index,"available_frames":packet.available,"read_qpc_ticks":clock::read_ticks(),"device_position":packet.device_position,
                 "packet_qpc_100ns":packet.qpc,"previous_packet_qpc_100ns":previous_qpc,"flags":packet.flags,"error":error.to_string()}));
         }
     }

@@ -43,7 +43,7 @@ Buffer 是发送端的 PCM 预读深度，与播放提前量不同。标注“�
 
 默认关闭窗口收起到托盘并继续运行。再次启动 exe 会恢复已有实例，托盘右键“退出”关闭应用。可将关闭动作改为退出。
 
-“保持系统唤醒”默认开启，启用后在应用运行期间阻止系统自动睡眠，包括托盘和未串流状态；不要求屏幕常亮。关闭开关或退出应用会释放请求。
+“保持系统唤醒”默认开启，启用后在应用运行期间同时阻止系统自动睡眠和屏幕自动熄灭，包括托盘和未串流状态；关闭开关或退出应用会释放请求。此措施用于避免自动熄屏附近出现的采集时钟异常，详见[排查记录](display-off-capture.md)。
 
 ## 采集与串流生命周期
 
@@ -76,7 +76,7 @@ Buffer 是发送端的 PCM 预读深度，与播放提前量不同。标注“�
 | `src-tauri/src/main.rs` | 桌面生命周期、配置、设备发现和会话控制 |
 | `src-tauri/src/auth.rs` | 密码交互与命名管道 |
 | `src-tauri/src/auth_memory.rs` | 接收端认证方式记录 |
-| `src-tauri/src/awake.rs` | Windows 系统唤醒请求 |
+| `src-tauri/src/awake.rs` | Windows 系统与屏幕唤醒请求 |
 | `../airplay-core/src/source.rs` | 共享来源采集器与订阅 |
 | `../airplay-core/src/live.rs` | 音频发送流水线与后端进程 |
 | `../airplay-backend/` | 原生 AirPlay 后端及 Windows 适配 |

@@ -2,6 +2,8 @@
 
 ## 未发布 / Unreleased
 
+- 保持唤醒同时请求系统和显示器，避免自动熄屏触发采集异常；补充失败撤销、句柄释放及设置回归。默认保存终止性时间线故障的包/时钟数值，沿用日志上限，保留时间戳校验。
+  Keep both system and display awake, handle request failures and cleanup, and persist bounded terminal timeline diagnostics without relaxing timestamp validation.
 - 提取前端诊断状态及设备累计统计，统一日志/摘要截断、设备历史与报告上限，保留会话过滤及清空范围；补充脚本与真实模板突发事件回归。
   Extract diagnostic snapshots and cumulative device counters with bounded histories, text and reports; preserve session filtering and clearing scope.
 - 提取采集诊断 JSON、Windows 时钟读取和生命周期计数，健康进度归入端点模块；保留 WASAPI 包释放、音频交付及首包断续统计口径。

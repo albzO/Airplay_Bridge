@@ -97,7 +97,7 @@ test('failed source save restores endpoint and mapping without previewing; retry
   await expect(start(page)).toBeDisabled();
   await expect(page.getByRole('switch')).toBeDisabled();
   await page.getByRole('button', { name: '设置', exact: true }).click();
-  await expect(page.getByRole('checkbox', { name: '避免系统自动睡眠' })).toBeDisabled();
+  await expect(page.getByRole('checkbox', { name: '避免自动睡眠和屏幕熄灭' })).toBeDisabled();
   await expect(page.getByLabel('左输出取样', { exact: true })).toBeDisabled();
   expect(await calls(page, 'monitor_source')).toHaveLength(monitors);
   await reject(page, 'save_settings', 'fixture source save failure');
@@ -113,7 +113,7 @@ test('failed source save restores endpoint and mapping without previewing; retry
   await expect.poll(async () => (await calls(page, 'monitor_source')).length).toBe(monitors + 1);
   await expect(source(page)).toBeDisabled();
   await expect(start(page)).toBeDisabled();
-  await expect(page.getByRole('checkbox', { name: '避免系统自动睡眠' })).toBeDisabled();
+  await expect(page.getByRole('checkbox', { name: '避免自动睡眠和屏幕熄灭' })).toBeDisabled();
   await page.evaluate(
     (endpoint) => window.__airplayTest.sourceLevel({ endpoint, error: 'stale source error' }),
     initial.endpoint,
@@ -145,7 +145,7 @@ test('mapping failure rolls back both selectors and retries without restarting t
   await left.selectOption('1');
   await expect(left).toBeDisabled();
   await expect(right).toBeDisabled();
-  await expect(page.getByRole('checkbox', { name: '避免系统自动睡眠' })).toBeDisabled();
+  await expect(page.getByRole('checkbox', { name: '避免自动睡眠和屏幕熄灭' })).toBeDisabled();
   await reject(page, 'set_mapping', 'fixture mapping save failure');
   await expect(page.locator('.alert')).toContainText('fixture mapping save failure');
   await expect(left).toHaveValue('0');
@@ -437,8 +437,14 @@ test('keep-awake save failure restores the checkbox and preserves other settings
 }) => {
   await open(page);
   await page.getByRole('button', { name: '设置', exact: true }).click();
-  const awake = page.getByRole('checkbox', { name: '避免系统自动睡眠' });
+  const awake = page.getByRole('checkbox', { name: '避免自动睡眠和屏幕熄灭' });
   await expect(awake).toBeChecked();
+  await expect(
+    page.getByText(
+      '开启后在应用运行期间生效，包括托盘状态；同时阻止自动熄屏，关闭此开关或退出应用后恢复。',
+      { exact: true },
+    ),
+  ).toBeVisible();
   const initial = (await calls(page, 'save_settings')).at(-1).args.settings;
   await hold(page, 'save_settings');
   await awake.uncheck();
@@ -465,10 +471,15 @@ test('keep-awake save failure restores the checkbox and preserves other settings
     ...initial,
     keepAwake: false,
   });
-  await reject(page, 'save_settings', 'fixture keep-awake failure');
+  await reject(
+    page,
+    'save_settings',
+    '释放系统与屏幕唤醒请求失败：fixture Windows failure (0x80070006)',
+  );
   await expect(awake).toBeChecked();
   await expect(awake).toBeEnabled();
-  await expect(page.locator('.alert')).toContainText('fixture keep-awake failure');
+  await expect(page.locator('.alert')).toContainText('[AWAKE_FAILED]');
+  await expect(page.locator('.alert')).toContainText('释放系统与屏幕唤醒请求失败');
   await hold(page, 'save_settings');
   await awake.uncheck();
   await expect.poll(async () => (await calls(page, 'save_settings')).length).toBe(3);

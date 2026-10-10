@@ -157,8 +157,8 @@ pub(super) fn validate_packet_timestamp(
     if timestamp_bad {
         return Err("WASAPI 采集包时间戳无效，已停止以避免错误对齐".into());
     }
-    if previous.is_some_and(|previous| current <= previous) {
-        return Err("WASAPI 采集包时间戳倒退或重复，已停止；请查看采集诊断".into());
+    if let Some(previous) = previous.filter(|previous| current <= *previous) {
+        return Err(format!("WASAPI 采集包时间戳倒退或重复，已停止；previous_qpc_100ns={previous} current_qpc_100ns={current}；请查看采集诊断").into());
     }
     Ok(())
 }

@@ -79,8 +79,10 @@ function mappedChannel(side: 0 | 1) {
             v-model="keepAwake"
             :disabled="saving"
             @change="emit('awake-change')"
-          />避免系统自动睡眠</label
-        ><small>开启后在应用运行期间生效，包括托盘状态；允许屏幕熄灭，退出应用后恢复。</small>
+          />避免自动睡眠和屏幕熄灭</label
+        ><small
+          >开启后在应用运行期间生效，包括托盘状态；同时阻止自动熄屏，关闭此开关或退出应用后恢复。</small
+        >
       </dd>
       <dt>右上角关闭按钮</dt>
       <dd>

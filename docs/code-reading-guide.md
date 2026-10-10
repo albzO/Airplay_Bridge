@@ -38,6 +38,8 @@
 
 设置操作先看 `App.vue/commitSettings`：它保存独立快照并持有保存锁，成功更新已确认值，失败恢复该值；保持唤醒不再反转当前布尔值。来源切换还持有跨保存/预览的锁，只有保存成功且页面仍存在才启动后续命令。桌面 `routing.rs` 保证候选设置保存成功后才更新运行路由，不能只从页面 IPC 拒绝测试推断桌面没有副作用。冷启动保存失败不自动采集，自动发现成功仍保留初始化错误。
 
+保持唤醒的 Windows 实现见 `awake.rs/activate` 与 `Awake::set`：SystemRequired 后再获取 DisplayRequired，失败撤销，关闭请求对象时释放两类请求。采集时间戳问题从 `capture/timeline.rs/validate_packet_timestamp` 跟到 `capture/diagnostics.rs/Trace::fault` 和 Source 的诊断回调；后者把终止故障提交到有界异步日志，即使未开逐包诊断也能留下出错包数值。
+
 `useDiagnostics.ts` 统一管理快照、300 条日志/120 条摘要、单条文本截断、1 MiB 报告显示限制及路径；结束摘要也计入上限。全部落盘规则见 [日志保留限制](log-retention.md)。
 
 日志路径由初始化 `dataMode` 生成脱敏根目录。便携模式使用 `[程序目录]/data/logs`，安装模式使用 `%APPDATA%/AirPlay Hub/logs`；文件事件只附加文件名，空路径保持空值。实际打开目录仍使用桌面的 `Engine.root/logs`。

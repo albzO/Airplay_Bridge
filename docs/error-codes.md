@@ -51,7 +51,7 @@ HTTP 状态码、Windows HRESULT、HAP TLV error 是三个独立命名空间，�
 | `STREAM_INTERRUPTED` | 1 | 后端或发送管道中断。 | 查看最早的故障，而非随后出现的队列错误。 |
 | `SESSION_ENDED` | 1 | 会话已经结束。 | 重新开始连接。 |
 | `VOLUME_UNAVAILABLE` | 1 | 音量控制通道尚未就绪或已关闭。 | 等待连接完成或重连。 |
-| `AWAKE_FAILED` | 1 | 系统唤醒请求失败。 | 检查 Windows 返回错误。 |
+| `AWAKE_FAILED` | 1 | 系统或屏幕唤醒请求失败。 | 检查 Windows 返回错误。 |
 | `AUTH_CACHE_FAILED` | 1 | 认证方式记录读写失败。 | 检查应用数据目录权限。 |
 | `APP_EXITING` | 1 | 应用正在退出。 | 等待退出完成。 |
 | `CANCELLED` | 1 | 操作已取消。 | 用户取消不应显示为串流故障。 |

@@ -87,6 +87,10 @@ fn lifecycle_json_and_final_report_preserve_fields_without_audio_hardware() {
     assert_eq!(entries[0]["packet_index"], 4);
     assert_eq!(entries[1]["gap_ms"], 10.0);
     assert_eq!(entries[2]["previous_packet_qpc_100ns"], 400);
+    assert_eq!(entries[2]["packet_qpc_100ns"], 300);
+    assert_eq!(entries[2]["packet_index"], 4);
+    assert_eq!(entries[2]["available_frames"], 480);
+    assert!(entries[2]["read_qpc_ticks"].as_i64().is_some());
     assert_eq!(entries[3]["error"], "sink failed");
     let input: Input =
         serde_json::from_value(json!({"id":"fixture","name":"fixture","description":"synthetic"}))

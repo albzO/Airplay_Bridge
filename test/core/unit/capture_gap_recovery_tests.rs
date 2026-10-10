@@ -27,7 +27,15 @@ fn short_gap_requires_consistent_clock_and_rejects_bad_timeline() {
 }
 #[test]
 fn timestamp_regression_is_rejected_even_without_error_flag() {
-    assert!(validate_packet_timestamp(Some(2_000_000), 1_844_185, false).is_err());
+    let error = validate_packet_timestamp(Some(2_000_000), 1_844_185, false)
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("previous_qpc_100ns=2000000"));
+    assert!(error.contains("current_qpc_100ns=1844185"));
+    assert_eq!(
+        crate::failure::code_for(&error, "INTERNAL_ERROR"),
+        "CAPTURE_TIMESTAMP_INVALID"
+    );
     assert!(validate_packet_timestamp(Some(2_000_000), 2_000_000, false).is_err());
     assert!(validate_packet_timestamp(None, 2_000_000, true).is_err());
     assert!(validate_packet_timestamp(Some(2_000_000), 2_100_000, false).is_ok());

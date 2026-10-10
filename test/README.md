@@ -4,6 +4,8 @@
 
 Test sources are committed under root `test/`. Production modules retain attachment/diagnostic entry points; existing private-module access and ignored hardware checks are preserved.
 
+自动熄屏缓解验证：核心 93 通过 / 8 默认忽略、桌面 9 通过、前端脚本 23 通过、DOM 28 通过。`frontend/desktop/awake.rs` 验证系统/显示器两项请求顺序、失败撤销与错误保留，并实际创建请求、检查重复开关及关闭/析构后的 Windows 句柄；没有等待真实显示器超时。核心检查未启用逐包诊断时的故障字段及倒退数值，DOM 检查开关说明、失败类别、回退与重试。证据与实机复测见[排查记录](../docs/display-off-capture.md)。
+
 F1–F5 修复后的快速验证为核心 80 通过 / 8 默认忽略、桌面 7 通过、前端协议 7 + 会话/页面脚本 12 通过、真实模板 DOM 27 通过。范围与剩余边界见 [自证记录](../docs/review-self-check.md#f1f5-修复与正式回归)。
 
 `frontend/desktop/routing.rs` 的 2 项回归调用生产路由模块，在暂存设置文件路径创建目录触发真实写入失败，检查磁盘、内存和活动 Mutex/AtomicBool 不变，解除故障后可重试。它们没有创建 WASAPI Source 或完整 Tauri 会话。
@@ -39,6 +41,9 @@ Run commands from the project root. Frontend tests require frontend dependencies
 ```powershell
 # Rust 单元测试 / Rust unit tests
 cargo test --manifest-path airplay-core/Cargo.toml --locked --offline --lib
+# Tauri 测试嵌入生产产物，先完成构建再运行，避免与资源替换并行。
+# Build production assets before Tauri tests; do not rebuild them concurrently.
+pnpm --dir airplay-frontend build
 cargo test --manifest-path airplay-frontend/src-tauri/Cargo.toml --locked --offline
 
 # 前端协议及模拟页面 / Frontend protocol and mocked UI
