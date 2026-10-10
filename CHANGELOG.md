@@ -2,6 +2,10 @@
 
 ## 未发布 / Unreleased
 
+- 提取只读运行统计视图并共享数值格式化，保留页面累计计数与事件归属；新增快照重置、重复事件去重、跨会话累计及旧统计隔离的 DOM 回归。
+  Extract read-only runtime statistics and share numeric formatting while retaining page-owned counters; cover snapshot resets, duplicate events, cumulative totals and stale-session isolation.
+- 提取常规设置视图，以受控更新保留页面保存、失败回退、主题同步和实时映射命令；新增自启/唤醒回退及设置交互的 DOM 回归。
+  Extract general settings with controlled updates while retaining persistence, rollback, theme synchronization and runtime mapping; add DOM regressions for settings and failed autostart/keep-awake commands.
 - 提取设备卡片视图组件，保留页面的设备选择、会话与互换命令；新增互换成功/失败及单设备选择的 DOM 回归，音频处理保持不变。
   Extract device card presentation while retaining page-owned selection, sessions and swap commands; cover swap success/failure and individual receiver selection without changing audio processing.
 - 提取来源选择视图组件，保留设置/采集命令顺序及弹窗层级；新增分组排序、外部关闭和单声道保存后预览的 DOM 回归。

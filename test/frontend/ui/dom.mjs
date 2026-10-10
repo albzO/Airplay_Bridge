@@ -75,6 +75,8 @@ function reply(name, args) {
     case 'stop_stream':
     case 'submit_password':
     case 'set_speaker_order':
+    case 'set_autostart':
+    case 'set_mapping':
       return;
     default:
       throw new Error(`Unexpected fixture command: ${name}`);

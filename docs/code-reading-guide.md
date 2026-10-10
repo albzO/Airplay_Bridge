@@ -76,6 +76,10 @@
 
 设备卡片从 `DeviceCard.vue` 阅读：组件接收 `DeviceCardData` 及选中/展开/禁用/连接等展示值，选择事件交给 `App/choose`，互换事件交给 `App/swap`。分组、选择与会话仍由页面管理；`set_speaker_order` 成功后才更新 `speakersSwapped`，失败显示错误并保留现有左右名称。单设备展示两个声道但没有互换按钮；立体声卡片保留原有互换功能，不改音频处理。
 
+常规设置从 `GeneralSettings.vue` 阅读：控件先通过 `update:*` 事件更新页面持有的设置/自启/主题，再发送保存、自启、唤醒或映射操作事件。设置字段与二元映射生成新对象/数组，不直接修改 props；`App/startupChanged` 和 `awakeChanged` 保留失败回退，主题 watcher 保留样式与 localStorage 同步。连接期间播放提前量禁用，声道映射仍调用 `set_mapping`，不重新启动会话。
+
+运行统计从 `RuntimeStats.vue` 阅读：组件只读遥测、报告、累计计数与名称，`display.ts/num` 统一数值格式。`App/renderSessionEvent` 从原始 `PACKET_STATS` 解析当前会话累计值，与 `sessionStats` 比较后将非负增量加到 `stats`。`resetSessionView` 只清空本次基线及遥测/报告，累计 `stats` 保留；切换标签不改变数据。事件仍由 `useStreamSession` 校验归属，因此旧会话计数不能进入当前统计。
+
 | 状态 | 设置条件 | 清除条件 |
 |---|---|---|
 | `busy` | 用户请求开始连接 | 启动命令失败或 `finished` |

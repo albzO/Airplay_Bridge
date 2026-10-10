@@ -47,9 +47,12 @@ async function open(page, fixture = {}) {
   await expect(refresh(page)).toBeEnabled();
   await expect(page.locator('.alert')).toHaveCount(0);
 }
-async function playing(page, id) {
+async function readyEvents(page, id) {
   await send(page, id, { kind: 'native', line: '[PROBE] PCM_READY' });
   await send(page, id, telemetry);
+}
+async function playing(page, id) {
+  await readyEvents(page, id);
   await expect(page.getByRole('button', { name: '静音', exact: true })).toBeEnabled();
 }
 
@@ -206,6 +209,202 @@ test('selecting an individual card starts only that receiver and shows both chan
     'Receiver B',
   ]);
   await expect(card.getByTitle('交换扬声器位置', { exact: true })).toHaveCount(0);
+});
+
+test('autostart waits for the command, rolls back failure and allows retry', async ({ page }) => {
+  await open(page);
+  await page.getByRole('button', { name: '设置', exact: true }).click();
+  const autostart = page.getByRole('checkbox', { name: '登录 Windows 后启动 AirPlay Hub' });
+  await hold(page, 'set_autostart');
+  await autostart.check();
+  await expect(autostart).toBeDisabled();
+  await expect.poll(async () => (await calls(page, 'set_autostart')).length).toBe(1);
+  expect((await calls(page, 'set_autostart'))[0].args).toEqual({ enabled: true });
+  await reject(page, 'set_autostart', 'fixture autostart failure');
+  await expect(autostart).not.toBeChecked();
+  await expect(autostart).toBeEnabled();
+  await expect(page.locator('.alert')).toContainText('开机自启设置失败：');
+  await hold(page, 'set_autostart');
+  await autostart.check();
+  await expect.poll(async () => (await calls(page, 'set_autostart')).length).toBe(2);
+  await resolve(page, 'set_autostart');
+  await expect(autostart).toBeEnabled();
+  await expect(autostart).toBeChecked();
+  expect((await calls(page, 'set_autostart')).map((call) => call.args.enabled)).toEqual([
+    true,
+    true,
+  ]);
+});
+
+test('keep-awake save failure restores the checkbox and preserves other settings', async ({
+  page,
+}) => {
+  await open(page);
+  await page.getByRole('button', { name: '设置', exact: true }).click();
+  const awake = page.getByRole('checkbox', { name: '避免系统自动睡眠' });
+  await expect(awake).toBeChecked();
+  const initial = (await calls(page, 'save_settings')).at(-1).args.settings;
+  await hold(page, 'save_settings');
+  await awake.uncheck();
+  await expect
+    .poll(async () => (await calls(page, 'save_settings')).at(-1).args.settings.keepAwake)
+    .toBe(false);
+  expect((await calls(page, 'save_settings')).at(-1).args.settings).toEqual({
+    ...initial,
+    keepAwake: false,
+  });
+  await reject(page, 'save_settings', 'fixture keep-awake failure');
+  await expect(awake).toBeChecked();
+  await expect(page.locator('.alert')).toContainText('fixture keep-awake failure');
+  await awake.uncheck();
+  await expect.poll(async () => (await calls(page, 'save_settings')).length).toBe(3);
+  await page.getByRole('button', { name: '返回播放', exact: true }).click();
+  await start(page).click();
+  await expect.poll(async () => (await calls(page, 'start_stream')).length).toBe(1);
+  expect((await calls(page, 'start_stream'))[0].args.settings).toEqual({
+    ...initial,
+    keepAwake: false,
+  });
+});
+
+test('general settings persist and runtime mapping keeps its desktop command', async ({ page }) => {
+  await open(page);
+  await page.getByRole('button', { name: '设置', exact: true }).click();
+  await page.getByLabel('窗口关闭动作', { exact: true }).selectOption('quit');
+  await expect(page.getByRole('button', { name: '退出应用', exact: true })).toBeVisible();
+  await expect
+    .poll(async () => (await calls(page, 'save_settings')).at(-1).args.settings.closeAction)
+    .toBe('quit');
+  const latency = page.getByRole('spinbutton', { name: '播放提前量', exact: true });
+  await latency.fill('450');
+  await latency.blur();
+  await expect
+    .poll(async () => (await calls(page, 'save_settings')).at(-1).args.settings.latency)
+    .toBe(450);
+  const saves = (await calls(page, 'save_settings')).length;
+  const left = page.getByLabel('左输出取样', { exact: true });
+  const right = page.getByLabel('右输出取样', { exact: true });
+  await left.selectOption('1');
+  await right.selectOption('0');
+  await expect.poll(async () => (await calls(page, 'set_mapping')).length).toBe(2);
+  expect((await calls(page, 'set_mapping')).map((call) => call.args.mapping)).toEqual([
+    [1, 1],
+    [1, 0],
+  ]);
+  expect(await calls(page, 'save_settings')).toHaveLength(saves);
+  await page.getByLabel('外观', { exact: true }).selectOption('dark');
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+  expect(await page.evaluate(() => localStorage.getItem('theme'))).toBe('dark');
+  await page.getByRole('button', { name: '返回播放', exact: true }).click();
+  await start(page).click();
+  await expect.poll(async () => (await calls(page, 'start_stream')).length).toBe(1);
+  expect((await calls(page, 'start_stream'))[0].args.settings).toMatchObject({
+    latency: 450,
+    closeAction: 'quit',
+    mapping: [1, 0],
+  });
+  await page.getByRole('button', { name: '设置', exact: true }).click();
+  await expect(latency).toBeDisabled();
+  await expect(left).toBeEnabled();
+  await left.selectOption('0');
+  await expect.poll(async () => (await calls(page, 'set_mapping')).length).toBe(3);
+  expect((await calls(page, 'set_mapping')).at(-1).args.mapping).toEqual([0, 0]);
+  expect(await calls(page, 'start_stream')).toHaveLength(1);
+});
+
+test('runtime snapshots distinguish missing values from zero and reset for the next session', async ({
+  page,
+}) => {
+  await open(page);
+  await page.getByRole('button', { name: '设置', exact: true }).click();
+  await page.getByRole('tab', { name: '运行统计', exact: true }).click();
+  const metrics = page.locator('.metrics h2');
+  const pipeline = page
+    .locator('section.panel')
+    .filter({ has: page.getByRole('heading', { name: '音频流水线', exact: true }) })
+    .locator('dd');
+  const empty = ['—', '—', '— ms', '— ms', '停止后汇总 / —', '停止后汇总'];
+  await expect(metrics).toHaveText(['— s', '— ms', '— ppm']);
+  await expect(pipeline).toHaveText(empty);
+  await start(page).click();
+  await readyEvents(page, 101);
+  await send(page, 101, {
+    ...telemetry,
+    elapsed_seconds: 0,
+    water_ms: 0,
+    lead_ms: 0,
+    capture_frames: 0,
+    output_frames: 0,
+    controller: { correction_ppm: 0 },
+  });
+  await expect(metrics).toHaveText(['0 s', '0.0 ms', '0.0 ppm']);
+  await expect(pipeline).toHaveText(['0', '0', '0 ms', '0.0 ms', '停止后汇总 / —', '停止后汇总']);
+  await send(page, 101, {
+    ...telemetry,
+    elapsed_seconds: 12.25,
+    water_ms: 125.25,
+    controller: { correction_ppm: -4.25 },
+  });
+  await send(page, 101, {
+    kind: 'report',
+    report: {
+      device: 'Receiver A',
+      capture: { discontinuities: 0, timestamp_errors: 2 },
+      conversion: { frames: 44100 },
+    },
+  });
+  await expect(metrics).toHaveText(['12 s', '125.3 ms', '-4.3 ppm']);
+  await expect(pipeline.nth(3)).toHaveText('425.3 ms');
+  await expect(pipeline.nth(4)).toHaveText('0 / 2');
+  await expect(pipeline.nth(5)).toHaveText('{"frames":44100}');
+  await page.getByRole('button', { name: '停止串流', exact: true }).click();
+  await send(page, 101, { kind: 'finished', cancelled: true });
+  await expect(pipeline.nth(4)).toHaveText('0 / 2');
+  await start(page).click();
+  await expect(metrics).toHaveText(['— s', '— ms', '— ppm']);
+  await expect(pipeline).toHaveText(empty);
+});
+
+test('transport statistics survive tab changes and reconnects without double-counting or stale events', async ({
+  page,
+}) => {
+  await open(page);
+  await start(page).click();
+  await playing(page, 101);
+  await page.getByRole('button', { name: '设置', exact: true }).click();
+  await page.getByRole('tab', { name: '运行统计', exact: true }).click();
+  const rows = page.locator('table tbody tr');
+  await expect(rows).toHaveCount(0);
+  const first =
+    '[PACKET_STATS] host=192.0.2.10 sent=10 send_dropped=1 rtx_requested=4 rtx_resent=3 rtx_expired=0';
+  await send(page, 101, { kind: 'native', line: first });
+  await send(page, 101, { kind: 'native', line: first });
+  await expect(rows.nth(0).locator('td')).toHaveText(['Receiver A', '10', '1', '4', '3', '0']);
+  await send(page, 101, {
+    kind: 'native',
+    line: '[PACKET_STATS] host=192.0.2.10 sent=15 send_dropped=2 rtx_requested=6 rtx_resent=4 rtx_expired=1',
+  });
+  await send(page, 101, { kind: 'native', line: '[PACKET_STATS] host=192.0.2.11 sent=4' });
+  await send(page, 101, { kind: 'native', line: '[PACKET_STATS] host=192.0.2.99 sent=3' });
+  await expect(rows).toHaveCount(3);
+  await expect(rows.nth(0).locator('td')).toHaveText(['Receiver A', '15', '2', '6', '4', '1']);
+  await expect(rows.nth(1).locator('td')).toHaveText(['Receiver B', '4', '—', '—', '—', '—']);
+  await expect(rows.nth(2).locator('td')).toHaveText(['192.0.2.99', '3', '—', '—', '—', '—']);
+  await page.getByRole('tab', { name: '常规', exact: true }).click();
+  await page.getByRole('tab', { name: '运行统计', exact: true }).click();
+  await expect(rows.nth(0).locator('td')).toHaveText(['Receiver A', '15', '2', '6', '4', '1']);
+  await page.getByRole('button', { name: '停止串流', exact: true }).click();
+  await send(page, 101, { kind: 'finished', cancelled: true });
+  await start(page).click();
+  await readyEvents(page, 102);
+  await send(page, 101, { kind: 'native', line: '[PACKET_STATS] host=192.0.2.10 sent=999' });
+  await expect(rows.nth(0).locator('td')).toHaveText(['Receiver A', '15', '2', '6', '4', '1']);
+  await send(page, 102, {
+    kind: 'native',
+    line: '[PACKET_STATS] host=192.0.2.10 sent=2 send_dropped=0 rtx_requested=1 rtx_resent=1 rtx_expired=0',
+  });
+  await expect(rows.nth(0).locator('td')).toHaveText(['Receiver A', '17', '2', '7', '5', '1']);
+  await expect(rows).toHaveCount(3);
 });
 
 test('connecting and stopping lock controls and suppress late password/ready events', async ({

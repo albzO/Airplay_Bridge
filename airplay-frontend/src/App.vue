@@ -6,6 +6,9 @@ import { invokeCommand } from './commands';
 import { useStreamSession } from './useStreamSession';
 import SourcePicker from './SourcePicker.vue';
 import DeviceCard from './DeviceCard.vue';
+import GeneralSettings from './GeneralSettings.vue';
+import RuntimeStats from './RuntimeStats.vue';
+import { num } from './display';
 import {
   decodeDevices,
   decodeInitialization,
@@ -123,13 +126,6 @@ const deviceStates = ref<Record<string, string>>({}),
 // sessionStats tracks this session's counters; stats accumulates deltas without counting reconnects twice.
 const sessionStats = ref<Record<string, Record<string, string>>>({});
 const statsNames = ref<Record<string, string>>({});
-const statsRows = computed(() =>
-  Object.entries(stats.value).map(([host, values]) => ({
-    host,
-    values,
-    name: statsNames.value[host] || host,
-  })),
-);
 const sourceOpen = ref(false);
 const passwordDevice = computed(
   () => devices.value.find((d) => d.addresses.includes(pending.value))?.name || pending.value,
@@ -172,7 +168,6 @@ const chosen = computed(() =>
   cards.value.find((c) => c.members.map((d) => d.name).join('|') === selection.value.join('|')),
 );
 const peaks = computed(() => previewPeaks.value);
-const channels = computed(() => Array.from({ length: source.value?.channels || 0 }, (_, i) => i));
 
 // 操作方法：设置、设备选择、会话控制与事件处理。
 // User actions: settings, device selection, session control and event handling.
@@ -270,10 +265,6 @@ function enterPassword(e: KeyboardEvent) {
     e.preventDefault();
     void submit();
   }
-}
-
-function num(v: unknown, d = 1) {
-  return typeof v === 'number' && Number.isFinite(v) ? v.toFixed(d) : '—';
 }
 
 function level(v: number) {
@@ -708,75 +699,13 @@ onMounted(async () => {
         </section>
         <p class="footnote">窗口关闭动作可在设置中选择；托盘右键“退出”始终停止串流并关闭软件。</p>
       </template>
-      <template v-if="page === '设置' && settingsTab === '运行统计'"
-        ><div class="metrics">
-          <section class="panel">
-            <small>运行时长</small>
-            <h2>{{ num(telemetry.elapsed_seconds, 0) }} <em>s</em></h2>
-          </section>
-          <section class="panel">
-            <small>流水线水位</small>
-            <h2>{{ num(telemetry.water_ms) }} <em>ms</em></h2>
-          </section>
-          <section class="panel">
-            <small>漂移校正</small>
-            <h2>{{ num(telemetry.controller?.correction_ppm) }} <em>ppm</em></h2>
-          </section>
-        </div>
-        <section class="panel">
-          <h2>音频流水线</h2>
-          <dl>
-            <dt>采集帧数</dt>
-            <dd>{{ telemetry.capture_frames?.toLocaleString() || '—' }}</dd>
-            <dt>输出帧数</dt>
-            <dd>{{ telemetry.output_frames?.toLocaleString() || '—' }}</dd>
-            <dt>协议提前量</dt>
-            <dd>{{ telemetry.lead_ms ?? '—' }} ms</dd>
-            <dt>估计发送端延迟</dt>
-            <dd>{{ num((telemetry.lead_ms ?? NaN) + (telemetry.water_ms ?? NaN)) }} ms</dd>
-            <dt>采集不连续 / 时间戳错误</dt>
-            <dd>
-              {{ report.capture?.discontinuities ?? '停止后汇总' }} /
-              {{ report.capture?.timestamp_errors ?? '—' }}
-            </dd>
-            <dt>转换汇总</dt>
-            <dd>
-              <code>{{
-                report.conversion ? JSON.stringify(report.conversion) : '停止后汇总'
-              }}</code>
-            </dd>
-          </dl>
-          <small>延迟估计不包含应用和扬声器实际发声耗时。</small>
-        </section>
-        <section class="panel">
-          <h2>设备传输</h2>
-          <div class="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>设备</th>
-                  <th>发送包</th>
-                  <th>本地丢包</th>
-                  <th>重传请求</th>
-                  <th>已重传</th>
-                  <th>过期</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr v-for="row in statsRows" :key="row.host">
-                  <td>{{ row.name }}</td>
-                  <td>{{ row.values.sent ?? '—' }}</td>
-                  <td>{{ row.values.send_dropped ?? '—' }}</td>
-                  <td>{{ row.values.rtx_requested ?? '—' }}</td>
-                  <td>{{ row.values.rtx_resent ?? '—' }}</td>
-                  <td>{{ row.values.rtx_expired ?? '—' }}</td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-          <small>约每 5 秒更新，累计本次软件运行中所有设备的统计，退出软件后清空。</small>
-        </section></template
-      >
+      <RuntimeStats
+        v-if="page === '设置' && settingsTab === '运行统计'"
+        :telemetry="telemetry"
+        :report="report"
+        :stats="stats"
+        :names="statsNames"
+      />
       <template v-if="page === '设置' && settingsTab === '技术详情'"
         ><section class="panel capture-panel">
           <h2>采集与处理</h2>
@@ -827,94 +756,19 @@ onMounted(async () => {
             <pre>{{ JSON.stringify(d.properties, null, 2) }}</pre>
           </details>
         </section> </template
-      ><template v-if="page === '设置' && settingsTab === '常规'"
-        ><section class="panel general-panel">
-          <h2>应用行为</h2>
-          <dl class="processing">
-            <dt>开机自启</dt>
-            <dd>
-              <label class="log-switch"
-                ><input
-                  type="checkbox"
-                  v-model="autostart"
-                  :disabled="startupSaving"
-                  @change="startupChanged"
-                />登录 Windows 后启动 AirPlay Hub</label
-              ><small>默认关闭。启用后请保留软件所在位置。</small>
-            </dd>
-            <dt>保持系统唤醒</dt>
-            <dd>
-              <label class="log-switch"
-                ><input
-                  type="checkbox"
-                  v-model="settings.keepAwake"
-                  @change="awakeChanged"
-                />避免系统自动睡眠</label
-              ><small>开启后在应用运行期间生效，包括托盘状态；允许屏幕熄灭，退出应用后恢复。</small>
-            </dd>
-            <dt>右上角关闭按钮</dt>
-            <dd>
-              <select aria-label="窗口关闭动作" v-model="settings.closeAction" @change="persist">
-                <option value="tray">收起到托盘</option>
-                <option value="quit">退出应用</option></select
-              ><small>立即生效。托盘右键“退出”始终关闭应用。</small>
-            </dd>
-            <dt>外观</dt>
-            <dd>
-              <select aria-label="外观" v-model="theme">
-                <option value="system">跟随系统</option>
-                <option value="light">浅色模式</option>
-                <option value="dark">深色模式</option>
-              </select>
-            </dd>
-          </dl>
-        </section>
-        <section class="panel general-panel">
-          <h2>播放设置</h2>
-          <dl class="processing">
-            <dt>播放提前量<small>下次连接生效</small></dt>
-            <dd>
-              <div class="unit small-unit">
-                <input
-                  aria-label="播放提前量"
-                  v-model.number="settings.latency"
-                  type="number"
-                  min="250"
-                  max="2000"
-                  :disabled="busy"
-                  @change="persist"
-                /><span>ms</span>
-              </div>
-            </dd>
-          </dl>
-        </section>
-        <section class="panel general-panel">
-          <h2>输入声道映射</h2>
-          <small>选择音频来源中的左右输入。交换扬声器位置不会改变这里的设置。</small>
-          <dl class="processing">
-            <dt>左输出取样</dt>
-            <dd>
-              <select
-                aria-label="左输出取样"
-                v-model.number="settings.mapping[0]"
-                @change="mapping"
-              >
-                <option v-for="ch in channels" :value="ch">输入声道 {{ ch + 1 }}</option>
-              </select>
-            </dd>
-            <dt>右输出取样</dt>
-            <dd>
-              <select
-                aria-label="右输出取样"
-                v-model.number="settings.mapping[1]"
-                @change="mapping"
-              >
-                <option v-for="ch in channels" :value="ch">输入声道 {{ ch + 1 }}</option>
-              </select>
-            </dd>
-          </dl>
-        </section></template
-      ><template v-if="page === '设置' && settingsTab === '日志'"
+      ><GeneralSettings
+        v-if="page === '设置' && settingsTab === '常规'"
+        v-model:settings="settings"
+        v-model:autostart="autostart"
+        v-model:theme="theme"
+        :startup-saving="startupSaving"
+        :channel-count="source?.channels || 0"
+        :busy="busy"
+        @startup-change="startupChanged"
+        @awake-change="awakeChanged"
+        @persist="persist"
+        @mapping-change="mapping"
+      /><template v-if="page === '设置' && settingsTab === '日志'"
         ><section class="panel">
           <div class="section-title">
             <h2>会话日志</h2>

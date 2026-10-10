@@ -65,7 +65,7 @@ python test/core/checks/check_conversion.py "path/to/capture.pcm"
 
 `test:session` executes the actual page script for early/stale events, password retries, stopping, startup failure, overflow and unmount. Desktop IPC/browser APIs are mocked; DOM clicks, layout and the real WebView are not covered.
 
-`test:dom` 使用固定版本 `@playwright/test 1.64.0`，加载生产 `main.ts`、`App.vue`、`SourcePicker.vue`、`DeviceCard.vue` 和样式，模拟 Tauri IPC/事件，执行 12 项真实点击/输入回归：无来源、无设备、来源选择及 Escape、分组排序/外部关闭、单声道保存后预览、设备卡片互换成功/失败及单设备选择、连接/停止时控件禁用、Enter 密码重试与新会话归属、旧事件隔离、启动失败恢复、重复/迟到密码提交。未捕获浏览器异常也会失败。夹具没有定时协议事件，测试可暂停/完成/拒绝命令来确定异步顺序，不读取或改写组件内部状态。
+`test:dom` 使用固定版本 `@playwright/test 1.64.0`，加载生产 `main.ts`、`App.vue`、`SourcePicker.vue`、`DeviceCard.vue`、`GeneralSettings.vue`、`RuntimeStats.vue` 和样式，模拟 Tauri IPC/事件，执行 17 项真实点击/输入回归：无来源、无设备、来源选择及 Escape、分组排序/外部关闭、单声道保存后预览、设备卡片互换成功/失败及单设备选择、自启/保持唤醒失败回退与重试、常规设置同步及映射、统计快照/累计计数、连接/停止时控件禁用、Enter 密码重试与新会话归属、旧事件隔离、启动失败恢复、重复/迟到密码提交。未捕获浏览器异常也会失败。夹具没有定时协议事件，测试可暂停/完成/拒绝命令来确定异步顺序，不读取或改写组件内部状态。
 
 Windows 默认使用已安装 Edge 的无头模式，无需下载浏览器；已有 Chrome 可设置 `$env:AIRPLAY_TEST_BROWSER_CHANNEL = 'chrome'` 后运行，完成后 `Remove-Item Env:AIRPLAY_TEST_BROWSER_CHANNEL`。其他系统默认使用 Playwright Chromium，先运行 `pnpm --dir airplay-frontend exec playwright install chromium`。浏览器选择依据见 [Playwright 文档](https://playwright.dev/docs/browsers)。
 
@@ -75,7 +75,11 @@ Windows 默认使用已安装 Edge 的无头模式，无需下载浏览器；已
 
 设备卡片组件再新增 2 项，DOM 共 12 项：互换成功前保持原名称、成功后更新、失败保留顺序且不重启串流/改变输入映射；单设备只连接所选接收端、展示两个声道且没有互换按钮。点击经过真实 `DeviceCard.vue`，暂停/拒绝发生在 `set_speaker_order` IPC 边界。
 
-`test:dom` mounts the actual production UI in headless Edge on Windows (Chromium elsewhere), mocks desktop boundaries and checks twelve click/keyboard/lifecycle scenarios, including source grouping/dismissal, save-before-monitor ordering, successful/failed speaker swaps and individual receiver selection. It owns its local server/browser, fails on uncaught browser errors and writes only ignored failure artifacts; it does not exercise native WebView or audio hardware.
+常规设置组件再新增 3 项，DOM 共 15 项：自启等待时禁用及失败回退/重试；保持唤醒保存失败回退并保留其他设置；关闭动作、提前量、主题和映射同步，以及连接期间提前量禁用而映射仍发送原有命令、不重启会话。测试仅模拟桌面 IPC，不修改 Windows 自启或电源策略。
+
+运行统计组件再新增 2 项，DOM 共 17 项：缺失/零值与精度、报告和下一会话快照重置；重复统计去重、切页保留、设备名称/地址回退、缺失列占位、重连后的累计值与旧事件隔离。会话脚本测试读取实际 `display.ts`，与页面使用相同数值格式化实现。
+
+`test:dom` mounts the actual production UI in headless Edge on Windows (Chromium elsewhere), mocks desktop boundaries and checks seventeen click/keyboard/lifecycle scenarios, including source grouping/dismissal, save-before-monitor ordering, successful/failed speaker swaps, individual receiver selection, settings rollback, runtime mapping, snapshot resets and cumulative statistics. It owns its local server/browser, fails on uncaught browser errors and writes only ignored failure artifacts; it does not exercise native WebView or audio hardware.
 
 `test_upstream.py` 无需原生编译或声卡，需要 Python、Git 和固定子模块。7 项测试核对输出快照、三层提交、输入/补丁哈希、CRLF、只在临时副本应用补丁、上下文失败保留旧输出及函数选择边界；补丁和输入变更须先审查再更新清单，见 [上游适配变更](../docs/building.md#上游适配变更)。
 

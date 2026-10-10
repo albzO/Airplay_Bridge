@@ -36,6 +36,12 @@ const sessionBody = sessionParsed.statements
 const sessionJs = ts.transpileModule(sessionBody, {
   compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
 }).outputText;
+const displayJs = ts.transpileModule(
+  await readFile(new URL('../../airplay-frontend/src/display.ts', import.meta.url), 'utf8'),
+  { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } },
+).outputText;
+const display = {};
+new Function('exports', displayJs)(display);
 
 // 执行真实页面脚本和 Vue ref；只替换桌面 IPC 与浏览器接口，不复制事件处理逻辑。
 // Execute the actual page script and Vue refs; replace desktop IPC/browser APIs, not event logic.
@@ -46,6 +52,7 @@ function page(t, invokeCommand) {
     ref: vue.ref,
     shallowRef: vue.shallowRef,
     computed: vue.computed,
+    num: display.num,
     nextTick: vue.nextTick,
     watch: vue.watch,
     onMounted: () => {},
