@@ -36,6 +36,28 @@ const telemetry = {
   peaks: [0.1, 0.2],
   controller: { correction_ppm: 0 },
 };
+const captureDiagnostic = {
+  kind: 'capture_diagnostic',
+  elapsed_seconds: 1.5,
+  capture_frames: 48000,
+  pending_pcm_ms: 10,
+  water_ms: 100,
+  correction_ppm: -2,
+  capture: {
+    device_position: 48000,
+    packets: 100,
+    packet_qpc_100ns: 15000000,
+    discontinuities: 0,
+    timestamp_errors: 0,
+  },
+};
+const logPanel = (page, name) =>
+  page.locator('section.panel').filter({ has: page.getByRole('heading', { name, exact: true }) });
+
+async function openLogView(page) {
+  await page.getByRole('button', { name: '设置', exact: true }).click();
+  await page.getByRole('tab', { name: '日志', exact: true }).click();
+}
 
 // 点击/输入都经过真实模板；evaluate 只准备 IPC 夹具、注入桌面事件和读取命令记录。
 // Click/type through the real template; evaluate only configures IPC fixtures, sends desktop events and reads commands.
@@ -499,6 +521,177 @@ test('auth-policy reset reports failure and targets the current selection on suc
   await resolve(page, 'forget_auth_policy');
   await expect(notice).toHaveText('已清除所选设备记录，下次连接重新检测。');
   expect(await calls(page, 'start_stream')).toHaveLength(0);
+});
+
+test('log switches persist independently for the next session and opening logs handles command failures', async ({
+  page,
+}) => {
+  await open(page);
+  await openLogView(page);
+  const sessionLog = logPanel(page, '会话日志');
+  const diagnostics = logPanel(page, '采集逐包诊断');
+  const detailed = page.getByRole('checkbox', { name: '保存详细日志', exact: true });
+  const capture = page.getByRole('checkbox', { name: '启用额外采集诊断', exact: true });
+  await detailed.check();
+  await expect
+    .poll(async () => (await calls(page, 'save_settings')).at(-1).args.settings)
+    .toMatchObject({ detailedLogs: true, captureDiagnostics: false });
+  await capture.check();
+  await expect
+    .poll(async () => (await calls(page, 'save_settings')).at(-1).args.settings)
+    .toMatchObject({ detailedLogs: true, captureDiagnostics: true });
+  await detailed.uncheck();
+  await expect
+    .poll(async () => (await calls(page, 'save_settings')).at(-1).args.settings)
+    .toMatchObject({ detailedLogs: false, captureDiagnostics: true });
+  await expect(sessionLog.locator('pre.logs')).toHaveText('暂无关键故障。');
+  await expect(diagnostics.locator('pre.logs')).toHaveText('未启用采集诊断。');
+  await start(page).click();
+  await expect.poll(async () => (await calls(page, 'start_stream')).length).toBe(1);
+  expect((await calls(page, 'start_stream'))[0].args.settings).toMatchObject({
+    detailedLogs: false,
+    captureDiagnostics: true,
+  });
+  await expect(detailed).toBeDisabled();
+  await expect(capture).toBeDisabled();
+  await expect(diagnostics.locator('pre.logs')).toHaveText('等待采集诊断输出…');
+  const folder = page.getByRole('button', { name: '打开日志目录', exact: true });
+  await hold(page, 'open_logs');
+  await folder.click();
+  await expect.poll(async () => (await calls(page, 'open_logs')).length).toBe(1);
+  expect((await calls(page, 'open_logs'))[0].args).toEqual({});
+  await reject(page, 'open_logs', 'fixture open logs failure');
+  await expect(page.locator('.alert')).toContainText('fixture open logs failure');
+  await folder.click();
+  await expect.poll(async () => (await calls(page, 'open_logs')).length).toBe(2);
+  await page.getByRole('button', { name: '停止串流', exact: true }).click();
+  await send(page, 101, { kind: 'finished', cancelled: true });
+  await expect(detailed).toBeEnabled();
+  await expect(capture).toBeEnabled();
+});
+
+test('clearing diagnostics preserves session logs, paths and expandable reports while new summaries continue', async ({
+  page,
+}) => {
+  await open(page);
+  await openLogView(page);
+  await page.getByRole('checkbox', { name: '保存详细日志', exact: true }).check();
+  await page.getByRole('checkbox', { name: '启用额外采集诊断', exact: true }).check();
+  await start(page).click();
+  await readyEvents(page, 101);
+  const sessionLog = logPanel(page, '会话日志');
+  const diagnostics = logPanel(page, '采集逐包诊断');
+  await send(page, 101, {
+    kind: 'log_path',
+    path: 'fixture-root/session.log',
+    detailed_logs: true,
+    pipeline_path: 'fixture-root/pipeline.jsonl',
+  });
+  await send(page, 101, {
+    kind: 'diagnostic_path',
+    path: 'fixture-root/capture.jsonl',
+    pipeline_path: 'fixture-root/pipeline.jsonl',
+  });
+  await send(page, 101, {
+    kind: 'native',
+    line: 'fixture raw output',
+    safe_line: 'fixture safe output',
+  });
+  await send(page, 101, captureDiagnostic);
+  const report = {
+    device: 'Receiver A',
+    capture: { discontinuities: 0, timestamp_errors: 1 },
+    conversion: { frames: 44100 },
+  };
+  await send(page, 101, { kind: 'report', report });
+  await expect(sessionLog.locator('pre.logs')).toContainText('fixture safe output');
+  await expect(sessionLog.locator('pre.logs')).not.toContainText('fixture raw output');
+  await expect(sessionLog.locator('.log-location')).toHaveText([
+    '%APPDATA%/AirPlay Hub/logs/session.log',
+    '流水线：%APPDATA%/AirPlay Hub/logs/pipeline.jsonl',
+  ]);
+  await expect(diagnostics.locator('.log-location')).toHaveText(
+    '逐包：%APPDATA%/AirPlay Hub/logs/capture.jsonl',
+  );
+  await expect(diagnostics.locator('pre.logs')).toContainText('1.5s · 采集 48000 帧');
+  await sessionLog.getByText('完整会话报告', { exact: true }).click();
+  await expect(sessionLog.locator('details pre')).toBeVisible();
+  await expect(sessionLog.locator('details pre')).toHaveText(JSON.stringify(report, null, 2));
+  const saves = (await calls(page, 'save_settings')).length;
+  await diagnostics.getByRole('button', { name: '清空显示', exact: true }).click();
+  await expect(diagnostics.locator('pre.logs')).toHaveText('等待采集诊断输出…');
+  await expect(sessionLog.locator('pre.logs')).toContainText('fixture safe output');
+  await expect(sessionLog.locator('details pre')).toHaveText(JSON.stringify(report, null, 2));
+  await expect(diagnostics.locator('.log-location')).toHaveText(
+    '逐包：%APPDATA%/AirPlay Hub/logs/capture.jsonl',
+  );
+  expect(await calls(page, 'save_settings')).toHaveLength(saves);
+  expect(await calls(page, 'stop_stream')).toHaveLength(0);
+  await send(page, 101, { ...captureDiagnostic, elapsed_seconds: 2.5, capture_frames: 96000 });
+  await expect(diagnostics.locator('pre.logs')).toContainText('2.5s · 采集 96000 帧');
+  await expect(diagnostics.locator('pre.logs')).not.toContainText('1.5s');
+  await page.getByRole('tab', { name: '常规', exact: true }).click();
+  await page.getByRole('tab', { name: '日志', exact: true }).click();
+  await expect(diagnostics.locator('pre.logs')).toContainText('2.5s · 采集 96000 帧');
+  await expect(sessionLog.locator('pre.logs')).toContainText('fixture safe output');
+  await sessionLog.getByText('完整会话报告', { exact: true }).click();
+  await expect(sessionLog.locator('details pre')).toHaveText(JSON.stringify(report, null, 2));
+});
+
+test('log snapshots reset on reconnect and reject stale log, diagnostic and report events', async ({
+  page,
+}) => {
+  await open(page);
+  await openLogView(page);
+  const sessionLog = logPanel(page, '会话日志');
+  const diagnostics = logPanel(page, '采集逐包诊断');
+  await start(page).click();
+  await readyEvents(page, 101);
+  await send(page, 101, { kind: 'native', line: 'fixture ordinary output' });
+  await expect(sessionLog.locator('pre.logs')).toHaveText('暂无关键故障。');
+  await send(page, 101, {
+    kind: 'native',
+    line: 'fixture raw fault',
+    safe_line: 'fixture safe fault',
+    is_fault: true,
+  });
+  await expect(sessionLog.locator('pre.logs')).toHaveText('fixture safe fault');
+  await send(page, 101, {
+    kind: 'log_path',
+    path: 'fixture-root/session.log',
+    detailed_logs: false,
+    pipeline_path: 'fixture-root/old-pipeline.jsonl',
+  });
+  await send(page, 101, { kind: 'report', report: { device: 'Receiver A' } });
+  await expect(sessionLog.locator('details')).toHaveCount(1);
+  await page.getByRole('button', { name: '停止串流', exact: true }).click();
+  await send(page, 101, { kind: 'finished', cancelled: true });
+  await expect(sessionLog.locator('pre.logs')).toHaveText('fixture safe fault');
+  await page.getByRole('checkbox', { name: '启用额外采集诊断', exact: true }).check();
+  await expect(diagnostics.locator('pre.logs')).toHaveText('未启用采集诊断。');
+  await start(page).click();
+  await readyEvents(page, 102);
+  await expect(sessionLog.locator('pre.logs')).toHaveText('暂无关键故障。');
+  await expect(sessionLog.locator('details')).toHaveCount(0);
+  await expect(sessionLog.locator('.log-location')).toHaveText([
+    '%APPDATA%/AirPlay Hub/logs/session.log',
+  ]);
+  await expect(diagnostics.locator('.log-location')).toHaveCount(0);
+  await expect(diagnostics.locator('pre.logs')).toHaveText('等待采集诊断输出…');
+  await send(page, 101, { kind: 'log_path', path: 'fixture-root/stale.log', detailed_logs: true });
+  await send(page, 101, { kind: 'diagnostic_path', path: 'fixture-root/stale.jsonl' });
+  await send(page, 101, { kind: 'native', line: 'stale fault', is_fault: true });
+  await send(page, 101, { ...captureDiagnostic, elapsed_seconds: 9.5 });
+  await send(page, 101, { kind: 'report', report: { device: 'stale receiver' } });
+  await expect(sessionLog.locator('pre.logs')).toHaveText('暂无关键故障。');
+  await expect(sessionLog.locator('details')).toHaveCount(0);
+  await expect(sessionLog.locator('.log-location')).toHaveText([
+    '%APPDATA%/AirPlay Hub/logs/session.log',
+  ]);
+  await expect(diagnostics.locator('.log-location')).toHaveCount(0);
+  await expect(diagnostics.locator('pre.logs')).toHaveText('等待采集诊断输出…');
+  await send(page, 102, { ...captureDiagnostic, elapsed_seconds: 2.5 });
+  await expect(diagnostics.locator('pre.logs')).toContainText('2.5s · 采集 48000 帧');
 });
 
 test('connecting and stopping lock controls and suppress late password/ready events', async ({

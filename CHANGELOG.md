@@ -2,6 +2,8 @@
 
 ## 未发布 / Unreleased
 
+- 提取日志视图，保留页面管理的会话快照、保存/打开目录命令及诊断清空范围；新增日志开关、报告展开、清空后继续更新和旧会话隔离的 DOM 回归。
+  Extract log presentation while retaining page-owned session snapshots, persistence/folder commands and diagnostic clearing; cover log controls, reports, continued updates and stale-session isolation.
 - 提取技术详情视图并共享格式/电平展示，保留 Buffer 保存与认证策略重检命令；新增参数、禁用条件、设备展示与重检请求范围的 DOM 回归。
   Extract technical details and share format/level display while retaining Buffer persistence and auth-policy reset commands; cover parameters, busy restrictions, device details and reset request scope.
 - 提取只读运行统计视图并共享数值格式化，保留页面累计计数与事件归属；新增快照重置、重复事件去重、跨会话累计及旧统计隔离的 DOM 回归。

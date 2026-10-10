@@ -79,6 +79,7 @@ function reply(name, args) {
     case 'set_autostart':
     case 'set_mapping':
     case 'forget_auth_policy':
+    case 'open_logs':
       return;
     default:
       throw new Error(`Unexpected fixture command: ${name}`);

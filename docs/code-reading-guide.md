@@ -82,6 +82,8 @@
 
 技术详情从 `TechnicalDetails.vue` 阅读：格式和电平使用 `display.ts/formatAudioFormat`、`level`，与底部来源栏/设备卡片共用；Buffer 先发更新事件，保存事件交给 `App/persist`。重检事件交给 `App/resetAuth`，页面把当前 `selection` 传给 `forget_auth_policy`；命令成功后才显示已清除通知，失败进入原有错误提示。没有所选设备或会话忙碌时按钮禁用，组件不修改设备、认证记录或音频。
 
+日志视图从 `LogView.vue` 阅读：开关先发 `update:*` 更新页面设置，再发送保存事件，配置下次连接；当前会话的详细日志/诊断状态由独立快照决定。打开目录事件交给 `App/call('open_logs')`，“清空显示”事件只将 `diagnosticLogs` 置空；日志、路径及报告保留，后续诊断继续接收。完整报告在 `report.device` 存在时显示可展开 JSON。组件不拥有日志数组、IPC 或会话生命周期；过滤、截断、重连重置及旧事件隔离仍由页面和 composable 负责。
+
 | 状态 | 设置条件 | 清除条件 |
 |---|---|---|
 | `busy` | 用户请求开始连接 | 启动命令失败或 `finished` |
