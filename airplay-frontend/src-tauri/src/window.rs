@@ -1,10 +1,10 @@
 //! 窗口操作与退出顺序，避免关闭窗口时遗漏音频或后台会话。
 //! Window actions and shutdown ordering ensure audio and background sessions are cleaned up.
-use crate::{Engine, stop_source};
+use crate::{Engine, stop_source_until};
 use std::{
-    sync::{Arc, atomic::Ordering},
+    sync::{Arc, atomic::Ordering, mpsc},
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 use tauri::{Manager, State};
 
@@ -26,17 +26,37 @@ pub(crate) fn quit(app: &tauri::AppHandle) {
     if engine.quitting.swap(true, Ordering::SeqCst) {
         return;
     }
-    if let Some(s) = engine.session.lock().unwrap().as_ref() {
-        s.control.stop.store(true, Ordering::Relaxed);
-    }
-    let app = app.clone();
+    let deadline = Instant::now() + homepod_test::shutdown::STOP_TIMEOUT;
+    let (done, completed) = mpsc::sync_channel(1);
+    let exit_app = app.clone();
+    // Independent of Engine locks and OS callbacks. Job Objects close with this process,
+    // so a stuck cleanup cannot leave our native streaming child behind.
     thread::spawn(move || {
-        let _ = engine.awake.lock().unwrap().set(false);
-        stop_source(&engine);
-        while engine.session.lock().unwrap().is_some() {
-            thread::sleep(Duration::from_millis(100));
+        let clean = completed
+            .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+            .unwrap_or(false);
+        let code = if clean { 0 } else { 1 };
+        exit_app.exit(code);
+        // Even a successful cleanup does not prove the main event loop processed exit.
+        // Keep the fallback alive until the original deadline, with no fresh timeout.
+        thread::sleep(deadline.saturating_duration_since(Instant::now()));
+        std::process::exit(code);
+    });
+    thread::spawn(move || {
+        if let Some(s) = engine.session.lock().unwrap().as_ref() {
+            s.control.request_stop_until(deadline);
         }
-        app.exit(0);
+        let _ = engine.awake.lock().unwrap().set(false);
+        let source_stopped = stop_source_until(&engine, deadline).is_ok();
+        while engine.session.lock().unwrap().is_some() && Instant::now() < deadline {
+            thread::sleep(
+                deadline
+                    .saturating_duration_since(Instant::now())
+                    .min(Duration::from_millis(20)),
+            );
+        }
+        let clean = source_stopped && engine.session.lock().unwrap().is_none();
+        let _ = done.send(clean);
     });
 }
 #[tauri::command]

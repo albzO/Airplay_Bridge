@@ -308,3 +308,19 @@ for (const failed of [false, true]) {
     assert.deepEqual(commands, ['save_settings', 'save_settings']);
   });
 }
+
+for (const code of ['STOP_TIMEOUT', 'BACKEND_STDERR_FAILED']) {
+  test(`a cancelled session still displays its ${code} failure`, async (t) => {
+    const p = page(t, () => Promise.resolve(101));
+    await p.start();
+    await p.stop();
+    const error = `[${code}] fixture failure`;
+    p.event(
+      event(101, 'finished', { cancelled: true, error, safe_error: error, error_code: code }),
+    );
+    assert.equal(p.busy.value, false);
+    assert.equal(p.stopping.value, false);
+    assert.equal(p.phase.value, '串流失败');
+    assert.equal(p.error.value, error);
+  });
+}

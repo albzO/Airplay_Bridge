@@ -31,7 +31,6 @@ use std::{
     fs,
     path::Path,
     sync::{Mutex, atomic::Ordering},
-    thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 use transport::{BYTES_PER_FRAME, BYTES_PER_MS, Backend, BackendOptions, PcmWriter};
@@ -154,20 +153,26 @@ fn run_targets(
     } else {
         None
     };
-    let dacp = crate::volume::Dacp::start_with_logging(
+    let stop = gui.as_ref().map_or(&STOP, |g| g.control.stop.as_ref());
+    let _control = Control::install(gui.is_some())?;
+    let shutdown = gui
+        .as_ref()
+        .map_or_else(control::stop_budget, |g| g.control.shutdown.clone());
+    let mut dacp = crate::volume::Dacp::start_with_logging(
         *device.addresses.first().unwrap(),
         &identity,
         &active_remote,
         &log_path.with_extension("volume.log"),
         !detailed_logs,
     )?;
+    dacp.use_shutdown_budget(shutdown.clone());
     let peer_identity = format!("{:016X}", stamp + 1);
     let peer_remote = active_remote
         .parse::<u32>()?
         .wrapping_add(1)
         .max(1)
         .to_string();
-    let peer_dacp = if let Some(other) = peer {
+    let mut peer_dacp = if let Some(other) = peer {
         Some(crate::volume::Dacp::start_with_logging(
             *other.addresses.first().ok_or("另一台没有 IPv4 地址")?,
             &peer_identity,
@@ -178,6 +183,9 @@ fn run_targets(
     } else {
         None
     };
+    if let Some(peer) = &mut peer_dacp {
+        peer.use_shutdown_budget(shutdown.clone());
+    }
     if let Some(g) = &gui {
         let mut senders = g.control.volume.lock().unwrap();
         senders.push(dacp.command_sender());
@@ -216,8 +224,6 @@ fn run_targets(
     } else {
         Vec::new()
     };
-    let stop = gui.as_ref().map_or(&STOP, |g| g.control.stop.as_ref());
-    let _control = Control::install(gui.is_some())?;
     if seconds == 0 {
         println!(
             "建立持续流到 {name}（{host}:{}），持续运行直到 Ctrl+C。",
@@ -266,7 +272,25 @@ fn run_targets(
         gui.as_ref().map(|g| g.emit.clone()),
     )?;
     let protocol = reader.state.clone();
-    reader.wait_ready(&mut backend, stop)?;
+    if let Err(error) = reader.wait_ready(&mut backend, stop) {
+        let deadline = shutdown.begin();
+        let _ = backend.kill();
+        let _ = backend.stop_until(
+            deadline.min(Instant::now() + Duration::from_millis(250)),
+            Instant::now(),
+        );
+        reader.cancel();
+        if reader
+            .join_until(deadline.min(Instant::now() + Duration::from_millis(250)))
+            .is_err()
+        {
+            if let Some(g) = &gui {
+                g.control.cleanup_complete.store(false, Ordering::Release);
+            }
+        }
+        reader.finish_log(deadline.min(Instant::now() + Duration::from_millis(250)));
+        return Err(error);
+    }
     let (sender, writer) = PcmWriter::start(backend.stdin()?);
     let counters = writer.counters.clone();
     let progress = Mutex::new(capture::CaptureProgress::default());
@@ -358,6 +382,10 @@ fn run_targets(
             &mut process_audio,
         )
     };
+    // Share the first request's budget; capture failures/natural completion start it here.
+    let stop_deadline = shutdown.begin();
+    // Leave 250 ms for the desktop password server and final notification.
+    let deadline = stop_deadline - Duration::from_millis(250);
     // 正常停止排出滤波器尾帧；发生采集/发送故障时停止继续产出，再关闭唯一发送端。
     // Drain filter tails on normal stop; after capture/delivery failure, stop producing and close the sole sender.
     if capture_result.is_ok() {
@@ -375,44 +403,73 @@ fn run_targets(
             "stopped_by_user": stop.load(Ordering::Relaxed),
         }));
     }
-    // EOF 让写线程排空已接受的 PCM，后端完成协议收尾；后端退出后再等待读写线程。
-    // 超过 15 秒先终止并回收后端，再等待线程，防止等待仍未关闭的管道。
-    // EOF drains accepted PCM and requests backend teardown; join workers after the backend exits.
-    // After 15 seconds, kill/reap the backend before joining so open pipes cannot keep workers waiting.
-    let closing = Instant::now();
-    let status = loop {
-        if let Some(status) = backend.try_wait()? {
-            break status;
+    // One deadline for backend, pipe workers, DACP, diagnostics and report persistence.
+    // Reserve one second for termination/collection instead of spending the entire budget on grace.
+    let (status, backend_stop_error, forced) = backend.stop_until(
+        deadline - Duration::from_millis(500),
+        deadline - Duration::from_secs(1),
+    );
+    let written = writer.join_until(deadline - Duration::from_millis(500));
+    let reader_complete = reader
+        .join_until(deadline - Duration::from_millis(500))
+        .is_ok();
+    if !reader_complete {
+        reader.cancel();
+    }
+    let volume_complete = dacp.shutdown_until(deadline - Duration::from_millis(500));
+    let peer_volume_complete = peer_dacp
+        .as_mut()
+        .is_none_or(|peer| peer.shutdown_until(deadline - Duration::from_millis(500)));
+    let pcm_complete = !written
+        .as_ref()
+        .err()
+        .is_some_and(|error| error.to_string().contains("[STOP_TIMEOUT]"));
+    if !reader_complete
+        || !pcm_complete
+        || !volume_complete
+        || !peer_volume_complete
+        || status.is_none()
+    {
+        if let Some(g) = &gui {
+            g.control.cleanup_complete.store(false, Ordering::Release);
         }
-        if closing.elapsed() > Duration::from_secs(15) {
-            backend.kill()?;
-            backend.wait()?;
-            let _ = writer.join();
-            reader.join();
-            return Err("后端停止超过 15 秒，已终止；请查看日志".into());
-        }
-        thread::sleep(Duration::from_millis(20));
-    };
-    let written = writer.join()?;
-    reader.join();
-    // 后端先按自己的期限退出，再给所有诊断线程合计 250 ms；不让慢日志拖延回收后端。
-    // Reap the backend first, then allow all diagnostics a shared 250 ms; slow logs cannot delay backend cleanup.
+    }
     audio.close_logs(&capture_result, stop.load(Ordering::Relaxed));
     if let Some(log) = &mut packet_log {
         log.close();
     }
-    let log_deadline = Instant::now() + Duration::from_millis(250);
+    let log_deadline =
+        (Instant::now() + Duration::from_millis(250)).min(deadline - Duration::from_millis(250));
     let trace_status = audio.finish_trace(log_deadline);
     let drift_log_status = audio.finish_drift(log_deadline);
     let packet_log_status = packet_log.take().map(|log| log.finish_until(log_deadline));
     let protocol_log_status = reader.finish_log(log_deadline);
     if let Some(g) = &gui {
         if capture_diagnostics {
-            (g.emit)(serde_json::json!({"kind":"diagnostic_end","status":packet_log_status}));
+            let emit = g.emit.clone();
+            let status = packet_log_status.clone();
+            let _ = crate::shutdown::run_until(
+                deadline.min(Instant::now() + Duration::from_millis(50)),
+                move || emit(serde_json::json!({"kind":"diagnostic_end","status":status})),
+            );
         }
     }
     let backend_error = protocol.failure.lock().unwrap().clone();
-    let report = serde_json::json!({
+    let stderr_error = protocol.read_error();
+    let shutdown_error = if forced
+        || !reader_complete
+        || !volume_complete
+        || !peer_volume_complete
+        || backend_stop_error.is_some()
+    {
+        Some(format!(
+            "[STOP_TIMEOUT] 串流收尾未正常完成；forced={forced} stderr_complete={reader_complete} volume_complete={volume_complete} peer_volume_complete={peer_volume_complete}；{}",
+            backend_stop_error.as_deref().unwrap_or("请查看报告")
+        ))
+    } else {
+        None
+    };
+    let mut report = serde_json::json!({
         "device": name,
         "requested_seconds": seconds,
         "peer_device": peer.map(|d| &d.name),
@@ -432,7 +489,7 @@ fn run_targets(
         "clock": *protocol.clock.lock().unwrap(),
         "requested_latency_ms": latency_ms,
         "requested_buffer_ms": buffer_ms,
-        "backend_exit": status.code(),
+        "backend_exit": status.as_ref().and_then(|status| status.code()),
         "transport_ok": protocol.transport.load(Ordering::Relaxed),
         "backend_error": backend_error,
         "last_event_stats": *protocol.event.lock().unwrap(),
@@ -454,19 +511,37 @@ fn run_targets(
         "drift_trace_status": drift_log_status,
         "protocol_log_status": protocol_log_status,
     });
+    report["stderr_reader"] = serde_json::to_value(&*protocol.reader.lock().unwrap())?;
+    report["stderr_error"] = serde_json::json!(stderr_error);
+    report["shutdown"] = serde_json::json!({
+            "budget_ms": crate::shutdown::STOP_TIMEOUT.as_millis() as u64,
+            "backend_forced": forced, "backend_error": backend_stop_error,
+            "stderr_complete": reader_complete, "pcm_complete": pcm_complete,
+            "volume_complete": volume_complete, "peer_volume_complete": peer_volume_complete,
+            "error": shutdown_error,
+    });
     let report_path = log_path.with_extension("json");
     let report = privacy.value(&report);
+    let transport_ok =
+        status.is_some_and(|status| status.success()) && protocol.transport.load(Ordering::Relaxed);
     let primary = report::session_result(
         backend_error,
         capture_result.map(|_| ()),
+        stderr_error,
         written.map(|_| ()).map_err(|e| {
             crate::failure::describe(&format!("PCM 发送管道：{e}"), "PCM_PIPE_FAILED").into()
         }),
-        status.success() && protocol.transport.load(Ordering::Relaxed),
+        shutdown_error.is_some() || transport_ok,
         &log_path,
     );
-    report::finish(&report_path, report, primary, gui.as_ref().map(|g| &g.emit))?;
-    println!("持续流发送完成；请核对 HomePod 内容、连续性和停止是否正常。");
+    let primary = primary.and_then(|()| shutdown_error.map_or(Ok(()), |error| Err(error.into())));
+    report::finish_until(
+        &report_path,
+        report,
+        primary,
+        gui.as_ref().map(|g| &g.emit),
+        deadline,
+    )?;
     Ok(())
 }
 

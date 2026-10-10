@@ -2,6 +2,9 @@
 
 ## 未发布 / Unreleased
 
+- 独立记录后端 stderr 读取状态与原始 Win32 错误；统一首次停止请求的 15 秒预算，收尾涵盖后端、线程、DACP、日志、报告及密码管道。增加 Job Object 和应用退出兜底，未确认退出的资源阻止重连/重复采集，补充无设备管道与交互回归。
+  Track stderr read failures separately and share one stop deadline across cleanup; guard child processes with Job Objects, bound final persistence, and prevent resource overlap after timeouts.
+
 - 复查仓库结构，删除页面未使用绑定及后端定位未用参数，启用前端未使用检查；按模块归位核心测试并统一尾部挂接，修正熄屏说明及文档导航，清理旧迁移生成残留。
   Remove unused bindings/arguments, enforce frontend unused checks, organize core tests, and refresh repository documentation while retaining active tools and evidence.
 - 增加 Source 复制/入队 Release 基线及每次订阅独立的有界 Vec 回收池，最多保留 32 × 64 KiB 空闲存储；保持完整包、样本位值和帧顺序，补充失败/断开/变长及变采样率回归，记录会话状态与锁边界。

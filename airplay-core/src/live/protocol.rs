@@ -3,7 +3,7 @@
 use super::{GuiEmitter, Result, diagnostics::LogWorker, protocol_log, transport::Backend};
 use std::{
     collections::BTreeMap,
-    io::{BufRead, BufReader, Read},
+    io::{self, BufRead, BufReader, Read},
     sync::{
         Arc, Mutex,
         atomic::{AtomicBool, Ordering},
@@ -84,6 +84,7 @@ fn backend_failure(line: &str) -> Option<String> {
 /// Shared reader/audio protocol state; retain the first fatal cause rather than a later pipe failure.
 #[derive(Clone, Default)]
 pub(super) struct ProtocolState {
+    pub(super) reader: Arc<Mutex<ReaderState>>,
     pub(super) transport: Arc<AtomicBool>,
     pub(super) clock: Arc<Mutex<Option<Clock>>>,
     pub(super) packet: Arc<Mutex<Option<String>>>,
@@ -93,7 +94,36 @@ pub(super) struct ProtocolState {
     pub(super) failure: Arc<Mutex<Option<String>>>,
     auth_failure: Arc<Mutex<Option<crate::failure::SessionError>>>,
 }
+/// Independent of protocol markers and log persistence, including raw OS error provenance.
+#[derive(Clone, Default, serde::Serialize)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub(super) enum ReaderState {
+    #[default]
+    Reading,
+    Eof,
+    Cancelled,
+    Failed {
+        kind: String,
+        os_error: Option<i32>,
+        error: String,
+    },
+}
 impl ProtocolState {
+    pub(super) fn read_error(&self) -> Option<String> {
+        match &*self.reader.lock().unwrap() {
+            ReaderState::Failed { error, .. } => Some(error.clone()),
+            _ => None,
+        }
+    }
+    fn ready_error(&self, fallback: &str) -> Box<dyn std::error::Error> {
+        if let Some(error) = self.auth_failure.lock().unwrap().clone() {
+            return error.into();
+        }
+        if let Some(error) = self.failure.lock().unwrap().clone() {
+            return error.into();
+        }
+        self.read_error().unwrap_or_else(|| fallback.into()).into()
+    }
     fn record(&self, line: &str) {
         if let Some(error) = crate::failure::SessionError::parse(line) {
             *self.auth_failure.lock().unwrap() = Some(error);
@@ -138,6 +168,7 @@ pub(super) struct BackendReader {
     ready: mpsc::Receiver<()>,
     worker: Option<thread::JoinHandle<()>>,
     log: Option<LogWorker<protocol_log::Entry>>,
+    cancel: Arc<AtomicBool>,
 }
 impl BackendReader {
     pub(super) fn start(
@@ -164,13 +195,30 @@ impl BackendReader {
         let reader_state = state.clone();
         let (ready_tx, ready) = mpsc::channel();
         let log_sender = log.sender();
+        let cancel = Arc::new(AtomicBool::new(false));
+        let cancelled = cancel.clone();
         let worker = thread::Builder::new().name("airplay-protocol".into()).spawn(move || {
             let state = reader_state;
             let mut announced = false;
             for line in BufReader::new(stderr).lines() {
-                let Ok(line) = line else {
-                    break;
+                let line = match line {
+                    Err(error) if cancelled.load(Ordering::Acquire) && error.raw_os_error() == Some(995) => {
+                        *state.reader.lock().unwrap() = ReaderState::Cancelled;
+                        return;
+                    }
+                    Ok(line) => line,
+                    Err(error) => {
+                        let detail = crate::failure::describe(&format!("读取后端 stderr / ReadFile：{error}"), "BACKEND_STDERR_FAILED");
+                        *state.reader.lock().unwrap() = ReaderState::Failed {
+                            kind: format!("{:?}", error.kind()), os_error: error.raw_os_error(), error: detail,
+                        };
+                        return;
+                    }
                 };
+                if cancelled.load(Ordering::Acquire) {
+                    *state.reader.lock().unwrap() = ReaderState::Cancelled;
+                    return;
+                }
                 state.record(&line);
                 if line.contains("[PROBE] PCM_READY") && !announced {
                     let _ = ready_tx.send(());
@@ -189,12 +237,14 @@ impl BackendReader {
                     );
                 }
             }
+            *state.reader.lock().unwrap() = if cancelled.load(Ordering::Acquire) { ReaderState::Cancelled } else { ReaderState::Eof };
         })?;
         Ok(Self {
             state,
             ready,
             worker: Some(worker),
             log: Some(log),
+            cancel,
         })
     }
 
@@ -213,10 +263,9 @@ impl BackendReader {
             match self.ready.recv_timeout(Duration::from_millis(50)) {
                 Ok(()) => return Ok(()),
                 Err(mpsc::RecvTimeoutError::Disconnected) => {
-                    if let Some(error) = self.state.auth_failure.lock().unwrap().clone() {
-                        return Err(error.into());
-                    }
-                    return Err("后端在音频流准备完成前退出，请查看日志".into());
+                    return Err(self
+                        .state
+                        .ready_error("后端在音频流准备完成前退出，请查看日志"));
                 }
                 Err(mpsc::RecvTimeoutError::Timeout) => {}
             }
@@ -227,24 +276,46 @@ impl BackendReader {
                 return Err("建立流或等待密码超过 90 秒".into());
             }
             if backend_exited()? {
-                self.join();
-                if let Some(error) = self.state.auth_failure.lock().unwrap().clone() {
-                    return Err(error.into());
-                }
-                return Err("后端连接失败，请查看日志".into());
+                // A descendant can retain stderr after the direct child exits: never join indefinitely.
+                let _ = self.join_until(Instant::now() + Duration::from_millis(250));
+                return Err(self.state.ready_error("后端连接失败，请查看日志"));
             }
         }
     }
-    pub(super) fn join(&mut self) {
-        if let Some(worker) = self.worker.take() {
-            let _ = worker.join();
-        }
+    pub(super) fn join_until(&mut self, deadline: Instant) -> io::Result<()> {
+        let result = crate::shutdown::join_until(
+            &mut self.worker,
+            deadline,
+            self.cancel.load(Ordering::Acquire),
+        )
+        .map(|_| ())
+        .map_err(io::Error::other);
         if let Some(log) = &mut self.log {
             log.close();
         }
+        result
+    }
+    pub(super) fn cancel(&self) {
+        self.cancel.store(true, Ordering::Release);
+        if let Some(worker) = &self.worker {
+            crate::shutdown::cancel(worker);
+        }
+    }
+    #[cfg(test)]
+    fn join(&mut self) {
+        self.join_until(Instant::now() + Duration::from_secs(2))
+            .unwrap();
     }
     pub(super) fn finish_log(&mut self, deadline: Instant) -> Option<serde_json::Value> {
         self.log.take().map(|log| log.finish_until(deadline))
+    }
+}
+impl Drop for BackendReader {
+    fn drop(&mut self) {
+        self.cancel();
+        if let Some(log) = self.log.take() {
+            let _ = log.finish_until(Instant::now());
+        }
     }
 }
 

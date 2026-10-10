@@ -195,3 +195,38 @@ fn failed_drift_file_does_not_interrupt_audio_conversion_or_delivery() {
     assert_eq!(status["timed_out"], false);
     std::fs::remove_dir(directory).unwrap();
 }
+
+#[test]
+fn runtime_stderr_failure_stops_delivery_before_any_more_audio_is_queued() {
+    let (sender, writer) = PcmWriter::start(io::sink());
+    let protocol = ProtocolState::default();
+    *protocol.reader.lock().unwrap() = crate::live::protocol::ReaderState::Failed {
+        kind: "BrokenPipe".into(),
+        os_error: Some(232),
+        error: "[BACKEND_STDERR_FAILED] fixture stderr failure".into(),
+    };
+    let progress = Mutex::new(CaptureProgress::default());
+    let mut audio = AudioPipeline::new(
+        PipelineOptions {
+            gui: None,
+            stereo: false,
+            seed: 1,
+            protocol: &protocol,
+            progress: &progress,
+            capture_diagnostics: false,
+        },
+        sender,
+        writer.counters.clone(),
+        None,
+        None,
+    );
+    assert!(
+        audio
+            .process(&[0.25, -0.5], 48000)
+            .unwrap_err()
+            .to_string()
+            .contains("BACKEND_STDERR_FAILED")
+    );
+    audio.close_input();
+    assert_eq!(writer.join().unwrap().unwrap(), 0);
+}

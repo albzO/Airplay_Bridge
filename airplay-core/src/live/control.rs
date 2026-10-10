@@ -3,7 +3,7 @@
 use std::{
     path::PathBuf,
     sync::{
-        Arc, Mutex,
+        Arc, LazyLock, Mutex,
         atomic::{AtomicBool, Ordering},
         mpsc,
     },
@@ -16,6 +16,9 @@ pub type GuiEmitter = Arc<dyn Fn(serde_json::Value) + Send + Sync>;
 /// Mutex protects grouped mapping/volume updates; atomic flags notify stop and speaker swapping.
 pub struct GuiControl {
     pub stop: Arc<AtomicBool>,
+    pub shutdown: crate::shutdown::Budget,
+    /// False means detached cleanup still owns resources; the desktop must reserve this session.
+    pub cleanup_complete: AtomicBool,
     pub mapping: Mutex<[usize; 2]>,
     pub speakers_swapped: AtomicBool,
     pub volume: Mutex<Vec<mpsc::SyncSender<String>>>,
@@ -24,10 +27,19 @@ impl GuiControl {
     pub fn new(mapping: [usize; 2]) -> Self {
         Self {
             stop: Arc::new(AtomicBool::new(false)),
+            shutdown: crate::shutdown::Budget::default(),
+            cleanup_complete: AtomicBool::new(true),
             mapping: Mutex::new(mapping),
             speakers_swapped: AtomicBool::new(false),
             volume: Mutex::new(Vec::new()),
         }
+    }
+    pub fn request_stop(&self) {
+        self.request_stop_until(std::time::Instant::now() + crate::shutdown::STOP_TIMEOUT);
+    }
+    pub fn request_stop_until(&self, deadline: std::time::Instant) {
+        self.shutdown.begin_until(deadline);
+        self.stop.store(true, Ordering::Release);
     }
 }
 /// 每次 GUI 连接的依赖；来源仍由桌面 Engine 持有，停止本次会话只解除订阅。
@@ -46,8 +58,13 @@ pub struct GuiContext {
 }
 
 pub(super) static STOP: AtomicBool = AtomicBool::new(false);
+static STOP_BUDGET: LazyLock<Mutex<crate::shutdown::Budget>> = LazyLock::new(Mutex::default);
+pub(super) fn stop_budget() -> crate::shutdown::Budget {
+    STOP_BUDGET.lock().unwrap().clone()
+}
 unsafe extern "system" fn control(event: u32) -> BOOL {
     if event == 0 || event == 1 {
+        stop_budget().begin();
         STOP.store(true, Ordering::Relaxed);
         BOOL(1)
     } else {
@@ -63,6 +80,7 @@ impl Control {
             return Ok(None);
         }
         STOP.store(false, Ordering::Relaxed);
+        *STOP_BUDGET.lock().unwrap() = crate::shutdown::Budget::default();
         unsafe {
             SetConsoleCtrlHandler(Some(control), true)?;
         }

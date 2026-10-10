@@ -111,6 +111,7 @@ pub struct Source {
     subscriber: Mutex<Option<Subscription>>,
     progress: Mutex<CaptureProgress>,
     worker: Mutex<Option<thread::JoinHandle<()>>>,
+    shutdown: crate::shutdown::Budget,
     error: Mutex<Option<String>>,
     info: Mutex<Value>,
     diagnostic_enabled: AtomicBool,
@@ -131,6 +132,7 @@ impl Source {
             subscriber: Mutex::new(None),
             progress: Mutex::new(CaptureProgress::default()),
             worker: Mutex::new(None),
+            shutdown: crate::shutdown::Budget::default(),
             error: Mutex::new(None),
             info: Mutex::new(Value::Null),
             diagnostic_enabled: AtomicBool::new(false),
@@ -322,6 +324,9 @@ impl Source {
     pub fn is_running(&self) -> bool {
         !self.done.load(Ordering::Acquire)
     }
+    pub fn is_stopping(&self) -> bool {
+        self.stop.load(Ordering::Acquire)
+    }
     /// 网络握手前等待连续采集稳定，最多等待 8 秒；取消和采集线程故障立即返回。
     /// 静音不是故障，不能以“有声音”作为就绪条件，否则无声来源永远无法连接。
     /// Wait for stable capture before handshaking, at most eight seconds; cancel/faults return early.
@@ -355,11 +360,15 @@ impl Source {
     }
     /// 结束整个采集线程并等待退出；只在切换来源、关闭采集或退出应用时调用。
     /// Stop and join capture only when switching sources, disabling capture or exiting the app.
-    pub fn stop(&self) {
+    pub fn stop(&self) -> std::result::Result<(), String> {
+        self.stop_until(Instant::now() + crate::shutdown::STOP_TIMEOUT)
+    }
+    /// Retain the old worker on timeout: callers must not open a second capture resource.
+    pub fn stop_until(&self, deadline: Instant) -> std::result::Result<(), String> {
+        let deadline = self.shutdown.begin_until(deadline);
         self.stop.store(true, Ordering::Relaxed);
-        if let Some(worker) = self.worker.lock().unwrap().take() {
-            let _ = worker.join();
-        }
+        let mut worker = self.worker.lock().unwrap();
+        crate::shutdown::join_until(&mut worker, deadline, false).map(|_| ())
     }
     /// 订阅后续采集数据，sink 接收交错排列的 float32 左右声道及来源采样率。
     /// 仅允许一个订阅者；音频时长最多 640 ms（含处理中块），诊断最多 1024 条。

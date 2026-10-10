@@ -96,6 +96,9 @@ impl<'a> AudioPipeline<'a> {
     /// 回调路由、转换并尝试入队；更新频率保持遥测 250 ms、漂移 1 s、摘要 10 s。
     /// Route, convert and try enqueueing packets; preserve telemetry at 250 ms, drift at 1 s, summaries at 10 s.
     pub(super) fn process(&mut self, samples: &[f32], rate: u32) -> Result<()> {
+        if let Some(error) = self.protocol.read_error() {
+            return Err(error.into());
+        }
         self.captured_frames += samples.len() as u64 / 2;
         if self.gui.is_some() {
             for frame in samples.chunks_exact(2) {

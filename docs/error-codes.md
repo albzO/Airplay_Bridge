@@ -17,6 +17,8 @@ HTTP 状态码、Windows HRESULT、HAP TLV error 是三个独立命名空间，�
 
 | 符号代码 | CLI 退出码 | 含义 | 处理方式 |
 | --- | --- | --- | --- |
+| BACKEND_STDERR_FAILED | 1 | 读取后端 stderr 失败。 | 查看 ReadFile 的原始 Win32 错误及独立状态；不能据此判断密码错误。 |
+| STOP_TIMEOUT | 1 | 串流或采集收尾超过统一停止期限。 | 查看 shutdown；旧资源未确认退出时请重启应用后连接。 |
 | `BACKEND_FAILED` | 1 | 后端操作失败。 | 查看 phase、HTTP/HRESULT 和故障上下文；不能据此断定密码错误。 |
 | `BACKEND_USAGE_ERROR` | 2 | 后端命令参数无效。 | 核对参数、文件格式和命令帮助。 |
 | `PASSWORD_REJECTED` | 10 | 设备拒绝了输入的 AirPlay 密码。 | 核对密码后重试；只有明确的 M4 secret 拒绝才使用此码。 |

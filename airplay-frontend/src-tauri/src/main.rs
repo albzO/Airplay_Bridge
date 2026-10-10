@@ -34,7 +34,7 @@ use std::{
         mpsc::Sender,
     },
     thread,
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 use tauri::{
     Emitter, Manager, State,
@@ -72,10 +72,16 @@ struct Engine {
     awake: Mutex<awake::Awake>,
     awake_startup_error: Option<String>,
 }
-fn stop_source(e: &Engine) {
-    if let Some(source) = e.source.lock().unwrap().take() {
-        source.stop();
+fn stop_source(e: &Engine) -> Result<(), String> {
+    stop_source_until(e, Instant::now() + homepod_test::shutdown::STOP_TIMEOUT)
+}
+fn stop_source_until(e: &Engine, deadline: Instant) -> Result<(), String> {
+    let mut active = e.source.lock().unwrap();
+    if let Some(source) = active.as_ref() {
+        source.stop_until(deadline)?;
     }
+    *active = None;
+    Ok(())
 }
 /// 同端点且线程健康时只更新声道映射，避免每次连接都重开 WASAPI。
 /// 切换端点时先等待旧线程退出再创建新来源，保证不会同时占用两份采集资源。
@@ -88,14 +94,15 @@ fn ensure_source(app: tauri::AppHandle, e: &Engine) -> Result<Arc<Source>, Strin
     let settings = e.settings.lock().unwrap().clone();
     let mut active = e.source.lock().unwrap();
     if let Some(source) = active.as_ref() {
-        if source.endpoint == settings.endpoint && source.is_running() {
+        if source.endpoint == settings.endpoint && source.is_running() && !source.is_stopping() {
             *source.mapping.lock().unwrap() = settings.mapping;
             return Ok(source.clone());
         }
     }
-    if let Some(source) = active.take() {
-        source.stop();
+    if let Some(source) = active.as_ref() {
+        source.stop()?;
     }
+    *active = None;
     if settings.endpoint.is_empty() {
         return Err("未选择音频来源".into());
     }
@@ -138,7 +145,7 @@ fn set_capture_enabled(
     if enabled {
         ensure_source(app.clone(), &engine)?;
     } else {
-        stop_source(&engine);
+        stop_source(&engine)?;
     }
     engine.capture_enabled.store(enabled, Ordering::SeqCst);
     let endpoint = engine.settings.lock().unwrap().endpoint.clone();
@@ -218,6 +225,12 @@ fn start_stream(
 ) -> Result<u64, String> {
     let e = engine.inner().clone();
     let mut active = e.session.lock().unwrap();
+    if active
+        .as_ref()
+        .is_some_and(|s| !s.control.cleanup_complete.load(Ordering::Acquire))
+    {
+        return Err("[STOP_TIMEOUT] 上次会话资源尚未确认退出，请重启应用后连接".into());
+    }
     if active.is_some() || e.discovering.load(Ordering::SeqCst) {
         return Err("已有会话或正在发现设备".into());
     }
@@ -308,12 +321,13 @@ fn start_stream(
         let _ = event_app.emit("stream-event", event);
     });
     let pipe = format!("\\\\.\\pipe\\airplay-bridge-{}-{id}", std::process::id());
-    let server = auth::Server::start(
+    let mut server = auth::Server::start(
         pipe.clone(),
         control.stop.clone(),
         hosts.clone(),
         emit.clone(),
     )?;
+    server.use_shutdown_budget(control.shutdown.clone());
     let source = ensure_source(app.clone(), &e)?;
     e.capture_enabled.store(true, Ordering::SeqCst);
     let _ = app.emit(
@@ -333,9 +347,10 @@ fn start_stream(
     // 会话登记完成后释放锁，工作线程收尾和 stop_stream 都需要访问这把锁。
     // Release the session lock after registration; worker cleanup and stop_stream also need it.
     drop(active);
+    let privacy = homepod_test::privacy::Redactor::from_root(&e.root);
     thread::spawn(move || {
         emit(json!({"kind":"preparing_source"}));
-        let result = (|| {
+        let mut result = (|| {
             source
                 .wait_ready(&control.stop)
                 .map_err(|e| e.to_string())?;
@@ -362,13 +377,22 @@ fn start_stream(
             .map_err(|e| e.to_string())
         })()
         .map_err(|detail: String| homepod_test::failure::describe(&detail, "STREAM_FAILED"));
-        let cancelled = control.stop.load(Ordering::Relaxed);
+        let cancelled = control.stop.load(Ordering::Acquire);
+        let deadline = control.shutdown.begin();
         if !cancelled {
             if let Err(error) = &result {
-                let _ = homepod_test::log_store::write(
-                    &e.root.join("logs").join(format!("ui-fault-{id}.log")),
-                    homepod_test::privacy::Redactor::from_root(&e.root).text(error),
-                    64 * 1024,
+                let root = e.root.clone();
+                let error = error.clone();
+                let privacy = privacy.clone();
+                let _ = homepod_test::shutdown::run_until(
+                    deadline.min(Instant::now() + Duration::from_millis(100)),
+                    move || {
+                        let _ = homepod_test::log_store::write(
+                            &root.join("logs").join(format!("ui-fault-{id}.log")),
+                            privacy.text(&error),
+                            64 * 1024,
+                        );
+                    },
                 );
             }
         }
@@ -376,25 +400,56 @@ fn start_stream(
         // 此处不 stop_source：播放停止后还要继续显示当前来源的采集预览。
         // Close/join the password server, release the session reservation, then emit finished.
         // Keep source running so capture preview continues after playback stops.
+        if !server.shutdown_until(deadline - Duration::from_millis(50)) {
+            control.cleanup_complete.store(false, Ordering::Release);
+            if result.is_ok() {
+                result = Err("[STOP_TIMEOUT] 密码管道收尾超过统一停止期限".into());
+            }
+        }
         drop(server);
         let mut session = e.session.lock().unwrap();
-        if session.as_ref().map(|s| s.id) == Some(id) {
+        if session.as_ref().map(|s| s.id) == Some(id)
+            && control.cleanup_complete.load(Ordering::Acquire)
+        {
             *session = None;
         }
         drop(session);
-        let error = if cancelled { None } else { result.err() };
-        let safe_error = error
-            .as_ref()
-            .map(|detail| homepod_test::privacy::Redactor::from_root(&e.root).text(detail));
+        // A user stop must not hide a real cleanup/read failure.
+        let error = finished_error(
+            result,
+            cancelled,
+            control.cleanup_complete.load(Ordering::Acquire),
+        );
+        let safe_error = error.as_ref().map(|detail| privacy.text(detail));
         let error_code = error
             .as_ref()
             .map(|detail| homepod_test::failure::code_for(detail, "STREAM_FAILED"));
-        emit(
-            json!({"kind":"finished","error":error,"safe_error":safe_error,"error_code":error_code,"cancelled":cancelled}),
-        );
+        let _ = homepod_test::shutdown::run_until(deadline, move || {
+            emit(
+                json!({"kind":"finished","error":error,"safe_error":safe_error,"error_code":error_code,"cancelled":cancelled}),
+            )
+        });
     });
     Ok(id)
 }
+fn finished_error(
+    result: Result<(), String>,
+    cancelled: bool,
+    cleanup_complete: bool,
+) -> Option<String> {
+    let original = result.err();
+    if !cleanup_complete {
+        return Some(format!(
+            "{}[STOP_TIMEOUT] 旧会话资源尚未确认退出，请重启应用后连接",
+            original.map_or(String::new(), |error| format!("{error}；"))
+        ));
+    }
+    original.filter(|error| {
+        !cancelled
+            || !(error.ends_with("详情：已取消建立流") || error.ends_with("详情：启动采集已取消"))
+    })
+}
+
 #[tauri::command]
 fn submit_password(
     engine: State<Arc<Engine>>,
@@ -420,7 +475,7 @@ fn submit_password(
 #[tauri::command]
 fn stop_stream(engine: State<Arc<Engine>>) {
     if let Some(s) = engine.session.lock().unwrap().as_ref() {
-        s.control.stop.store(true, Ordering::Relaxed);
+        s.control.request_stop();
     }
 }
 #[tauri::command]
@@ -637,3 +692,7 @@ fn main() {
         .run(context)
         .expect("无法启动 AirPlay Bridge");
 }
+
+#[cfg(test)]
+#[path = "../../../test/frontend/desktop/shutdown.rs"]
+mod shutdown_checks;

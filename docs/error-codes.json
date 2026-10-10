@@ -1,5 +1,23 @@
 [
   {
+    "code": "BACKEND_STDERR_FAILED",
+    "exit": 1,
+    "message": "读取后端 stderr 失败。",
+    "action": "查看 ReadFile 的原始 Win32 错误及 stderr_reader 独立状态；此错误不代表密码错误。",
+    "patterns": [
+      "读取后端 stderr"
+    ]
+  },
+  {
+    "code": "STOP_TIMEOUT",
+    "exit": 1,
+    "message": "串流或采集收尾超过统一停止期限。",
+    "action": "查看 shutdown 的未完成步骤；旧资源未确认退出时请重启应用，避免重复连接。",
+    "patterns": [
+      "[STOP_TIMEOUT]"
+    ]
+  },
+  {
     "code": "REPORT_WRITE_FAILED",
     "exit": 1,
     "message": "串流报告写入失败。",

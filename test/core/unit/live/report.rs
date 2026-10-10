@@ -52,12 +52,13 @@ fn blocked_report_preserves_protocol_capture_pipe_and_transport_priority_and_emi
     let fixture = Fixture::new("blocked");
     let path = fixture.0.join("report.json");
     fs::create_dir(&path).unwrap();
-    for (protocol, capture, pipe, transport, expected) in [
-        (true, true, true, false, "fixture protocol"),
-        (false, true, true, false, "fixture capture"),
-        (false, false, true, false, "fixture pipe"),
-        (false, false, false, false, "持续流发送失败"),
-        (false, false, false, true, "REPORT_WRITE_FAILED"),
+    for (protocol, capture, stderr, pipe, transport, expected) in [
+        (true, true, true, true, false, "fixture protocol"),
+        (false, true, true, true, false, "fixture capture"),
+        (false, false, true, true, false, "fixture stderr"),
+        (false, false, false, true, false, "fixture pipe"),
+        (false, false, false, false, false, "持续流发送失败"),
+        (false, false, false, false, true, "REPORT_WRITE_FAILED"),
     ] {
         let primary = session_result(
             protocol.then(|| "fixture protocol".into()),
@@ -66,6 +67,7 @@ fn blocked_report_preserves_protocol_capture_pipe_and_transport_priority_and_emi
             } else {
                 Ok(())
             },
+            stderr.then(|| "fixture stderr".into()),
             if pipe {
                 Err("fixture pipe".into())
             } else {
@@ -122,5 +124,43 @@ fn saved_report_matches_gui_snapshot_and_does_not_hide_the_primary_error() {
         let saved: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
         assert!(saved["report_write_error"].is_null());
         assert_eq!(saved, events.lock().unwrap()[0]["report"]);
+    }
+}
+
+#[test]
+fn stalled_report_notification_has_a_deadline_and_preserves_primary_failure() {
+    for primary_failed in [false, true] {
+        let fixture = Fixture::new(if primary_failed {
+            "emit-primary"
+        } else {
+            "emit-timeout"
+        });
+        let (release, gate) = std::sync::mpsc::channel::<()>();
+        let gate = Mutex::new(gate);
+        let (exited, done) = std::sync::mpsc::channel();
+        let emit: GuiEmitter = Arc::new(move |_| {
+            let _ = gate.lock().unwrap().recv();
+            let _ = exited.send(());
+        });
+        let start = Instant::now();
+        let result = finish_until(
+            &fixture.0.join("report.json"),
+            serde_json::json!({"capture":null}),
+            if primary_failed {
+                Err("fixture original failure".into())
+            } else {
+                Ok(())
+            },
+            Some(&emit),
+            start + Duration::from_millis(100),
+        );
+        assert!(start.elapsed() < Duration::from_secs(1));
+        drop(release);
+        done.recv_timeout(Duration::from_secs(2)).unwrap();
+        assert!(result.unwrap_err().to_string().contains(if primary_failed {
+            "fixture original failure"
+        } else {
+            "STOP_TIMEOUT"
+        }));
     }
 }

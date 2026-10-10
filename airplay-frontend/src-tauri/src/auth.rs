@@ -34,7 +34,6 @@ use windows::{
             FILE_FLAG_FIRST_PIPE_INSTANCE, FlushFileBuffers, PIPE_ACCESS_DUPLEX,
         },
         System::{
-            IO::CancelSynchronousIo,
             Pipes::{
                 ConnectNamedPipe, CreateNamedPipeW, DisconnectNamedPipe, PIPE_READMODE_BYTE,
                 PIPE_REJECT_REMOTE_CLIENTS, PIPE_TYPE_BYTE, PIPE_WAIT,
@@ -62,6 +61,7 @@ pub struct Server {
     pub replies: mpsc::Sender<Reply>,
     stop: Arc<AtomicBool>,
     thread: Option<thread::JoinHandle<()>>,
+    shutdown: homepod_test::shutdown::Budget,
 }
 impl Server {
     /// hosts 是本次会话已选择的设备地址白名单；未经选择的请求不能弹出密码框。
@@ -200,24 +200,24 @@ impl Server {
             replies: tx,
             stop,
             thread: Some(thread),
+            shutdown: homepod_test::shutdown::Budget::default(),
         })
+    }
+    pub fn use_shutdown_budget(&mut self, budget: homepod_test::shutdown::Budget) {
+        self.shutdown = budget;
+    }
+    pub fn shutdown_until(&mut self, deadline: std::time::Instant) -> bool {
+        self.stop.store(true, Ordering::Release);
+        homepod_test::shutdown::join_until(&mut self.thread, deadline, true).is_ok()
     }
 }
 impl Drop for Server {
     fn drop(&mut self) {
-        self.stop.store(true, Ordering::Relaxed);
-        // Wake blocking ConnectNamedPipe / ReadFile / FlushFileBuffers without
-        // opening a second pipe client that can itself block during shutdown.
-        if let Some(worker) = self.thread.take() {
-            let deadline = std::time::Instant::now();
-            while !worker.is_finished() && deadline.elapsed() < Duration::from_secs(2) {
-                let _ = unsafe { CancelSynchronousIo(HANDLE(worker.as_raw_handle())) };
-                thread::sleep(Duration::from_millis(10));
-            }
-            if worker.is_finished() {
-                let _ = worker.join();
-            }
-        }
+        let deadline = self
+            .shutdown
+            .begin()
+            .min(std::time::Instant::now() + Duration::from_secs(2));
+        self.shutdown_until(deadline);
     }
 }
 

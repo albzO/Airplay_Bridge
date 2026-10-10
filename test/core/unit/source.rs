@@ -17,6 +17,7 @@ fn test_source() -> Source {
         subscriber: Mutex::new(None),
         progress: Mutex::new(CaptureProgress::default()),
         worker: Mutex::new(None),
+        shutdown: crate::shutdown::Budget::default(),
         error: Mutex::new(None),
         info: Mutex::new(Value::Null),
         diagnostic_enabled: AtomicBool::new(false),
@@ -336,7 +337,7 @@ fn real_playback_startup_progress() {
         }
         let progress = *source.progress.lock().unwrap();
         let running = source.is_running();
-        source.stop();
+        source.stop().unwrap();
         println!(
             "playback startup attempt {attempt}: {}",
             serde_json::to_string(&progress).unwrap()
@@ -366,7 +367,7 @@ fn real_source_restart_waits_for_stable_capture() {
         assert!(source.is_running());
         cancelled.store(true, Ordering::Relaxed);
         assert!(source.wait_ready(&cancelled).is_err());
-        source.stop();
+        source.stop().unwrap();
         assert!(!source.is_running());
         assert!(source.wait_ready(&AtomicBool::new(false)).is_err());
     }
@@ -412,7 +413,7 @@ fn real_source_keeps_capture_running_across_two_stream_consumers() {
         assert!(source.is_running());
         thread::sleep(Duration::from_millis(100));
     }
-    source.stop();
+    source.stop().unwrap();
     assert!(!source.is_running());
 }
 #[test]
@@ -452,4 +453,51 @@ fn stream_detach_keeps_source_alive_and_next_attach_has_no_old_audio() {
         assert!(!source.stop.load(Ordering::Relaxed));
         assert!(source.subscriber.lock().unwrap().is_none());
     }
+}
+
+#[test]
+fn source_stop_timeout_retains_worker_until_it_really_finishes() {
+    let source = test_source();
+    let (release, gate) = mpsc::channel::<()>();
+    *source.worker.lock().unwrap() = Some(thread::spawn(move || {
+        let _ = gate.recv();
+    }));
+    let start = Instant::now();
+    assert!(
+        source
+            .stop_until(start + Duration::from_millis(40))
+            .unwrap_err()
+            .contains("STOP_TIMEOUT")
+    );
+    assert!(start.elapsed() < Duration::from_millis(500));
+    assert!(source.worker.lock().unwrap().is_some());
+    assert!(source.stop.load(Ordering::Relaxed));
+    assert!(source.is_stopping());
+    assert!(
+        source
+            .stop_until(Instant::now() + Duration::from_secs(10))
+            .is_err()
+    );
+    assert_eq!(
+        source.shutdown.current(),
+        Some(start + Duration::from_millis(40))
+    );
+    drop(release);
+    // The old deadline stays expired, but an already finished worker can still be collected.
+    let end = Instant::now() + Duration::from_secs(2);
+    while !source
+        .worker
+        .lock()
+        .unwrap()
+        .as_ref()
+        .unwrap()
+        .is_finished()
+        && Instant::now() < end
+    {
+        thread::yield_now();
+    }
+    source
+        .stop_until(Instant::now() + Duration::from_secs(2))
+        .unwrap();
+    assert!(source.worker.lock().unwrap().is_none());
 }

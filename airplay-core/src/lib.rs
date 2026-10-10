@@ -9,5 +9,6 @@ pub mod failure;
 pub mod live;
 pub mod log_store;
 pub mod privacy;
+pub mod shutdown;
 pub mod source;
 pub mod volume;

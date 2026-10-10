@@ -133,3 +133,148 @@ fn stalled_pipe_keeps_duration_reserved_and_resumes_without_losing_pcm() {
     assert_eq!(writer.join().unwrap().unwrap(), 64 * 441 * BYTES_PER_FRAME);
     assert_eq!(counters.queue.pending_ms(), 0.0);
 }
+
+// The test executable is also a device-free child process. Its environment is private to Command.
+#[test]
+fn subprocess_fixture() {
+    match std::env::var("AIRPLAY_STOP_FIXTURE").as_deref() {
+        Ok("hang") => thread::sleep(std::time::Duration::from_secs(60)),
+        Ok("eof") => {
+            let mut bytes = Vec::new();
+            std::io::Read::read_to_end(&mut io::stdin(), &mut bytes).unwrap();
+        }
+        _ => {}
+    }
+}
+fn fixture_backend(mode: &str) -> Backend {
+    let child = Command::new(std::env::current_exe().unwrap())
+        .creation_flags(0x08000000)
+        .args([
+            "--exact",
+            "live::transport::tests::subprocess_fixture",
+            "--nocapture",
+        ])
+        .env("AIRPLAY_STOP_FIXTURE", mode)
+        .stdin(Stdio::piped())
+        .stderr(Stdio::piped())
+        .stdout(Stdio::null())
+        .spawn()
+        .unwrap();
+    Backend::from_child(child).unwrap()
+}
+
+#[test]
+fn backend_stops_gracefully_on_eof_and_terminates_an_unresponsive_child() {
+    for mode in ["eof", "hang"] {
+        let mut backend = fixture_backend(mode);
+        drop(backend.stdin().unwrap());
+        let start = Instant::now();
+        let deadline = start + std::time::Duration::from_secs(3);
+        let grace = if mode == "eof" {
+            deadline - std::time::Duration::from_millis(500)
+        } else {
+            start + std::time::Duration::from_millis(40)
+        };
+        let (status, error, forced) = backend.stop_until(deadline, grace);
+        assert!(error.is_none(), "{error:?}");
+        assert_eq!(forced, mode == "hang");
+        assert_eq!(status.unwrap().success(), mode == "eof");
+        assert!(start.elapsed() < std::time::Duration::from_secs(4));
+    }
+}
+
+#[test]
+fn job_guard_terminates_its_child_without_waiting_in_drop() {
+    use windows::Win32::{
+        Foundation::{CloseHandle, WAIT_OBJECT_0},
+        System::Threading::{OpenProcess, PROCESS_SYNCHRONIZE, WaitForSingleObject},
+    };
+    let backend = fixture_backend("hang");
+    let process = unsafe { OpenProcess(PROCESS_SYNCHRONIZE, false, backend.child.id()) }.unwrap();
+    let start = Instant::now();
+    drop(backend);
+    let elapsed = start.elapsed();
+    let result = unsafe { WaitForSingleObject(process, 3000) };
+    let _ = unsafe { CloseHandle(process) };
+    assert!(elapsed < std::time::Duration::from_millis(500));
+    assert_eq!(result, WAIT_OBJECT_0);
+}
+
+#[test]
+fn real_stderr_and_pcm_pipes_release_after_forced_backend_stop() {
+    use crate::live::protocol::BackendReader;
+    let mut backend = fixture_backend("hang");
+    let mut reader = BackendReader::start(
+        backend.stderr().unwrap(),
+        io::sink(),
+        crate::privacy::Redactor::default(),
+        false,
+        None,
+    )
+    .unwrap();
+    let (sender, writer) = PcmWriter::start(backend.stdin().unwrap());
+    sender.send(&vec![1; 28224 * 2]).unwrap();
+    drop(sender);
+    let start = Instant::now();
+    let deadline = start + std::time::Duration::from_secs(3);
+    let (status, error, forced) =
+        backend.stop_until(deadline, start + std::time::Duration::from_millis(40));
+    assert!(status.is_some() && error.is_none() && forced);
+    assert!(writer.join_until(deadline).is_err());
+    reader.join_until(deadline).unwrap();
+    let state = serde_json::to_value(&*reader.state.reader.lock().unwrap()).unwrap();
+    assert_eq!(state["state"], "eof");
+    assert!(start.elapsed() < std::time::Duration::from_secs(4));
+}
+
+#[test]
+fn stalled_generic_writer_returns_at_deadline_and_does_not_drain_after_cancellation() {
+    struct BlockedPipe {
+        entered: Option<mpsc::Sender<()>>,
+        gate: mpsc::Receiver<()>,
+        written: Arc<AtomicU64>,
+    }
+    impl Write for BlockedPipe {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            if let Some(entered) = self.entered.take() {
+                let _ = entered.send(());
+                let _ = self.gate.recv();
+            }
+            self.written
+                .fetch_add(bytes.len() as u64, Ordering::Relaxed);
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+    let (release, gate) = mpsc::channel();
+    let (entered, began) = mpsc::channel();
+    let written = Arc::new(AtomicU64::new(0));
+    let (sender, writer) = PcmWriter::start(BlockedPipe {
+        entered: Some(entered),
+        gate,
+        written: written.clone(),
+    });
+    sender.send(&[1, 2]).unwrap();
+    began
+        .recv_timeout(std::time::Duration::from_secs(2))
+        .unwrap();
+    sender.send(&[3, 4]).unwrap();
+    drop(sender);
+    let start = Instant::now();
+    assert!(
+        writer
+            .join_until(start + std::time::Duration::from_millis(40))
+            .unwrap_err()
+            .to_string()
+            .contains("STOP_TIMEOUT")
+    );
+    assert!(start.elapsed() < std::time::Duration::from_millis(500));
+    drop(release);
+    let until = Instant::now() + std::time::Duration::from_secs(2);
+    while written.load(Ordering::Relaxed) == 0 && Instant::now() < until {
+        thread::yield_now();
+    }
+    assert_eq!(written.load(Ordering::Relaxed), 4);
+}

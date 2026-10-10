@@ -461,3 +461,131 @@ fn detailed_log_preserves_password_hint_and_redaction_in_both_sinks() {
         assert!(!text.contains("fixture-secret") && !text.contains("192.0.2.10"));
     }
 }
+
+struct ErrorInput(Cursor<Vec<u8>>);
+impl Read for ErrorInput {
+    fn read(&mut self, bytes: &mut [u8]) -> io::Result<usize> {
+        if self.0.position() < self.0.get_ref().len() as u64 {
+            self.0.read(bytes)
+        } else {
+            Err(io::Error::from_raw_os_error(232))
+        }
+    }
+}
+fn error_reader(prefix: &str) -> BackendReader {
+    BackendReader::start_with_log(
+        ErrorInput(Cursor::new(prefix.as_bytes().to_vec())),
+        protocol_log::start(io::sink(), io::sink(), false).unwrap(),
+        crate::privacy::Redactor::default(),
+        None,
+    )
+    .unwrap()
+}
+
+#[test]
+fn stderr_error_before_ready_keeps_operation_os_code_and_independent_status() {
+    let mut reader = error_reader("");
+    let error = reader
+        .wait_ready_with(&AtomicBool::new(false), || Ok(false))
+        .unwrap_err()
+        .to_string();
+    reader.join();
+    assert!(
+        error.contains("BACKEND_STDERR_FAILED") && error.contains("ReadFile"),
+        "{error}"
+    );
+    assert!(
+        error.contains("Win32 232") && error.contains("os error 232"),
+        "{error}"
+    );
+    let state = serde_json::to_value(&*reader.state.reader.lock().unwrap()).unwrap();
+    assert_eq!(state["state"], "failed");
+    assert_eq!(state["os_error"], 232);
+    assert!(reader.state.failure.lock().unwrap().is_none());
+}
+
+#[test]
+fn read_failure_after_ready_does_not_overwrite_protocol_or_authentication_failures() {
+    for marker in [
+        "[PROBE] EVENTS_FAILED reason=fixture",
+        "[PROBE] ERROR code=PASSWORD_REJECTED exit=10 host=fixture phase=pairing",
+    ] {
+        let mut reader = error_reader(&format!("[PROBE] PCM_READY\n{marker}\n"));
+        reader.join();
+        assert!(reader.ready.try_recv().is_ok());
+        assert!(
+            reader
+                .state
+                .read_error()
+                .unwrap()
+                .contains("BACKEND_STDERR_FAILED")
+        );
+        let preferred = reader.state.ready_error("fallback").to_string();
+        assert!(preferred.contains(if marker.contains("PASSWORD_REJECTED") {
+            "PASSWORD_REJECTED"
+        } else {
+            "EVENTS_FAILED"
+        }));
+    }
+}
+
+#[test]
+fn clean_eof_is_distinct_from_read_failure_and_blocked_reader_has_a_deadline() {
+    let mut eof = BackendReader::start_with_log(
+        Cursor::new(Vec::<u8>::new()),
+        protocol_log::start(io::sink(), io::sink(), false).unwrap(),
+        crate::privacy::Redactor::default(),
+        None,
+    )
+    .unwrap();
+    eof.join();
+    assert!(matches!(
+        *eof.state.reader.lock().unwrap(),
+        ReaderState::Eof
+    ));
+    assert!(eof.state.read_error().is_none());
+    let (release, gate) = mpsc::channel();
+    let (entered, began) = mpsc::channel();
+    struct BlockedInput {
+        entered: Option<mpsc::Sender<()>>,
+        gate: mpsc::Receiver<()>,
+    }
+    impl Read for BlockedInput {
+        fn read(&mut self, _: &mut [u8]) -> io::Result<usize> {
+            if let Some(entered) = self.entered.take() {
+                let _ = entered.send(());
+            }
+            let _ = self.gate.recv();
+            Ok(0)
+        }
+    }
+    let mut reader = BackendReader::start_with_log(
+        BlockedInput {
+            entered: Some(entered),
+            gate,
+        },
+        protocol_log::start(io::sink(), io::sink(), false).unwrap(),
+        crate::privacy::Redactor::default(),
+        None,
+    )
+    .unwrap();
+    began.recv_timeout(Duration::from_secs(2)).unwrap();
+    let start = Instant::now();
+    assert!(
+        reader
+            .join_until(start + Duration::from_millis(40))
+            .is_err()
+    );
+    assert!(start.elapsed() < Duration::from_millis(500));
+    assert!(matches!(
+        *reader.state.reader.lock().unwrap(),
+        ReaderState::Reading
+    ));
+    reader.cancel();
+    drop(release);
+    reader.join();
+    assert!(matches!(
+        *reader.state.reader.lock().unwrap(),
+        ReaderState::Cancelled
+    ));
+}

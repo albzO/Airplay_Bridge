@@ -4,6 +4,7 @@ use super::protocol::Clock;
 use super::*;
 use crate::{convert::Converter, drift::Controller};
 use std::sync::{Arc, atomic::AtomicBool, mpsc};
+use std::thread;
 use windows::Win32::System::Performance::QueryPerformanceCounter;
 #[test]
 #[ignore = "opens real 默认音频来源 for 30 seconds with a paced consumer and drift servo"]

@@ -26,11 +26,13 @@
 | 对象/状态 | 含义 |
 |---|---|
 | `Engine.session: Option<Session>` | 独占连接/播放占用，从登记到工作线程和密码服务收尾后才清除 |
-| `GuiControl.stop` | 停止请求，不表示工作线程已经结束 |
+| `GuiControl.stop / shutdown` | 停止请求及首次请求的 15 秒期限；不表示工作线程已经结束 |
+| `GuiControl.cleanup_complete` | 未确认退出的资源阻止重连，旧会话占用保留到应用退出 |
 | `Engine.source` | 独立持续采集资源；会话停止后可继续预览 |
 | `Source.stop / done` | 分别表示停止请求和采集完成；stop=true、done=false 是正常收尾阶段 |
 | `Source.subscriber` | 最多一个串流分支；解除订阅释放队列和回收池，不重置 WASAPI |
 | `Source.diagnostic_enabled` | 是否需要逐包记录，不表示 Source 或会话是否运行 |
+| `ProtocolState.reader` | reading/eof/failed/cancelled；与协议故障及日志写入状态分开 |
 | `ProtocolState.transport` | 后端已通知传输就绪；首个协议错误及最新时钟等快照另行保留 |
 
 `Engine` 的 `discovering`、`quitting` 和 `capture_enabled` 分别服务发现互斥、一次退出通知和采集开关表达，不应与会话播放阶段混成一个布尔状态。
@@ -41,6 +43,6 @@
 - `set_mapping` 在枚举后按 session → source → settings 取得对象，重新核对端点，再保存候选并发布路由。不要新增反向嵌套锁；读取设置的前置快照在取得后续锁之前释放。
 - Source 的 subscriber 锁把登记、重建判断和每包投递串行化。回调读取 progress、更新 warmup 时分别释放短锁，再取得 subscriber；登记/恢复在 subscriber 内访问 progress/warmup。不要让新的统计路径同时持有 progress/warmup 再反向等待 subscriber。
 - 新缓冲池的接收端由 Subscription 独占，在已有 subscriber 锁内尝试取回；不增加另一把池 Mutex。消费者在 sink 借用结束后尝试归还，不持有 subscriber 锁调用 sink，也不等待回收空间。
-- 协议、音量和路由锁保护不同的快照/成组值；不能只为减少锁数量而扩大音频路径的临界区。整体退出和线程 join 仍有原先的阻塞边界。
+- 协议、音量和路由锁保护不同的快照/成组值；不能只为减少锁数量而扩大音频路径的临界区。收尾等待改用统一期限；Source 超时保留句柄、旧会话未确认退出时阻止重连，完整边界见 [stderr 与停止期限](stream-shutdown.md)。
 
 本轮重跑前端脚本 23 项及核心 97 项，覆盖原有会话归属、Source 失败/取消/重连与新增缓冲复用。没有新增生产状态机或声称完成并发模型证明，CI 继续暂缓。

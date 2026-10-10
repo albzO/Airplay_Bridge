@@ -11,7 +11,7 @@ use std::{
         mpsc,
     },
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 type Result<T> = std::result::Result<T, Box<dyn Error>>;
 struct Log {
@@ -110,6 +110,7 @@ pub struct Dacp {
     threads: Vec<thread::JoinHandle<()>>,
     daemon: ServiceDaemon,
     fullname: String,
+    shutdown: crate::shutdown::Budget,
 }
 impl Dacp {
     pub fn start(target: Ipv4Addr, identity: &str, active: &str, log_path: &Path) -> Result<Self> {
@@ -260,19 +261,30 @@ impl Dacp {
             threads: vec![callbacks, forwarding],
             daemon,
             fullname,
+            shutdown: crate::shutdown::Budget::default(),
         })
     }
     pub fn command_sender(&self) -> mpsc::SyncSender<String> {
         self.commands.clone()
     }
-}
-impl Drop for Dacp {
-    fn drop(&mut self) {
+    pub(crate) fn use_shutdown_budget(&mut self, budget: crate::shutdown::Budget) {
+        self.shutdown = budget;
+    }
+    pub(crate) fn shutdown_until(&mut self, deadline: Instant) -> bool {
         self.stop.store(true, Ordering::Relaxed);
         let _ = self.daemon.unregister(&self.fullname);
         let _ = self.daemon.shutdown();
-        for thread in self.threads.drain(..) {
-            let _ = thread.join();
+        let mut complete = true;
+        for worker in self.threads.drain(..) {
+            complete &= crate::shutdown::join_until(&mut Some(worker), deadline, true).is_ok();
+        }
+        complete
+    }
+}
+impl Drop for Dacp {
+    fn drop(&mut self) {
+        if !self.threads.is_empty() {
+            self.shutdown_until(self.shutdown.begin());
         }
     }
 }
