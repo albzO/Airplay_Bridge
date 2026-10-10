@@ -154,6 +154,60 @@ test('choosing mono resets channel mapping and saves before monitoring the new s
   await expect.poll(async () => (await calls(page, 'monitor_source')).length).toBe(monitors + 1);
 });
 
+test('stereo card applies speaker order after success and preserves it after failure', async ({
+  page,
+}) => {
+  await open(page);
+  const card = page.locator('.device.selected');
+  await card.locator('.device-row').click();
+  await start(page).click();
+  await playing(page, 101);
+  const names = card.locator('.channel-pair > div > strong');
+  const swap = card.getByTitle('交换扬声器位置', { exact: true });
+  await expect(names).toHaveText(['Receiver A', 'Receiver B']);
+  await hold(page, 'set_speaker_order');
+  await swap.click();
+  await expect.poll(async () => (await calls(page, 'set_speaker_order')).length).toBe(1);
+  expect((await calls(page, 'set_speaker_order'))[0].args).toEqual({ swapped: true });
+  await expect(names).toHaveText(['Receiver A', 'Receiver B']);
+  await resolve(page, 'set_speaker_order');
+  await expect(names).toHaveText(['Receiver B', 'Receiver A']);
+  await expect(card.locator('.channel-pair > div > small:last-child')).toHaveText([
+    '−∞ dBFS · 输入 1',
+    '−∞ dBFS · 输入 2',
+  ]);
+  await hold(page, 'set_speaker_order');
+  await swap.click();
+  await expect.poll(async () => (await calls(page, 'set_speaker_order')).length).toBe(2);
+  expect((await calls(page, 'set_speaker_order'))[1].args).toEqual({ swapped: false });
+  await reject(page, 'set_speaker_order', 'fixture speaker order failure');
+  await expect(page.locator('.alert')).toContainText('fixture speaker order failure');
+  await expect(names).toHaveText(['Receiver B', 'Receiver A']);
+  expect(await calls(page, 'start_stream')).toHaveLength(1);
+});
+
+test('selecting an individual card starts only that receiver and shows both channels', async ({
+  page,
+}) => {
+  await open(page);
+  const card = page
+    .locator('.device')
+    .filter({ has: page.locator('.device-name > strong', { hasText: /^Receiver B$/ }) });
+  await card.locator('.device-row').click();
+  await expect(card).toHaveClass(/selected/);
+  await expect(card.locator('.device-info')).toContainText('Receiver B · 192.0.2.11:7000');
+  await start(page).click();
+  await expect.poll(async () => (await calls(page, 'start_stream')).length).toBe(1);
+  expect((await calls(page, 'start_stream'))[0].args.names).toEqual(['Receiver B']);
+  await playing(page, 101);
+  await expect(card.locator('.channel-pair')).toHaveClass(/single/);
+  await expect(card.locator('.channel-pair > div > strong')).toHaveText([
+    'Receiver B',
+    'Receiver B',
+  ]);
+  await expect(card.getByTitle('交换扬声器位置', { exact: true })).toHaveCount(0);
+});
+
 test('connecting and stopping lock controls and suppress late password/ready events', async ({
   page,
 }) => {

@@ -2,6 +2,8 @@
 
 ## 未发布 / Unreleased
 
+- 提取设备卡片视图组件，保留页面的设备选择、会话与互换命令；新增互换成功/失败及单设备选择的 DOM 回归，音频处理保持不变。
+  Extract device card presentation while retaining page-owned selection, sessions and swap commands; cover swap success/failure and individual receiver selection without changing audio processing.
 - 提取来源选择视图组件，保留设置/采集命令顺序及弹窗层级；新增分组排序、外部关闭和单声道保存后预览的 DOM 回归。
   Extract the source picker view while preserving capture orchestration; add DOM coverage for ordering, dismissal and mono source selection.
 - 提取采集统计与诊断时序模块，预览、诊断及最终报告共用每包电平/信号结果；保留指纹、阈值和时序语义，新增 6 项无设备回归。

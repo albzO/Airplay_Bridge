@@ -24,6 +24,14 @@ export type Device = {
    */
   properties: Record<string, string>;
 };
+// 页面构建的设备卡片，不属于桌面端 IPC 数据约定。
+// UI-only card model, separate from the desktop IPC contracts.
+export type DeviceCardData = {
+  id: string;
+  members: Device[];
+  title: string;
+};
+
 export type AudioFormat = {
   /**
    * 每秒采样帧数（Hz）；一帧包含全部声道的一个采样。

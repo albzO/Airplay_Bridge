@@ -5,6 +5,7 @@ import { listen } from '@tauri-apps/api/event';
 import { invokeCommand } from './commands';
 import { useStreamSession } from './useStreamSession';
 import SourcePicker from './SourcePicker.vue';
+import DeviceCard from './DeviceCard.vue';
 import {
   decodeDevices,
   decodeInitialization,
@@ -13,6 +14,7 @@ import {
 } from './protocol';
 import type {
   Device,
+  DeviceCardData,
   AudioFormat,
   Input,
   Settings,
@@ -144,7 +146,7 @@ const cards = computed(() => {
   // igl 主设备排在前面；“左右互换”控制实际声道顺序，不修改发现结果。
   // Keep both paired and individual cards; create a pair only for exactly two members sharing tsid.
   // Order the igl primary first; swapping left/right affects playback without changing discovery data.
-  const list: { id: string; members: Device[]; title: string }[] = [];
+  const list: DeviceCardData[] = [];
   const groups = new Map<string, Device[]>();
   for (const d of devices.value) {
     if (d.properties.tsid) {
@@ -261,13 +263,6 @@ async function selectSource(input: Input) {
   settings.value.endpoint = input.id;
   sourceOpen.value = false;
   await sourceChanged();
-}
-
-function speakerFor(card: (typeof cards.value)[number], side: number) {
-  return (
-    card.members[card.members.length === 2 && settings.value.speakersSwapped ? 1 - side : side] ||
-    card.members[0]
-  );
 }
 
 function enterPassword(e: KeyboardEvent) {
@@ -694,64 +689,22 @@ onMounted(async () => {
           <p v-if="!cards.length" class="empty">
             未发现设备。点击刷新，确保 HomePod 与电脑在同一局域网。
           </p>
-          <article
+          <DeviceCard
             v-for="card in cards"
             :key="card.id"
-            :class="['device', deviceStates[card.id], { selected: chosen?.id === card.id }]"
-          >
-            <button
-              class="device-row"
-              :disabled="busy && chosen?.id !== card.id"
-              @click="choose(card)"
-            >
-              <span class="radio">{{ chosen?.id === card.id ? '●' : '○' }}</span
-              ><span class="speaker"
-                ><svg class="device-speaker-icon" viewBox="0 0 44 36" aria-hidden="true">
-                  <template v-if="card.members.length === 2">
-                    <circle cx="16" cy="14" r="11" mask="url(#stereo-icon-gap)" />
-                    <circle cx="28" cy="23" r="11" />
-                  </template>
-                  <circle v-else cx="22" cy="18" r="12" /></svg
-              ></span>
-              <div class="device-name">
-                <strong>{{ card.title }}</strong
-                ><small>{{
-                  card.members.length === 2 ? '立体声对' : card.members[0]?.addresses[0]
-                }}</small>
-              </div>
-              <span class="badge">{{ card.members.length === 2 ? 'Stereo' : 'AirPlay 2' }}</span
-              ><span>{{ expanded === card.id ? '⌃' : '⌄' }}</span>
-            </button>
-            <div v-if="expanded === card.id" class="device-details">
-              <div
-                v-if="connected && busy && chosen?.id === card.id"
-                :class="['channel-pair', { single: card.members.length === 1 }]"
-              >
-                <div>
-                  <small>左{{ card.members.length === 2 ? '扬声器' : '声道' }}</small
-                  ><strong>{{ speakerFor(card, 0)?.name }}</strong>
-                  <div class="meter">
-                    <i :style="{ width: Math.min(100, peaks[0] * 100) + '%' }"></i>
-                  </div>
-                  <small>{{ level(peaks[0]) }} · 输入 {{ settings.mapping[0] + 1 }}</small>
-                </div>
-                <button v-if="card.members.length === 2" title="交换扬声器位置" @click="swap">
-                  ⇄
-                </button>
-                <div>
-                  <small>右{{ card.members.length === 2 ? '扬声器' : '声道' }}</small
-                  ><strong>{{ speakerFor(card, 1)?.name }}</strong>
-                  <div class="meter">
-                    <i :style="{ width: Math.min(100, peaks[1] * 100) + '%' }"></i>
-                  </div>
-                  <small>{{ level(peaks[1]) }} · 输入 {{ settings.mapping[1] + 1 }}</small>
-                </div>
-              </div>
-              <div v-else class="device-info">
-                {{ card.members.map((d) => `${d.name} · ${d.addresses[0]}:${d.port}`).join(' / ') }}
-              </div>
-            </div>
-          </article>
+            :card="card"
+            :state="deviceStates[card.id]"
+            :selected="chosen?.id === card.id"
+            :expanded="expanded === card.id"
+            :disabled="busy && chosen?.id !== card.id"
+            :active="connected && busy && chosen?.id === card.id"
+            :swapped="settings.speakersSwapped"
+            :mapping="settings.mapping"
+            :peaks="peaks"
+            :level-labels="[level(peaks[0]), level(peaks[1])]"
+            @choose="choose(card)"
+            @swap="swap"
+          />
         </section>
         <p class="footnote">窗口关闭动作可在设置中选择；托盘右键“退出”始终停止串流并关闭软件。</p>
       </template>

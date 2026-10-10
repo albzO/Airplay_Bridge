@@ -74,6 +74,8 @@
 
 来源选择视图从 `SourcePicker.vue` 阅读：分组/排序和弹窗展示在组件内，`select` 事件交回 `App/selectSource`。页面设置 endpoint、关闭弹窗，随后 `sourceChanged` 重置声道映射、保存设置并启动预览；组件不拥有桌面状态。`open` 是页面控制的状态，因此切页、连接和密码请求仍可统一关闭弹窗，遮罩层级与既有样式保留。
 
+设备卡片从 `DeviceCard.vue` 阅读：组件接收 `DeviceCardData` 及选中/展开/禁用/连接等展示值，选择事件交给 `App/choose`，互换事件交给 `App/swap`。分组、选择与会话仍由页面管理；`set_speaker_order` 成功后才更新 `speakersSwapped`，失败显示错误并保留现有左右名称。单设备展示两个声道但没有互换按钮；立体声卡片保留原有互换功能，不改音频处理。
+
 | 状态 | 设置条件 | 清除条件 |
 |---|---|---|
 | `busy` | 用户请求开始连接 | 启动命令失败或 `finished` |
