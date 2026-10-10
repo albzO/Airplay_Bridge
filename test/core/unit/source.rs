@@ -30,7 +30,7 @@ fn consumer_failure_discards_queued_audio_and_releases_duration_budget() {
     let worker = thread::spawn(move || {
         let began = Instant::now();
         loop {
-            if let Some(sub) = producer.subscriber.lock().unwrap().as_ref() {
+            if let Some(sub) = producer.subscriber.lock().unwrap().as_mut() {
                 let stats = sub.tx.stats.clone();
                 sub.send_audio(&[0.25, -0.5], 48000, CaptureProgress::default())
                     .unwrap();
@@ -54,6 +54,119 @@ fn consumer_failure_discards_queued_audio_and_releases_duration_budget() {
     assert_eq!(error.to_string(), "synthetic consumer failure");
     assert_eq!(stats.pending_ms(), 0.0);
     assert!(stats.peak_ms() > 0.0);
+    assert!(source.subscriber.lock().unwrap().is_none());
+    assert!(source.is_running());
+}
+
+#[test]
+fn invalid_or_over_budget_packets_skip_copy_and_large_packets_stay_intact() {
+    let (tx, rx) = audio_queue::channel();
+    let (buffers, recycle_tx) = buffers::Pool::new();
+    let counts = buffers.stats.clone();
+    let mut sub = Subscription {
+        tx,
+        buffers,
+        fault: Arc::new(Mutex::new(None)),
+        diagnostic_tx: None,
+        diagnostic_drops: Arc::new(AtomicU64::new(0)),
+    };
+    for (samples, rate) in [(&[1.0][..], 48000), (&[1., 2.][..], 0)] {
+        assert_eq!(
+            sub.send_audio(samples, rate, CaptureProgress::default()),
+            Err(QueueError::InvalidFormat)
+        );
+    }
+    let large = vec![0.25; 20_000];
+    assert_eq!(
+        sub.send_audio(&large, 1, CaptureProgress::default()),
+        Err(QueueError::Full)
+    );
+    assert_eq!(counts.snapshot()["created"], 0);
+    sub.send_audio(&large, 48000, CaptureProgress::default())
+        .unwrap();
+    let mut block = rx.recv().unwrap();
+    let Event::Audio(samples, rate, _, _) = &mut block.value;
+    assert_eq!(*rate, 48000);
+    assert_eq!(*samples, large);
+    buffers::recycle(&recycle_tx, std::mem::take(samples));
+    drop(block);
+    assert_eq!(sub.tx.stats.pending_ms(), 0.0);
+    sub.send_audio(&[0.75, -0.5], 48000, CaptureProgress::default())
+        .unwrap();
+    assert_eq!(counts.snapshot()["created"], 2);
+    drop(rx);
+    assert_eq!(sub.tx.stats.pending_ms(), 0.0);
+    assert_eq!(
+        sub.send_audio(&[1., 2.], 48000, CaptureProgress::default()),
+        Err(QueueError::Disconnected)
+    );
+    assert_eq!(sub.tx.stats.pending_ms(), 0.0);
+}
+
+#[test]
+fn recycled_subscription_preserves_variable_packets_rates_and_positions() {
+    let source = Arc::new(test_source());
+    let producer = source.clone();
+    let worker = thread::spawn(move || {
+        let began = Instant::now();
+        let queue = loop {
+            if let Some(sub) = producer.subscriber.lock().unwrap().as_ref() {
+                break sub.tx.stats.clone();
+            }
+            assert!(began.elapsed() < Duration::from_secs(2));
+            thread::sleep(Duration::from_millis(1));
+        };
+        for index in 0..12 {
+            let frames = [1, 480, 128, 1024][index % 4];
+            let rate = [44100, 48000, 96000, 192000][index % 4];
+            let samples: Vec<f32> = (0..frames)
+                .flat_map(|frame| [frame as f32, -(index as f32)])
+                .collect();
+            let mut position = CaptureProgress::default();
+            position.repaired_gap_frames = index as u64;
+            producer
+                .subscriber
+                .lock()
+                .unwrap()
+                .as_mut()
+                .unwrap()
+                .send_audio(&samples, rate, position)
+                .unwrap();
+            // 等待当前块 RAII 释放，确保借用已结束且已完成归还；不依赖调度碰巧命中池。
+            // Wait for block reservation release so reuse follows completed borrowing/return, not scheduling luck.
+            let began = Instant::now();
+            while queue.pending_ms() > 0.0 {
+                assert!(began.elapsed() < Duration::from_secs(2));
+                thread::sleep(Duration::from_millis(1));
+            }
+        }
+    });
+    let stop = AtomicBool::new(false);
+    let progress = Mutex::new(CaptureProgress::default());
+    let mut index = 0;
+    let report = source
+        .consume(&stop, &progress, None, |samples, rate| {
+            let frames = [1, 480, 128, 1024][index % 4];
+            assert_eq!(rate, [44100, 48000, 96000, 192000][index % 4]);
+            assert_eq!(samples.len(), frames * 2);
+            assert_eq!(progress.lock().unwrap().repaired_gap_frames, index as u64);
+            for (frame, samples) in samples.chunks_exact(2).enumerate() {
+                assert_eq!(samples[0].to_bits(), (frame as f32).to_bits());
+                assert_eq!(samples[1].to_bits(), (-(index as f32)).to_bits());
+            }
+            index += 1;
+            if index == 12 {
+                stop.store(true, Ordering::Relaxed);
+            }
+            Ok(())
+        })
+        .unwrap();
+    worker.join().unwrap();
+    assert_eq!(report["frames"], 3 * (1 + 480 + 128 + 1024));
+    assert_eq!(
+        report["source_buffers"],
+        json!({"created":1,"reused":11,"growths":2})
+    );
     assert!(source.subscriber.lock().unwrap().is_none());
     assert!(source.is_running());
 }
@@ -152,6 +265,7 @@ fn active_subscription_prevents_clock_reset_and_stopping_cancels_recovery() {
     let (tx, _rx) = audio_queue::channel();
     *source.subscriber.lock().unwrap() = Some(Subscription {
         tx,
+        buffers: buffers::Pool::new().0,
         fault: Arc::new(Mutex::new(None)),
         diagnostic_tx: None,
         diagnostic_drops: Arc::new(AtomicU64::new(0)),
@@ -309,7 +423,7 @@ fn stream_detach_keeps_source_alive_and_next_attach_has_no_old_audio() {
         let worker = thread::spawn(move || {
             let started = Instant::now();
             loop {
-                if let Some(sub) = producer.subscriber.lock().unwrap().as_ref() {
+                if let Some(sub) = producer.subscriber.lock().unwrap().as_mut() {
                     sub.send_audio(&[value, value], 48000, CaptureProgress::default())
                         .unwrap();
                     let _ = sub.send_audio(&[9., 9.], 48000, CaptureProgress::default());

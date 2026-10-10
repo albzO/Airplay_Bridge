@@ -19,6 +19,8 @@
 - [维护进度](maintenance-progress.md)：会话、采集解码/统计、日志、协议回绕、上游补丁和音频队列维护记录。
 - [原审查复查](review-followup.md)：逐项完成度、剩余问题、优先级和本轮验证范围。
 - [性能基线](performance-baseline.md)：无声卡合成测量、复现与解释范围。
+- [Source 性能与缓冲池](source-performance.md)：复制/入队对比、存储复用限制及完整性回归。
+- [会话状态与锁](session-state.md)：各层状态含义、正常组合及并发边界。
 - [自动熄屏采集故障](display-off-capture.md)：时间戳错误证据、系统/屏幕唤醒措施、故障记录与复测边界。
 
 ## 历史记录

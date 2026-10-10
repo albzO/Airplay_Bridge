@@ -2,6 +2,8 @@
 
 ## 未发布 / Unreleased
 
+- 增加 Source 复制/入队 Release 基线及每次订阅独立的有界 Vec 回收池，最多保留 32 × 64 KiB 空闲存储；保持完整包、样本位值和帧顺序，补充失败/断开/变长及变采样率回归，记录会话状态与锁边界。
+  Measure Source copy/enqueue costs and reuse bounded per-subscription buffers while preserving packet contents and order; cover cleanup and variable packets/rates, and document session state and lock boundaries.
 - 保持唤醒同时请求系统和显示器，避免自动熄屏触发采集异常；补充失败撤销、句柄释放及设置回归。默认保存终止性时间线故障的包/时钟数值，沿用日志上限，保留时间戳校验。
   Keep both system and display awake, handle request failures and cleanup, and persist bounded terminal timeline diagnostics without relaxing timestamp validation.
 - 提取前端诊断状态及设备累计统计，统一日志/摘要截断、设备历史与报告上限，保留会话过滤及清空范围；补充脚本与真实模板突发事件回归。
