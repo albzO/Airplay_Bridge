@@ -39,6 +39,7 @@ cargo test --manifest-path airplay-frontend/src-tauri/Cargo.toml --locked --offl
 # 前端类型检查和构建
 pnpm --dir airplay-frontend test:protocol
 pnpm --dir airplay-frontend test:session
+pnpm --dir airplay-frontend test:dom
 pnpm --dir airplay-frontend build
 
 # 桌面程序编译检查
@@ -50,7 +51,7 @@ cargo check --manifest-path airplay-frontend/src-tauri/Cargo.toml --locked --off
 
 测试源码与合成素材现在统一在 `test/` 维护，恢复 Git 提交。前端样例只使用文档保留地址和合成标识；真实设备清单、配置、录音、截图输出和日志仍不提交。目录和完整运行说明见 [测试说明](test/README.md)。
 
-后端协议模拟入口在 `test/backend/`，前端协议入口为 `pnpm --dir airplay-frontend test:protocol`，模拟界面入口为 `pnpm --dir airplay-frontend test:ui`。这些检查和编译通过都不能替代实机播放验证。音频修改请说明设备、来源、驱动、格式、提前量、Buffer、测试时长及实际听感；不要为了普通布局调整重复长测。
+后端协议模拟入口在 `test/backend/`，前端协议入口为 `pnpm --dir airplay-frontend test:protocol`，真实模板自动交互为 `test:dom`，人工模拟界面为 `test:ui`。DOM 测试在 Windows 默认使用已安装 Edge，无需编译后端；浏览器选择、产物及运行边界见 [测试说明](test/README.md)。这些检查和编译通过都不能替代实机播放验证。音频修改请说明设备、来源、驱动、格式、提前量、Buffer、测试时长及实际听感；不要为了普通布局调整重复长测。
 
 队列、缓冲或转换性能修改先保留 Release 合成基线，再运行相同入口比较；方法见 [性能基线](docs/performance-baseline.md)。慢速回绕检查为 `python test/backend/check_wrap.py`，约 9 分钟，不需要声卡；PTP 脚本串行执行。CI 暂未纳入本轮修改。
 

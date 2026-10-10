@@ -7,6 +7,7 @@
     "dev": "vite --host 127.0.0.1",
     "test:protocol": "node --test ../test/frontend/protocol.test.mjs",
     "test:session": "node --test ../test/frontend/session.test.mjs",
+    "test:dom": "playwright test --config ../test/frontend/playwright.config.mjs",
     "test:ui": "vite --config ../test/frontend/vite.config.mjs",
     "test:ui:build": "vite build --config ../test/frontend/vite.config.mjs",
     "build": "vue-tsc --noEmit && vite build",
@@ -18,6 +19,7 @@
     "vue": "^3.5"
   },
   "devDependencies": {
+    "@playwright/test": "1.64.0",
     "@vitejs/plugin-vue": "^6",
     "prettier": "3.6.2",
     "typescript": "npm:@typescript/typescript6@^6.0.2",

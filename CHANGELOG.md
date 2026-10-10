@@ -2,6 +2,8 @@
 
 ## 未发布 / Unreleased
 
+- 增加真实模板 DOM 自动测试，覆盖按钮禁用、来源选择、密码键盘重试、停止与旧会话隔离；Windows 使用无头 Edge，生成产物继续忽略，CI 暂缓。
+  Add real-template DOM regressions for controls, source selection, keyboard password retries, stopping and stale sessions using headless Edge on Windows; CI remains deferred.
 - 协议控制台/文件日志改为 128 条有界队列异步输出；就绪及故障解析不等待写入，报告增加日志丢失、写入错误和共享收尾期限状态。
   Move protocol console/file output to a bounded async worker; preserve readiness/fault processing and report log drops, errors and shared-deadline cleanup.
 - 将会话控制与采集时间线分别提取到独立模块，保留旧事件、密码重试和停止回归覆盖。

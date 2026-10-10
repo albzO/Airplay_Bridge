@@ -8,7 +8,7 @@ Test sources are committed under root `test/`. Production modules retain attachm
 
 | 目录 | 内容 |
 |---|---|
-| `frontend/` | JSON 协议边界测试、模拟 UI、合成设备样例和桌面 Rust 测试 |
+| `frontend/` | JSON 协议、会话脚本、真实模板 DOM、模拟 UI、合成设备样例和桌面 Rust 测试 |
 | `backend/` | 本机模拟接收端、认证、密码管道、立体声、延迟 SETUP 和原生 nonce 检查 |
 | `core/unit/` | 采集健康状态、转换、漂移、来源生命周期、串流管线与脱敏单元测试 |
 | `core/checks/` | 已采集 WAV 与转换 PCM 的独立校验脚本 |
@@ -16,9 +16,9 @@ Test sources are committed under root `test/`. Production modules retain attachm
 
 ## 运行 / Run
 
-以下命令在项目根目录执行。先按 [构建指南](../docs/building.md) 安装生产依赖并构建后端；Python 模拟检查另需 `backend/requirements.txt` 中的依赖。
+以下命令在项目根目录执行。前端测试只需 `pnpm --dir airplay-frontend install --frozen-lockfile` 与相应浏览器，无需原生后端或声卡。原生/Python 协议检查先按 [构建指南](../docs/building.md) 构建后端；Python 另需 `backend/requirements.txt` 中的依赖。
 
-Run commands from the project root after installing/building production dependencies. Python receiver checks additionally need `backend/requirements.txt`.
+Run commands from the project root. Frontend tests require frontend dependencies and, for DOM tests, a browser; native/Python receiver checks additionally require the backend and Python requirements.
 
 ```powershell
 # Rust 单元测试 / Rust unit tests
@@ -28,6 +28,7 @@ cargo test --manifest-path airplay-frontend/src-tauri/Cargo.toml --locked --offl
 # 前端协议及模拟页面 / Frontend protocol and mocked UI
 pnpm --dir airplay-frontend test:protocol
 pnpm --dir airplay-frontend test:session
+pnpm --dir airplay-frontend test:dom
 pnpm --dir airplay-frontend test:ui
 pnpm --dir airplay-frontend test:ui:build
 
@@ -59,6 +60,14 @@ python test/core/checks/check_conversion.py "path/to/capture.pcm"
 `test:session` 自动执行真实页面脚本和 `useStreamSession.ts`，覆盖命令返回前的事件、旧会话事件、密码重试、停止、启动失败、事件积压和卸载；替换桌面 IPC 与浏览器接口，不覆盖 DOM 点击、布局或真实 WebView。
 
 `test:session` executes the actual page script for early/stale events, password retries, stopping, startup failure, overflow and unmount. Desktop IPC/browser APIs are mocked; DOM clicks, layout and the real WebView are not covered.
+
+`test:dom` 使用固定版本 `@playwright/test 1.64.0`，加载生产 `main.ts`、`App.vue` 和样式，模拟 Tauri IPC/事件，执行 8 项真实点击/输入回归：无来源、无设备、来源选择及 Escape、连接/停止时控件禁用、Enter 密码重试与新会话归属、旧事件隔离、启动失败恢复、重复/迟到密码提交。未捕获浏览器异常也会失败。夹具没有定时协议事件，测试可暂停/完成/拒绝命令来确定异步顺序，不读取或改写组件内部状态。
+
+Windows 默认使用已安装 Edge 的无头模式，无需下载浏览器；已有 Chrome 可设置 `$env:AIRPLAY_TEST_BROWSER_CHANNEL = 'chrome'` 后运行，完成后 `Remove-Item Env:AIRPLAY_TEST_BROWSER_CHANNEL`。其他系统默认使用 Playwright Chromium，先运行 `pnpm --dir airplay-frontend exec playwright install chromium`。浏览器选择依据见 [Playwright 文档](https://playwright.dev/docs/browsers)。
+
+测试自己启动并回收 `127.0.0.1:4178` 的 Vite 服务与浏览器上下文，端口已占用则失败，不复用人工页面。每项最多 15 秒、整组最多 120 秒，不自动重试；失败截图/trace 和运行状态只写入忽略的 `test/.artifacts/frontend-dom/`，Vite 缓存位于 `.artifacts/frontend-vite-cache/`。`test:ui` 仍是人工模拟入口；`test:ui:build` 同时构建人工和 DOM 夹具页面。DOM 回归不等于真实 Tauri WebView、布局截图、IME、托盘或声卡/HomePod 测试。
+
+`test:dom` mounts the actual production UI in headless Edge on Windows (Chromium elsewhere), mocks desktop boundaries and checks eight click/keyboard/lifecycle scenarios. It owns its local server/browser, fails on uncaught browser errors and writes only ignored failure artifacts; it does not exercise native WebView or audio hardware.
 
 `test_upstream.py` 无需原生编译或声卡，需要 Python、Git 和固定子模块。7 项测试核对输出快照、三层提交、输入/补丁哈希、CRLF、只在临时副本应用补丁、上下文失败保留旧输出及函数选择边界；补丁和输入变更须先审查再更新清单，见 [上游适配变更](../docs/building.md#上游适配变更)。
 

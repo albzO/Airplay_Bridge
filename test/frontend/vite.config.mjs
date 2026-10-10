@@ -7,8 +7,15 @@ const require = createRequire(new URL('../../airplay-frontend/package.json', imp
 const vue = (await import(pathToFileURL(require.resolve('@vitejs/plugin-vue')).href)).default;
 export default {
   root: fileURLToPath(new URL('./ui', import.meta.url)),
+  cacheDir: fileURLToPath(new URL('../.artifacts/frontend-vite-cache', import.meta.url)),
   plugins: [vue()],
   build: {
+    rollupOptions: {
+      input: {
+        manual: fileURLToPath(new URL('./ui/index.html', import.meta.url)),
+        dom: fileURLToPath(new URL('./ui/dom.html', import.meta.url)),
+      },
+    },
     outDir: fileURLToPath(new URL('../.artifacts/frontend-ui-build', import.meta.url)),
     emptyOutDir: false,
   },

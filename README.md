@@ -29,6 +29,8 @@ AirPlay 协议基础及部分组件来自第三方开源项目，其归属和许
 
 生产代码分为 `airplay-frontend/`、`airplay-backend/` 和 `airplay-core/`。测试源码集中在根目录 `test/frontend/`、`test/backend/`、`test/core/`，随 Git 提交；目录和运行入口见 [测试说明](test/README.md)。源码构建需保留完整的 `test/`，截图、日志、录音与本机配置仍不提交或打包。
 
+前端可用 `pnpm --dir airplay-frontend test:dom` 自动检查真实模板的按钮、来源选择、密码重试及会话隔离；Windows 默认使用已安装 Edge，无需声卡或 AirPlay 接收设备。
+
 在仓库根目录运行：
 
 ```powershell

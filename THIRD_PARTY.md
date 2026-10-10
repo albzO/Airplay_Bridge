@@ -57,6 +57,7 @@
 | [audioadapter-buffers](https://github.com/HEnquist/audioadapter-buffers-rs) | `5.2.0` | 音频缓冲适配 | 该版本 Cargo 元数据：MIT OR Apache-2.0 |
 | Tauri、单实例插件、Serde 等 | Rust manifests 与 Cargo.lock | 桌面应用、序列化与会话管理 | 以各具体版本的许可证文件及元数据为准 |
 | Vue、Vite、TypeScript、Tauri JS API 等 | `airplay-frontend/package.json` 与 `airplay-frontend/pnpm-lock.yaml` | 界面与前端构建 | 以各具体版本的许可证文件及元数据为准 |
+| [Playwright Test](https://github.com/microsoft/playwright) | `@playwright/test 1.64.0` 与对应锁文件 | 仅开发时的真实模板 DOM 回归，不在生产入口导入 | 该版本 npm 包元数据及所附 LICENSE：Apache-2.0 |
 
 Rust 精确版本与校验值位于 `airplay-core/Cargo.lock` 和 `airplay-frontend/src-tauri/Cargo.lock`；前端依赖位于 `airplay-frontend/pnpm-lock.yaml`。锁文件提供版本记录，不替代许可证文本、版权归属或传递依赖清单。
 
