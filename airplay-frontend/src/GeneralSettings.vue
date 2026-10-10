@@ -11,6 +11,7 @@ const props = defineProps<{
   theme: string;
   channelCount: number;
   busy: boolean;
+  saving: boolean;
 }>();
 const emit = defineEmits<{
   'update:settings': [settings: Settings];
@@ -76,13 +77,19 @@ function mappedChannel(side: 0 | 1) {
           ><input
             type="checkbox"
             v-model="keepAwake"
+            :disabled="saving"
             @change="emit('awake-change')"
           />避免系统自动睡眠</label
         ><small>开启后在应用运行期间生效，包括托盘状态；允许屏幕熄灭，退出应用后恢复。</small>
       </dd>
       <dt>右上角关闭按钮</dt>
       <dd>
-        <select aria-label="窗口关闭动作" v-model="closeAction" @change="emit('persist')">
+        <select
+          aria-label="窗口关闭动作"
+          v-model="closeAction"
+          :disabled="saving"
+          @change="emit('persist')"
+        >
           <option value="tray">收起到托盘</option>
           <option value="quit">退出应用</option></select
         ><small>立即生效。托盘右键“退出”始终关闭应用。</small>
@@ -109,7 +116,7 @@ function mappedChannel(side: 0 | 1) {
             type="number"
             min="250"
             max="2000"
-            :disabled="busy"
+            :disabled="busy || saving"
             @change="emit('persist')"
           /><span>ms</span>
         </div>
@@ -125,6 +132,7 @@ function mappedChannel(side: 0 | 1) {
         <select
           aria-label="左输出取样"
           v-model.number="leftChannel"
+          :disabled="saving"
           @change="emit('mapping-change')"
         >
           <option v-for="ch in channels" :value="ch">输入声道 {{ ch + 1 }}</option>
@@ -135,6 +143,7 @@ function mappedChannel(side: 0 | 1) {
         <select
           aria-label="右输出取样"
           v-model.number="rightChannel"
+          :disabled="saving"
           @change="emit('mapping-change')"
         >
           <option v-for="ch in channels" :value="ch">输入声道 {{ ch + 1 }}</option>

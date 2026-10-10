@@ -143,6 +143,7 @@ export type Initialization = {
   inputs: Input[];
   settings: Settings;
   dataPath: string;
+  dataMode: 'installed' | 'portable';
   backendAvailable: boolean;
   autostart: boolean;
   captureEnabled: boolean;

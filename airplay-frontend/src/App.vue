@@ -63,6 +63,12 @@ const page = ref('播放'),
     speakersSwapped: false,
     keepAwake: true,
   });
+function copySettings(value: Settings): Settings {
+  return { ...value, mapping: [...value.mapping] };
+}
+let confirmedSettings = copySettings(settings.value);
+const settingsSaving = ref(false),
+  sourceChanging = ref(false);
 const selection = ref<string[]>([]),
   expanded = ref(''),
   refreshing = ref(false),
@@ -110,6 +116,7 @@ const telemetry = ref<Partial<Telemetry>>({}),
   technical = ref<Record<string, string>>({}),
   logs = ref<string[]>([]),
   logPath = ref('');
+const logDirectory = ref('%APPDATA%/AirPlay Hub/logs');
 const volume = ref<number | null>(null),
   draft = ref(50),
   lastVolume = ref(50);
@@ -120,6 +127,9 @@ const autostart = ref(false),
   startupSaving = ref(false),
   captureEnabled = ref(false),
   captureChanging = ref(false);
+const settingsLocked = computed(
+  () => settingsSaving.value || sourceChanging.value || captureChanging.value,
+);
 const tone = computed(() => (playing.value ? 'green' : busy.value ? 'yellow' : 'red'));
 const deviceStates = ref<Record<string, string>>({}),
   attemptCard = ref('');
@@ -197,7 +207,7 @@ async function toggleCapture() {
 // 自动启动与手动开关走同一命令，页面状态在命令成功后更新；失败时保留关闭状态供重试。
 // Auto-start and manual toggles share one command; update state only on success and keep failures retryable.
 async function setCaptureEnabled(enabled: boolean) {
-  if (busy.value || captureChanging.value) return;
+  if (busy.value || captureChanging.value || settingsSaving.value) return;
   captureChanging.value = true;
   try {
     await invokeCommand('set_capture_enabled', { enabled });
@@ -225,7 +235,7 @@ async function startInitialCapture() {
 
 function logDisplayPath(path: unknown) {
   if (!path) return '';
-  return '%APPDATA%/AirPlay Hub/logs/' + String(path).split(/[\\/]/).pop();
+  return logDirectory.value + '/' + String(path).split(/[\\/]/).pop();
 }
 
 async function focusPassword() {
@@ -249,10 +259,15 @@ async function windowAction(action: string) {
 }
 
 async function selectSource(input: Input) {
-  if (busy.value || captureChanging.value || !input.channels) return;
+  if (busy.value || settingsLocked.value || !input.channels) return;
+  sourceChanging.value = true;
   settings.value.endpoint = input.id;
   sourceOpen.value = false;
-  await sourceChanged();
+  try {
+    await sourceChanged();
+  } finally {
+    sourceChanging.value = false;
+  }
 }
 
 function enterPassword(e: KeyboardEvent) {
@@ -271,17 +286,35 @@ async function call<T>(name: string, args?: Record<string, unknown>) {
   }
 }
 
+// 所有持久化设置共用一个事务；禁止携带另一条未确认的更改提交整份快照。
+// Serialize persisted edits so another command cannot save an unconfirmed full snapshot.
+async function commitSettings(name: string, args: Record<string, unknown>, next: Settings) {
+  if (disposed || settingsSaving.value) return false;
+  settingsSaving.value = true;
+  try {
+    await invokeCommand(name, args);
+    if (disposed) return false;
+    confirmedSettings = copySettings(next);
+    settings.value = copySettings(next);
+    return true;
+  } catch (e) {
+    if (!disposed) {
+      settings.value = copySettings(confirmedSettings);
+      error.value = String(e);
+    }
+    return false;
+  } finally {
+    settingsSaving.value = false;
+  }
+}
+
 async function persist() {
-  await call('save_settings', { settings: settings.value });
+  const next = copySettings(settings.value);
+  return commitSettings('save_settings', { settings: next }, next);
 }
 
 async function awakeChanged() {
-  try {
-    await invokeCommand('save_settings', { settings: settings.value });
-  } catch (e) {
-    settings.value.keepAwake = !settings.value.keepAwake;
-    error.value = String(e);
-  }
+  await persist();
 }
 
 async function sourceChanged() {
@@ -291,7 +324,7 @@ async function sourceChanged() {
   previewError.value = '';
   sourceWarning.value = '';
   settings.value.mapping = [0, (source.value?.channels || 0) > 1 ? 1 : 0];
-  await persist();
+  if (!(await persist()) || disposed) return;
   if (uiInitialized && initialCapturePending) await startInitialCapture();
   else await call('monitor_source');
 }
@@ -357,17 +390,15 @@ async function mute() {
 }
 
 async function mapping() {
-  await call('set_mapping', { mapping: settings.value.mapping });
+  const next = copySettings(settings.value);
+  await commitSettings('set_mapping', { mapping: next.mapping }, next);
 }
 
 async function swap() {
-  const swapped = !settings.value.speakersSwapped;
-  try {
-    await invokeCommand('set_speaker_order', { swapped });
-    settings.value.speakersSwapped = swapped;
-  } catch (e) {
-    error.value = String(e);
-  }
+  if (settingsLocked.value) return;
+  const next = copySettings(settings.value);
+  next.speakersSwapped = !next.speakersSwapped;
+  await commitSettings('set_speaker_order', { swapped: next.speakersSwapped }, next);
 }
 
 /**
@@ -538,10 +569,13 @@ onMounted(async () => {
     if (disposed) return;
     devices.value = s.devices;
     inputs.value = s.inputs;
-    settings.value = s.settings;
+    settings.value = copySettings(s.settings);
+    confirmedSettings = copySettings(s.settings);
     autostart.value = !!s.autostart;
     captureEnabled.value = s.captureEnabled;
-    logPath.value = '%APPDATA%/AirPlay Hub/logs';
+    logDirectory.value =
+      s.dataMode === 'portable' ? '[程序目录]/data/logs' : '%APPDATA%/AirPlay Hub/logs';
+    logPath.value = logDirectory.value;
     if (s.autostartError) error.value = '无法读取开机自启状态：' + s.autostartError;
     if (s.awakeError) {
       settings.value.keepAwake = !!s.awakeActive;
@@ -552,7 +586,7 @@ onMounted(async () => {
     }
     selection.value = cards.value[0]?.members.map((d) => d.name) || [];
     if (!s.backendAvailable) error.value = '缺少原生后端，请从完整 dist 文件夹启动';
-    await persist();
+    const settingsSaved = await persist();
     // 冷启动时桌面采集保持关闭。先提交页面状态，再跨过一次绘制，之后才创建 WASAPI 来源。
     // 两次动画帧回调之间浏览器可完成首次绘制；页面卸载后不再自动开启采集。
     // Keep desktop capture off on cold start. Commit UI state and allow a paint before creating WASAPI.
@@ -565,9 +599,15 @@ onMounted(async () => {
     await invokeCommand('ui_ready', { inputs: inputs.value });
     if (disposed) return;
     uiInitialized = true;
-    await startInitialCapture();
+    if (settingsSaved) await startInitialCapture();
     ready.value = s.backendAvailable;
-    if (ready.value) await refresh();
+    if (ready.value) {
+      const initializationError = error.value;
+      await refresh();
+      // 自动发现成功不应清除初始化保存/采集失败；新的发现错误仍优先显示。
+      // Successful automatic discovery must retain initialization failures; a discovery error takes precedence.
+      if (!error.value) error.value = initializationError;
+    }
   } catch (e) {
     error.value = `桌面后端未就绪：${String(e)}`;
   }
@@ -681,6 +721,7 @@ onMounted(async () => {
             :disabled="busy && chosen?.id !== card.id"
             :active="connected && busy && chosen?.id === card.id"
             :swapped="settings.speakersSwapped"
+            :swap-disabled="settingsLocked"
             :mapping="settings.mapping"
             :peaks="peaks"
             :level-labels="[level(peaks[0]), level(peaks[1])]"
@@ -702,6 +743,7 @@ onMounted(async () => {
         v-model:buffer="settings.buffer"
         :source="source"
         :busy="busy"
+        :saving="settingsLocked"
         :can-reset-auth="selection.length > 0"
         :auth-notice="authNotice"
         :peaks="peaks"
@@ -717,6 +759,7 @@ onMounted(async () => {
         :startup-saving="startupSaving"
         :channel-count="source?.channels || 0"
         :busy="busy"
+        :saving="settingsLocked"
         @startup-change="startupChanged"
         @awake-change="awakeChanged"
         @persist="persist"
@@ -725,7 +768,7 @@ onMounted(async () => {
         v-if="page === '设置' && settingsTab === '日志'"
         v-model:detailed-logs="settings.detailedLogs"
         v-model:capture-diagnostics="settings.captureDiagnostics"
-        :busy="busy"
+        :busy="busy || settingsLocked"
         :active-detailed-logs="activeDetailedLogs"
         :active-diagnostics="activeDiagnostics"
         :logs="logs"
@@ -764,7 +807,7 @@ onMounted(async () => {
         class="capture-toggle"
         role="switch"
         :aria-checked="!!source && captureEnabled"
-        :disabled="busy || captureChanging || !ready || !source"
+        :disabled="busy || settingsLocked || !ready || !source"
         :title="
           !source
             ? '请先选择音频流来源'
@@ -780,7 +823,7 @@ onMounted(async () => {
         ><span>{{
           !source
             ? '待选择来源'
-            : captureChanging
+            : captureChanging || sourceChanging
               ? '切换中…'
               : captureEnabled
                 ? '采集中'
@@ -793,7 +836,7 @@ onMounted(async () => {
           v-model:open="sourceOpen"
           :inputs="inputs"
           :endpoint="settings.endpoint"
-          :disabled="busy || captureChanging"
+          :disabled="busy || settingsLocked"
           :meter-width="sourceLineWidth"
           @select="selectSource"
         />
@@ -810,9 +853,7 @@ onMounted(async () => {
         ><button
           v-else
           class="primary"
-          :disabled="
-            !ready || !selection.length || !settings.endpoint || refreshing || captureChanging
-          "
+          :disabled="!ready || !selection.length || !source || refreshing || settingsLocked"
           @click="start()"
         >
           开始串流</button

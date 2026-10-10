@@ -9,6 +9,7 @@ const props = defineProps<{
   source?: Input;
   buffer: number;
   busy: boolean;
+  saving: boolean;
   canResetAuth: boolean;
   authNotice: string;
   peaks: number[];
@@ -45,7 +46,7 @@ const buffer = computed({
             type="number"
             min="64"
             max="512"
-            :disabled="busy"
+            :disabled="busy || saving"
             @change="emit('persist')"
           /><span>ms</span>
         </div>

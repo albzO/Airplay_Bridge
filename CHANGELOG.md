@@ -2,6 +2,10 @@
 
 ## 未发布 / Unreleased
 
+- 修复互换/映射保存失败后运行状态已变化、来源保存失败仍启动预览及保持唤醒并发保存回退问题；统一保存锁、确认快照和失败传播，补充真实文件失败与界面回归。
+  Persist routing before applying it, stop source follow-up after failed saves, and serialize settings with confirmed-state rollback; add filesystem and UI regressions.
+- 报告写入失败仍向界面发送内存报告并单独记录错误，保留协议/采集/管道首因；便携日志位置改为程序目录下的 `data/logs` 脱敏提示。
+  Preserve primary stream errors and in-memory reports when report writes fail; display the correct privacy-safe portable log location.
 - 提取日志视图，保留页面管理的会话快照、保存/打开目录命令及诊断清空范围；新增日志开关、报告展开、清空后继续更新和旧会话隔离的 DOM 回归。
   Extract log presentation while retaining page-owned session snapshots, persistence/folder commands and diagnostic clearing; cover log controls, reports, continued updates and stale-session isolation.
 - 提取技术详情视图并共享格式/电平展示，保留 Buffer 保存与认证策略重检命令；新增参数、禁用条件、设备展示与重检请求范围的 DOM 回归。

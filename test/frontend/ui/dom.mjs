@@ -23,6 +23,7 @@ const data = {
   },
   autostart: false,
   captureEnabled: true,
+  dataMode: 'installed',
   dataPath: 'DOM fixture / no hardware connection',
   backendAvailable: true,
   ...window.__airplayFixture,
@@ -30,7 +31,7 @@ const data = {
 let sessionId = 100;
 let settings = copy(data.settings);
 const calls = [];
-const holds = new Map();
+const holds = new Map((data.holdCommands || []).map((name) => [name, 1]));
 const pending = new Map();
 
 window.__airplayTest = {
@@ -63,6 +64,12 @@ function reply(name, args) {
     case 'save_settings':
       settings = copy(args.settings);
       return;
+    case 'set_mapping':
+      settings.mapping = copy(args.mapping);
+      return;
+    case 'set_speaker_order':
+      settings.speakersSwapped = args.swapped;
+      return;
     case 'set_capture_enabled':
       return emit('source-level', {
         endpoint: settings.endpoint,
@@ -75,9 +82,7 @@ function reply(name, args) {
     case 'monitor_source':
     case 'stop_stream':
     case 'submit_password':
-    case 'set_speaker_order':
     case 'set_autostart':
-    case 'set_mapping':
     case 'forget_auth_policy':
     case 'open_logs':
       return;
@@ -88,14 +93,20 @@ function reply(name, args) {
 mockIPC(
   (name, args) => {
     calls.push({ name, args: copy(args || {}) });
-    // 先计算默认结果（包括会话编号），但由测试决定何时返回或失败。
-    // Allocate default results, including ids, but let tests decide when held commands complete or fail.
-    const result = reply(name, args);
-    if (!holds.get(name)) return result;
+    if (!holds.get(name)) return reply(name, args);
+    // 会话编号先预留；被暂存的设置只在成功返回时应用，拒绝不会产生已保存副作用。
+    // Reserve session ids early; held settings apply only on success, never on rejection.
+    const result = name === 'start_stream' ? reply(name, args) : undefined;
     holds.set(name, holds.get(name) - 1);
     return new Promise((resolve, reject) => {
       const queue = pending.get(name) || [];
-      queue.push({ resolve, reject });
+      queue.push({
+        resolve(value) {
+          const fallback = name === 'start_stream' ? result : reply(name, args);
+          resolve(value === undefined ? fallback : value);
+        },
+        reject,
+      });
       pending.set(name, queue);
     });
   },

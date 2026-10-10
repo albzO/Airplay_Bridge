@@ -17,6 +17,7 @@ pub(crate) mod diagnostics;
 mod pipeline;
 mod protocol;
 mod protocol_log;
+mod report;
 mod transport;
 use crate::audio_queue::{AUDIO_BUDGET_MS, BLOCK_LIMIT};
 use crate::{capture, discovery::Device};
@@ -448,22 +449,16 @@ fn run_targets(
     });
     let report_path = log_path.with_extension("json");
     let report = privacy.value(&report);
-    fs::write(&report_path, serde_json::to_vec_pretty(&report)?)?;
-    if let Some(g) = &gui {
-        (g.emit)(serde_json::json!({"kind":"report","report":report}));
-    }
-    println!("流报告：{}", report_path.display());
-    // 先保存脱敏报告，再返回错误；协议首因优先于采集错误、断管和最终退出状态。
-    // Save the redacted report before returning; the first protocol cause precedes capture, pipe and exit failures.
-    if let Some(cause) = backend_error {
-        return Err(format!("后端串流中断：{cause}；日志：{}", log_path.display()).into());
-    }
-    capture_result?;
-    written
-        .map_err(|e| crate::failure::describe(&format!("PCM 发送管道：{e}"), "PCM_PIPE_FAILED"))?;
-    if !status.success() || !protocol.transport.load(Ordering::Relaxed) {
-        return Err("持续流发送失败，请查看日志".into());
-    }
+    let primary = report::session_result(
+        backend_error,
+        capture_result.map(|_| ()),
+        written.map(|_| ()).map_err(|e| {
+            crate::failure::describe(&format!("PCM 发送管道：{e}"), "PCM_PIPE_FAILED").into()
+        }),
+        status.success() && protocol.transport.load(Ordering::Relaxed),
+        &log_path,
+    );
+    report::finish(&report_path, report, primary, gui.as_ref().map(|g| &g.emit))?;
     println!("持续流发送完成；请核对 HomePod 内容、连续性和停止是否正常。");
     Ok(())
 }

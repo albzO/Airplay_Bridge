@@ -15,7 +15,7 @@
 | 5 | `airplay-core/src/source.rs` | 谁持有持续采集线程？预览与串流如何共用它？ |
 | 6 | `airplay-core/src/live.rs` | 采集、转换、管道、协议日志和最终报告怎样连接？ |
 | 7 | `capture.rs`、`convert.rs`、`drift.rs` | 音频格式、资源释放、重采样状态和时钟校正为什么这样实现？ |
-| 8 | 桌面的 `auth.rs`、`settings.rs`、`window.rs`，核心的 `privacy.rs` | 密码、配置、退出和日志的边界在哪里？ |
+| 8 | 桌面的 `auth.rs`、`settings.rs`、`routing.rs`、`window.rs`，核心的 `privacy.rs` | 密码、配置、运行路由、退出和日志的边界在哪里？ |
 | 9 | `airplay-backend/patches/README.md`、`upstream_guard.py`、`select_upstream.py` | 固定源码怎样校验、在临时副本应用补丁并选择编译？平台实现与协议修改分别在哪里？ |
 
 ## 从点击播放到实际串流
@@ -36,6 +36,10 @@
 
 冷启动时页面开关和桌面的 `capture_enabled` 均为关闭，`Source` 尚未创建。页面先注册事件、读取设置并提交界面状态，再通过两次动画帧回调跨过首次绘制，通知 `ui_ready`，最后用与手动开启相同的 `set_capture_enabled(true)` 创建采集来源。没有有效来源时保持关闭，首次选择有效来源后再自动开启一次；此后手动关闭的状态在切换设备时保持。开启失败时允许手动重试；组件已卸载时取消自动开启。已运行的页面重新挂载会读取桌面真实状态，不会强制关闭现有采集。此顺序用于验证初始化时序假设，尚不能保证消除驱动或 WASAPI 回环异常。
 
+设置操作先看 `App.vue/commitSettings`：它保存独立快照并持有保存锁，成功更新已确认值，失败恢复该值；保持唤醒不再反转当前布尔值。来源切换还持有跨保存/预览的锁，只有保存成功且页面仍存在才启动后续命令。桌面 `routing.rs` 保证候选设置保存成功后才更新运行路由，不能只从页面 IPC 拒绝测试推断桌面没有副作用。冷启动保存失败不自动采集，自动发现成功仍保留初始化错误。
+
+日志路径由初始化 `dataMode` 生成脱敏根目录。便携模式使用 `[程序目录]/data/logs`，安装模式使用 `%APPDATA%/AirPlay Hub/logs`；文件事件只附加文件名，空路径保持空值。实际打开目录仍使用桌面的 `Engine.root/logs`。
+
 端点电平在端点音量调整前测量，因此不能仅凭电平非零触发恢复，需同时查询静音与音量。接口约定见 [微软 IAudioMeterInformation 说明](https://learn.microsoft.com/en-us/windows/win32/api/endpointvolume/nn-endpointvolume-iaudiometerinformation)。
 
 播放回环的实机证据、VAIO 延迟对照和保存设置方法见 [播放回环排查](playback-loopback.md)。本次把 VAIO3 内部延迟从 768 调到 7168 后，独立采集 16 次及项目 Source 3 次均正常；完整 AirPlay 播放仍需实机复测。
@@ -51,6 +55,7 @@
 | `live/transport.rs` | 原生子进程、唯一 PCM 发送端、写线程、计数与单位常量 | 640 ms 时长预算（含写入中块）及 256 块硬上限；满时立即报错；缓冲回收；EOF 收尾 |
 | `live/protocol.rs` | stderr 读线程、就绪通知、QPC 播放计划、成员统计、首个故障 | 原文用于控制，脱敏副本用于展示/落盘；`PCM_READY` 只通知一次 |
 | `live/protocol_log.rs` | 协议控制台/文件输出、故障上下文 | 128 条非阻塞队列；丢日志不丢控制状态，日志错误单独报告 |
+| `live/report.rs` | 最终错误优先级、脱敏报告落盘及 GUI 快照 | 写盘失败仍发内存报告；`report_write_error` 不覆盖协议/采集/管道首因；没有更早故障才返回 `REPORT_WRITE_FAILED` |
 | `live/pipeline.rs` | 本次会话的重采样器、水位控制器、左右路由、遥测与管线诊断 | 滤波器跨包连续；帧/字节/ms 单位；遥测与控制更新时机 |
 | `audio_queue.rs` | 两级队列共用的时长策略、预留与 RAII 归还 | 每级各 640 ms；时长按帧数/采样率计算；不能当作实际延迟 |
 | `capture/timeline.rs` | 空闲静音、缺口修复与恢复重叠 | 纯时间线计划，不读取或释放 WASAPI；60 秒修复预算可确定性测试 |

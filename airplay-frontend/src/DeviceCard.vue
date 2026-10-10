@@ -11,6 +11,7 @@ const props = defineProps<{
   disabled: boolean;
   active: boolean;
   swapped: boolean;
+  swapDisabled: boolean;
   mapping: [number, number];
   peaks: number[];
   levelLabels: [string, string];
@@ -55,7 +56,12 @@ function speakerFor(side: number) {
           </div>
           <small>{{ levelLabels[0] }} · 输入 {{ mapping[0] + 1 }}</small>
         </div>
-        <button v-if="card.members.length === 2" title="交换扬声器位置" @click="emit('swap')">
+        <button
+          v-if="card.members.length === 2"
+          title="交换扬声器位置"
+          :disabled="swapDisabled"
+          @click="emit('swap')"
+        >
           ⇄
         </button>
         <div>

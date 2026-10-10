@@ -63,8 +63,16 @@ test('existing UI fixtures initialize; omitted optional fields use existing defa
   assert.deepEqual(result.devices, devices);
   assert.deepEqual(result.inputs, inputs);
   assert.equal(result.captureEnabled, true);
+  assert.equal(result.dataMode, 'installed');
   assert.equal(result.awakeError, undefined);
   assert.deepEqual(decodeDevices(devices), devices);
+});
+
+test('initialization validates installed and portable data modes', () => {
+  for (const dataMode of ['installed', 'portable'])
+    assert.equal(decodeInitialization({ ...initialization, dataMode }).dataMode, dataMode);
+  for (const dataMode of ['unknown', null, true, {}])
+    assert.throws(() => decodeInitialization({ ...initialization, dataMode }), /格式不正确/);
 });
 
 test('malformed initialization cannot partially populate page state', () => {
@@ -150,6 +158,7 @@ test('report validates displayed fields, preserves extension JSON, limits nestin
   const report = {
     device: 'device-1',
     capture: { discontinuities: 2, timestamp_errors: 0 },
+    report_write_error: '[REPORT_WRITE_FAILED] fixture write failure',
     extra: { values: [null, true, 3] },
   };
   assert.deepEqual(emit({ kind: 'report', report }).report, report);

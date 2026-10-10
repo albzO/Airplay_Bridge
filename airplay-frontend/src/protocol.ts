@@ -143,11 +143,14 @@ export function decodeDevices(value: unknown): Device[] {
 }
 export function decodeInitialization(value: unknown): Initialization {
   const v = object(value, 'initialize');
+  const dataMode = v.dataMode === undefined ? 'installed' : v.dataMode;
+  if (dataMode !== 'installed' && dataMode !== 'portable') invalid('dataMode');
   return {
     devices: decodeDevices(v.devices),
     inputs: array(v.inputs, 'inputs', input),
     settings: settings(v.settings, 'settings'),
     dataPath: text(v.dataPath, 'dataPath'),
+    dataMode,
     backendAvailable: boolean(v.backendAvailable, 'backendAvailable'),
     autostart: boolean(v.autostart, 'autostart'),
     captureEnabled:

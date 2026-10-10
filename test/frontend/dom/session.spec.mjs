@@ -78,6 +78,145 @@ async function playing(page, id) {
   await expect(page.getByRole('button', { name: '静音', exact: true })).toBeEnabled();
 }
 
+test('failed source save restores endpoint and mapping without previewing; retry stays locked through monitoring', async ({
+  page,
+}) => {
+  const mono = {
+    ...inputs[0],
+    id: 'fixture-retry-mono',
+    name: 'Retry Mono Fixture',
+    channels: 1,
+  };
+  await open(page, { inputs: [...inputs, mono] });
+  const initial = (await calls(page, 'save_settings')).at(-1).args.settings;
+  const monitors = (await calls(page, 'monitor_source')).length;
+  await hold(page, 'save_settings');
+  await source(page).click();
+  await page.getByRole('button', { name: mono.name, exact: true }).click();
+  await expect(source(page)).toBeDisabled();
+  await expect(start(page)).toBeDisabled();
+  await expect(page.getByRole('switch')).toBeDisabled();
+  await page.getByRole('button', { name: '设置', exact: true }).click();
+  await expect(page.getByRole('checkbox', { name: '避免系统自动睡眠' })).toBeDisabled();
+  await expect(page.getByLabel('左输出取样', { exact: true })).toBeDisabled();
+  expect(await calls(page, 'monitor_source')).toHaveLength(monitors);
+  await reject(page, 'save_settings', 'fixture source save failure');
+  await expect(page.locator('.alert')).toContainText('fixture source save failure');
+  await expect(page.locator('#source-name')).toHaveText(inputs[0].name);
+  await expect(page.getByLabel('左输出取样', { exact: true })).toHaveValue('0');
+  await expect(page.getByLabel('右输出取样', { exact: true })).toHaveValue('1');
+  await expect(source(page)).toBeEnabled();
+  expect(await calls(page, 'monitor_source')).toHaveLength(monitors);
+  await hold(page, 'monitor_source');
+  await source(page).click();
+  await page.getByRole('button', { name: mono.name, exact: true }).click();
+  await expect.poll(async () => (await calls(page, 'monitor_source')).length).toBe(monitors + 1);
+  await expect(source(page)).toBeDisabled();
+  await expect(start(page)).toBeDisabled();
+  await expect(page.getByRole('checkbox', { name: '避免系统自动睡眠' })).toBeDisabled();
+  await page.evaluate(
+    (endpoint) => window.__airplayTest.sourceLevel({ endpoint, error: 'stale source error' }),
+    initial.endpoint,
+  );
+  await expect(page.locator('.source-notice')).toHaveCount(0);
+  await resolve(page, 'monitor_source');
+  await expect(source(page)).toBeEnabled();
+  await expect(page.locator('#source-name')).toHaveText(mono.name);
+  await expect(page.getByLabel('右输出取样', { exact: true })).toHaveValue('0');
+  await start(page).click();
+  expect((await calls(page, 'start_stream')).at(-1).args.settings).toEqual({
+    ...initial,
+    endpoint: mono.id,
+    mapping: [0, 0],
+  });
+});
+
+test('mapping failure rolls back both selectors and retries without restarting the session', async ({
+  page,
+}) => {
+  await open(page);
+  await start(page).click();
+  await playing(page, 101);
+  await page.getByRole('button', { name: '设置', exact: true }).click();
+  const left = page.getByLabel('左输出取样', { exact: true });
+  const right = page.getByLabel('右输出取样', { exact: true });
+  const saves = (await calls(page, 'save_settings')).length;
+  await hold(page, 'set_mapping');
+  await left.selectOption('1');
+  await expect(left).toBeDisabled();
+  await expect(right).toBeDisabled();
+  await expect(page.getByRole('checkbox', { name: '避免系统自动睡眠' })).toBeDisabled();
+  await reject(page, 'set_mapping', 'fixture mapping save failure');
+  await expect(page.locator('.alert')).toContainText('fixture mapping save failure');
+  await expect(left).toHaveValue('0');
+  await expect(right).toHaveValue('1');
+  await expect(left).toBeEnabled();
+  await left.selectOption('1');
+  await expect.poll(async () => (await calls(page, 'set_mapping')).length).toBe(2);
+  await expect(left).toBeEnabled();
+  await expect(left).toHaveValue('1');
+  expect((await calls(page, 'set_mapping')).map((call) => call.args.mapping)).toEqual([
+    [1, 1],
+    [1, 1],
+  ]);
+  expect(await calls(page, 'save_settings')).toHaveLength(saves);
+  expect(await calls(page, 'start_stream')).toHaveLength(1);
+  expect(await calls(page, 'stop_stream')).toHaveLength(0);
+});
+
+for (const [dataMode, root] of [
+  ['installed', '%APPDATA%/AirPlay Hub/logs'],
+  ['portable', '[程序目录]/data/logs'],
+]) {
+  test(`${dataMode} log locations preserve filenames, hide private roots and accept empty paths`, async ({
+    page,
+  }) => {
+    await open(page, { dataMode });
+    await openLogView(page);
+    const sessionLog = logPanel(page, '会话日志');
+    const diagnostics = logPanel(page, '采集逐包诊断');
+    await expect(sessionLog.locator('.log-location')).toHaveText(root);
+    await start(page).click();
+    await readyEvents(page, 101);
+    await send(page, 101, {
+      kind: 'log_path',
+      path: 'C:\\private-fixture\\data\\logs\\session.log',
+      detailed_logs: false,
+      pipeline_path: 'C:/private-fixture/data/logs/pipeline.jsonl',
+    });
+    await send(page, 101, {
+      kind: 'diagnostic_path',
+      path: 'C:/private-fixture/data/logs/capture.jsonl',
+      pipeline_path: 'C:/private-fixture/data/logs/pipeline.jsonl',
+    });
+    await expect(sessionLog.locator('.log-location')).toHaveText([
+      root + '/session.log',
+      '流水线：' + root + '/pipeline.jsonl',
+    ]);
+    await expect(diagnostics.locator('.log-location')).toHaveText(
+      '逐包：' + root + '/capture.jsonl',
+    );
+    await expect(page.locator('main')).not.toContainText('private-fixture');
+    const report = {
+      device: 'Receiver A',
+      report_write_error: '[REPORT_WRITE_FAILED] fixture write failure',
+    };
+    await send(page, 101, { kind: 'report', report });
+    await sessionLog.getByText('完整会话报告', { exact: true }).click();
+    await expect(sessionLog.locator('details pre')).toHaveText(JSON.stringify(report, null, 2));
+    await send(page, 101, {
+      kind: 'log_path',
+      path: '',
+      detailed_logs: false,
+      pipeline_path: null,
+    });
+    await send(page, 101, { kind: 'diagnostic_path', path: '', pipeline_path: '' });
+    await expect(sessionLog.locator('.log-location')).toHaveText('');
+    await expect(diagnostics.locator('.log-location')).toHaveCount(0);
+    await expect(sessionLog.locator('details pre')).toHaveText(JSON.stringify(report, null, 2));
+  });
+}
+
 test('no source keeps start disabled after initialization', async ({ page }) => {
   await open(page, { inputs: [] });
   await expect(start(page)).toBeDisabled();
@@ -89,6 +228,30 @@ test('no source keeps start disabled after initialization', async ({ page }) => 
   await page.getByRole('tab', { name: '技术详情', exact: true }).click();
   await expect(page.locator('.capture-panel dd').nth(0)).toHaveText('设备未公布格式');
   await expect(page.locator('.capture-panel dd').nth(1)).toHaveText('设备未公布格式');
+});
+
+test('failed initial settings save skips capture until a successful source retry', async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    window.__airplayFixture = { captureEnabled: false, holdCommands: ['save_settings'] };
+  });
+  await page.goto('/dom.html');
+  await expect.poll(async () => (await calls(page, 'save_settings')).length).toBe(1);
+  await expect(start(page)).toBeDisabled();
+  await reject(page, 'save_settings', 'fixture initial save failure');
+  await expect(refresh(page)).toBeEnabled();
+  await expect(page.locator('.alert')).toContainText('fixture initial save failure');
+  expect(await calls(page, 'set_capture_enabled')).toHaveLength(0);
+  expect(await calls(page, 'monitor_source')).toHaveLength(0);
+  expect(await calls(page, 'ui_ready')).toHaveLength(1);
+  await source(page).click();
+  await page.getByRole('button', { name: inputs[1].name, exact: true }).click();
+  await expect.poll(async () => (await calls(page, 'set_capture_enabled')).length).toBe(1);
+  expect((await calls(page, 'set_capture_enabled'))[0].args).toEqual({ enabled: true });
+  await expect(start(page)).toBeEnabled();
+  await expect(page.getByRole('switch')).toHaveAttribute('aria-checked', 'true');
+  expect(await calls(page, 'monitor_source')).toHaveLength(0);
 });
 
 test('no receiver keeps start disabled while refresh remains available', async ({ page }) => {
@@ -203,8 +366,10 @@ test('stereo card applies speaker order after success and preserves it after fai
   await expect.poll(async () => (await calls(page, 'set_speaker_order')).length).toBe(1);
   expect((await calls(page, 'set_speaker_order'))[0].args).toEqual({ swapped: true });
   await expect(names).toHaveText(['Receiver A', 'Receiver B']);
+  await expect(swap).toBeDisabled();
   await resolve(page, 'set_speaker_order');
   await expect(names).toHaveText(['Receiver B', 'Receiver A']);
+  await expect(swap).toBeEnabled();
   await expect(card.locator('.channel-pair > div > small:last-child')).toHaveText([
     '−∞ dBFS · 输入 1',
     '−∞ dBFS · 输入 2',
@@ -216,6 +381,7 @@ test('stereo card applies speaker order after success and preserves it after fai
   await reject(page, 'set_speaker_order', 'fixture speaker order failure');
   await expect(page.locator('.alert')).toContainText('fixture speaker order failure');
   await expect(names).toHaveText(['Receiver B', 'Receiver A']);
+  await expect(swap).toBeEnabled();
   expect(await calls(page, 'start_stream')).toHaveLength(1);
 });
 
@@ -276,6 +442,22 @@ test('keep-awake save failure restores the checkbox and preserves other settings
   const initial = (await calls(page, 'save_settings')).at(-1).args.settings;
   await hold(page, 'save_settings');
   await awake.uncheck();
+  await expect(awake).toBeDisabled();
+  await awake.click({ force: true });
+  await expect(awake).not.toBeChecked();
+  expect(await calls(page, 'save_settings')).toHaveLength(2);
+  await expect(page.getByLabel('窗口关闭动作', { exact: true })).toBeDisabled();
+  await expect(page.getByLabel('左输出取样', { exact: true })).toBeDisabled();
+  await expect(source(page)).toBeDisabled();
+  await expect(start(page)).toBeDisabled();
+  await page.getByRole('tab', { name: '技术详情', exact: true }).click();
+  await expect(page.getByLabel('采集 Buffer', { exact: true })).toBeDisabled();
+  await page.getByRole('tab', { name: '日志', exact: true }).click();
+  await expect(page.getByRole('checkbox', { name: '保存详细日志', exact: true })).toBeDisabled();
+  await expect(
+    page.getByRole('checkbox', { name: '启用额外采集诊断', exact: true }),
+  ).toBeDisabled();
+  await page.getByRole('tab', { name: '常规', exact: true }).click();
   await expect
     .poll(async () => (await calls(page, 'save_settings')).at(-1).args.settings.keepAwake)
     .toBe(false);
@@ -285,9 +467,16 @@ test('keep-awake save failure restores the checkbox and preserves other settings
   });
   await reject(page, 'save_settings', 'fixture keep-awake failure');
   await expect(awake).toBeChecked();
+  await expect(awake).toBeEnabled();
   await expect(page.locator('.alert')).toContainText('fixture keep-awake failure');
+  await hold(page, 'save_settings');
   await awake.uncheck();
   await expect.poll(async () => (await calls(page, 'save_settings')).length).toBe(3);
+  await expect(awake).toBeDisabled();
+  expect(await calls(page, 'set_mapping')).toHaveLength(0);
+  await resolve(page, 'save_settings');
+  await expect(awake).toBeEnabled();
+  await expect(awake).not.toBeChecked();
   await page.getByRole('button', { name: '返回播放', exact: true }).click();
   await start(page).click();
   await expect.poll(async () => (await calls(page, 'start_stream')).length).toBe(1);

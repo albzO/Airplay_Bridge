@@ -72,7 +72,7 @@ function page(t, invokeCommand) {
   const create = new Function(
     ...names,
     outputText +
-      '\nreturn { start, stop, submit, event, session, busy, playing, stopping, connected, pending, password, sending, retry, retrySending, phase, error };',
+      '\nreturn { start, stop, submit, event, session, busy, playing, stopping, connected, pending, password, sending, retry, retrySending, phase, error, settings, inputs, persist, selectSource, settingsSaving };',
   );
   const state = scope.run(() => create(...names.map((name) => deps[name])));
   state.unmount = () => {
@@ -270,3 +270,31 @@ test('late stop failure cannot overwrite the next session and duplicate starts a
   assert.equal(p.error.value, '');
   assert.equal(p.stopping.value, false);
 });
+
+for (const failed of [false, true]) {
+  test(`unmount ignores a late source save ${failed ? 'failure' : 'success'} and prevents duplicate selection or preview`, async (t) => {
+    const saved = deferred();
+    const commands = [];
+    const p = page(t, (name) => {
+      commands.push(name);
+      return name === 'save_settings' && commands.length > 1 ? saved.promise : Promise.resolve();
+    });
+    p.settings.value.endpoint = 'fixture-original';
+    await p.persist();
+    const mono = { id: 'fixture-mono', channels: 1 };
+    const other = { id: 'fixture-other', channels: 2 };
+    p.inputs.value = [mono, other];
+    const selected = p.selectSource(mono);
+    await p.selectSource(other);
+    assert.equal(p.settings.value.endpoint, mono.id);
+    assert.equal(p.settingsSaving.value, true);
+    assert.deepEqual(commands, ['save_settings', 'save_settings']);
+    p.unmount();
+    if (failed) saved.reject(new Error('late source save failure'));
+    else saved.resolve();
+    await selected;
+    assert.equal(p.error.value, '');
+    assert.equal(p.settingsSaving.value, false);
+    assert.deepEqual(commands, ['save_settings', 'save_settings']);
+  });
+}

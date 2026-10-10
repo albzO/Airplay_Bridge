@@ -1,5 +1,12 @@
 [
   {
+    "code": "REPORT_WRITE_FAILED",
+    "exit": 1,
+    "message": "串流报告写入失败。",
+    "action": "检查日志目录权限和可用空间；界面仍保留内存报告，已有串流故障优先显示。",
+    "patterns": []
+  },
+  {
     "code": "BACKEND_FAILED",
     "exit": 1,
     "message": "后端操作失败。",

@@ -11,6 +11,7 @@
 mod auth;
 mod auth_memory;
 mod awake;
+mod routing;
 mod settings;
 mod startup;
 #[path = "../../../test/frontend/desktop/startup.rs"]
@@ -59,6 +60,7 @@ struct Session {
 /// and continue producing the UI's level preview while session is None.
 struct Engine {
     root: PathBuf,
+    portable: bool,
     backend: PathBuf,
     settings: Mutex<Settings>,
     auth_memory: Mutex<auth_memory::Memory>,
@@ -168,7 +170,7 @@ async fn initialize(engine: State<'_, Arc<Engine>>) -> Result<Value, String> {
             .map_err(|e| e.to_string())??;
     let startup = startup::enabled();
     Ok(
-        json!({"devices":devices(&e),"inputs":inputs,"settings":e.settings.lock().unwrap().clone(),"dataPath":e.root,"backendAvailable":e.backend.exists(),"awakeActive":e.awake.lock().unwrap().active(),"awakeError":e.awake_startup_error,"autostart":startup.as_ref().copied().unwrap_or(false),"autostartError":startup.err(),"captureEnabled":e.capture_enabled.load(Ordering::SeqCst)}),
+        json!({"devices":devices(&e),"inputs":inputs,"settings":e.settings.lock().unwrap().clone(),"dataPath":e.root,"dataMode":if e.portable { "portable" } else { "installed" },"backendAvailable":e.backend.exists(),"awakeActive":e.awake.lock().unwrap().active(),"awakeError":e.awake_startup_error,"autostart":startup.as_ref().copied().unwrap_or(false),"autostartError":startup.err(),"captureEnabled":e.capture_enabled.load(Ordering::SeqCst)}),
     )
 }
 #[tauri::command]
@@ -452,30 +454,34 @@ fn set_mapping(engine: State<Arc<Engine>>, mapping: [usize; 2]) -> Result<(), St
         return Err("声道超出范围".into());
     }
     let session = engine.session.lock().unwrap();
-    if let Some(s) = session.as_ref() {
-        *s.control.mapping.lock().unwrap() = mapping;
-    }
-    if let Some(source) = engine.source.lock().unwrap().as_ref() {
-        *source.mapping.lock().unwrap() = mapping;
-    }
+    let source = engine.source.lock().unwrap();
     let mut settings = engine.settings.lock().unwrap();
-    settings.mapping = mapping;
-    save(&engine, &settings)
+    if settings.endpoint != endpoint {
+        return Err("采集来源已更改，请重新选择声道".into());
+    }
+    routing::set_mapping(
+        &engine.root,
+        &mut settings,
+        session.as_ref().map(|s| &s.control.mapping),
+        source.as_ref().map(|s| &s.mapping),
+        mapping,
+    )
 }
 #[tauri::command]
 fn set_speaker_order(engine: State<Arc<Engine>>, swapped: bool) -> Result<(), String> {
-    if let Some(session) = engine.session.lock().unwrap().as_ref() {
+    let session = engine.session.lock().unwrap();
+    if let Some(session) = session.as_ref() {
         if session.hosts.len() != 2 {
             return Err("仅立体声对可交换扬声器".into());
         }
-        session
-            .control
-            .speakers_swapped
-            .store(swapped, Ordering::Relaxed);
     }
     let mut settings = engine.settings.lock().unwrap();
-    settings.speakers_swapped = swapped;
-    save(&engine, &settings)
+    routing::set_speaker_order(
+        &engine.root,
+        &mut settings,
+        session.as_ref().map(|s| &s.control.speakers_swapped),
+        swapped,
+    )
 }
 #[tauri::command]
 fn open_logs(engine: State<Arc<Engine>>) -> Result<(), String> {
@@ -554,6 +560,7 @@ fn main() {
             let awake_startup_error = awake.set(settings.keep_awake).err();
             app.manage(Arc::new(Engine {
                 root,
+                portable: homepod_test::data_dir::portable_root(&exe).is_some(),
                 backend,
                 settings: Mutex::new(settings),
                 auth_memory: Mutex::new(auth_memory),

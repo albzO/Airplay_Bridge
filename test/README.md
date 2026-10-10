@@ -4,6 +4,14 @@
 
 Test sources are committed under root `test/`. Production modules retain attachment/diagnostic entry points; existing private-module access and ignored hardware checks are preserved.
 
+F1–F5 修复后的快速验证为核心 80 通过 / 8 默认忽略、桌面 7 通过、前端协议 7 + 会话/页面脚本 12 通过、真实模板 DOM 27 通过。范围与剩余边界见 [自证记录](../docs/review-self-check.md#f1f5-修复与正式回归)。
+
+`frontend/desktop/routing.rs` 的 2 项回归调用生产路由模块，在暂存设置文件路径创建目录触发真实写入失败，检查磁盘、内存和活动 Mutex/AtomicBool 不变，解除故障后可重试。它们没有创建 WASAPI Source 或完整 Tauri 会话。
+
+`core/unit/live/report.rs` 的 2 项回归调用生产结果选择/报告模块，以目录占用 JSON 目标路径，验证协议、采集、管道、传输/退出及仅报告失败的优先级；即使无法落盘仍收到包含 `report_write_error` 的内存报告。可写报告与 GUI 快照一致，已有故障仍保留；报告失败使用 `REPORT_WRITE_FAILED` 并保留操作和 OS 错误来源。
+
+DOM 新增来源失败/重试、等待预览、冷启动保存失败、映射回退以及两种日志模式；加强保持唤醒重复点击、跨标签禁用与互换等待。IPC 夹具仅在成功完成时应用保存/路由副作用，拒绝不会先修改模拟设置。脚本另外覆盖重复来源选择及卸载后的迟到保存成功/失败；这些边界模拟不等于实机播放验证。
+
 `core/unit/live/protocol.rs` 使用实际协议读线程和可注入 writer，分别阻塞/失败文件与控制台输出，验证队列溢出时就绪、认证错误及首个故障仍被处理、取消不等待日志、收尾超时后不输出积压，并检查详细/故障日志脱敏及密码提示。夹具在失败时也解除故意阻塞，无需声卡或接收设备。完整串流报告中的 `protocol_log_status` 单独表示日志健康；没有据此断言整个应用有严格停止上限。
 
 `core/unit/capture/decode.rs` 的 8 项测试直接调用生产解码模块，用固定字节验证 PCM 8/16/24/32 位、24-in-32、float32 特殊值、默认/重复/多声道映射、帧裁剪与非法输入，检查跨包输出缓冲复用及完整原始包摘要。无需声卡或模拟接收端；不验证 WASAPI 驱动或实际播放。可单独运行 `cargo test --manifest-path airplay-core/Cargo.toml --locked --offline --lib capture::decode::`。
@@ -65,7 +73,7 @@ python test/core/checks/check_conversion.py "path/to/capture.pcm"
 
 `test:session` executes the actual page script for early/stale events, password retries, stopping, startup failure, overflow and unmount. Desktop IPC/browser APIs are mocked; DOM clicks, layout and the real WebView are not covered.
 
-`test:dom` 使用固定版本 `@playwright/test 1.64.0`，加载生产 `main.ts`、`App.vue`、`SourcePicker.vue`、`DeviceCard.vue`、`GeneralSettings.vue`、`RuntimeStats.vue`、`TechnicalDetails.vue`、`LogView.vue` 和样式，模拟 Tauri IPC/事件，执行 22 项真实点击/输入回归：无来源、无设备、来源选择及 Escape、分组排序/外部关闭、单声道保存后预览、设备卡片互换成功/失败及单设备选择、自启/保持唤醒失败回退与重试、常规设置同步及映射、统计快照/累计计数、技术详情/Buffer/认证策略重检、日志开关/清空/报告/目录命令、连接/停止时控件禁用、Enter 密码重试与新会话归属、旧事件隔离、启动失败恢复、重复/迟到密码提交。未捕获浏览器异常也会失败。夹具没有定时协议事件，测试可暂停/完成/拒绝命令来确定异步顺序，不读取或改写组件内部状态。
+`test:dom` 使用固定版本 `@playwright/test 1.64.0`，加载生产 `main.ts`、`App.vue`、`SourcePicker.vue`、`DeviceCard.vue`、`GeneralSettings.vue`、`RuntimeStats.vue`、`TechnicalDetails.vue`、`LogView.vue` 和样式，模拟 Tauri IPC/事件，执行 27 项真实点击/输入回归：无来源、无设备、来源选择及 Escape、分组排序/外部关闭、单声道保存后预览、设备卡片互换成功/失败及单设备选择、自启/保持唤醒失败回退与重试、常规设置同步及映射、统计快照/累计计数、技术详情/Buffer/认证策略重检、日志开关/清空/报告/目录命令、连接/停止时控件禁用、Enter 密码重试与新会话归属、旧事件隔离、启动失败恢复、重复/迟到密码提交。未捕获浏览器异常也会失败。夹具没有定时协议事件，测试可暂停/完成/拒绝命令来确定异步顺序，不读取或改写组件内部状态。
 
 Windows 默认使用已安装 Edge 的无头模式，无需下载浏览器；已有 Chrome 可设置 `$env:AIRPLAY_TEST_BROWSER_CHANNEL = 'chrome'` 后运行，完成后 `Remove-Item Env:AIRPLAY_TEST_BROWSER_CHANNEL`。其他系统默认使用 Playwright Chromium，先运行 `pnpm --dir airplay-frontend exec playwright install chromium`。浏览器选择依据见 [Playwright 文档](https://playwright.dev/docs/browsers)。
 
