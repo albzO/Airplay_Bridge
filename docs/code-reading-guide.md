@@ -11,7 +11,7 @@
 | 1 | `airplay-frontend/src/types.ts` | 页面接收什么数据？哪些数值是帧、毫秒、Hz 或 ppm？ |
 | 2 | `airplay-frontend/src/protocol.ts` | 桌面 JSON 怎样从 `unknown` 变成可读取的数据？缺失或错误字段如何处理？ |
 | 3 | `airplay-frontend/src/useStreamSession.ts`、`useDiagnostics.ts`、`App.vue` | 会话控制怎样独立于设备视图？事件怎样改变页面状态？ |
-| 4 | `airplay-frontend/src-tauri/src/main.rs` | 命令怎样校验设备、来源和会话，并启动工作线程？ |
+| 4 | 桌面 `main.rs`、`session.rs`、`stream_start.rs`、`configuration.rs` | 怎样预留会话、后台准备、取消与发布？配置如何互斥？ |
 | 5 | `airplay-core/src/source.rs` | 谁持有持续采集线程？预览与串流如何共用它？ |
 | 6 | `airplay-core/src/live.rs` | 采集、转换、管道、协议日志和最终报告怎样连接？ |
 | 7 | `capture.rs`、`convert.rs`、`drift.rs` | 音频格式、资源释放、重采样状态和时钟校正为什么这样实现？ |
@@ -21,14 +21,14 @@
 ## 从点击播放到实际串流
 
 1. `useStreamSession/start` 调用页面快照重置，设置 `busy`，发送 `start_stream`。设置中的 `latency` 是播放提前量，`buffer` 是后端预缓冲时长；两者单位都是 ms。`mapping` 是来源声道下标，从 0 开始。
-2. 桌面 `start_stream` 检查有没有活动会话或设备发现、设备名称是否唯一、两台设备是否同一个立体声对、端点是否存在以及映射是否越界。校验通过后保存偏好并创建会话控制和密码管道。
-3. `ensure_source` 复用同端点的健康采集线程；来源改变时先结束旧线程。工作线程先发 `preparing_source`，再调用 `wait_ready`。连续采集至少稳定 500 ms、至少收到 3 包、最近一包不超过 250 ms 才算就绪；故障或长间隔会重置窗口，最长等待 8 秒。静音也可就绪。
+2. 桌面 `start_stream` 在短锁内预留会话编号并返回；后台检查设备名称、立体声关系、端点及声道，再保存偏好、创建密码服务。Preparing 使用 15 秒预算；慢步骤前后核对取消，超时保留占用，见[启动准备](stream-startup.md)。
+3. 工作线程先发 `preparing_source`。`ensure_source` 复用同端点的健康采集线程；来源改变时先结束旧线程。新建 Source 先由本次准备持有，调用 `wait_ready` 后核对取消，再发布 Source/密码通道和 Active 阶段。连续采集至少稳定 500 ms、至少收到 3 包、最近一包不超过 250 ms 才算就绪；故障或长间隔会重置窗口，最长等待 8 秒。静音也可就绪。
 4. `live::run_gui` 启动原生后端进行协议连接。`PCM_READY` 表示握手完成，页面进入启动采集阶段；遥测到达后才置 `playing` 并显示串流中。
 5. `Source::consume` 挂接一个订阅者，交付交错 float32 立体声。`Converter` 跨音频包保存滤波器历史，转换为 44.1 kHz 的 i16。写管道线程将 PCM 发送给后端。
 6. 遥测约每 250 ms 更新一次。控制器以实际启动水位为基准，按水位偏差调整转换比例。`correction_ppm` 是采样率微调量：水位偏高时减慢输出，不能用它表示音量。
 7. 工作线程收尾生成脱敏报告、关闭密码管道、释放会话占用，最后发 `finished`；前端据此结束忙碌状态，并保留本次诊断数据。
 
-命令返回和事件是独立异步通道，事件可能先于命令返回。每条串流事件带 `session_id`；页面先暂存最多 512 条事件，等启动命令返回确认本次编号后，按顺序处理匹配编号的事件。不能从第一条事件认领编号，否则旧事件可能冒充新会话。超量时明确请求停止并保留收尾事件；启动失败或卸载时丢弃暂存。`finished` 后不再处理该会话的迟到事件，停止期间不再打开密码框或更新播放状态。
+命令返回和事件是独立异步通道，事件可能先于命令返回。每条串流事件带 `session_id`；页面先暂存最多 512 条事件，等启动命令返回确认本次编号后，按顺序处理匹配编号的事件。不能从第一条事件认领编号，否则旧事件可能冒充新会话。超量时明确请求停止并保留收尾事件；启动失败或卸载时丢弃暂存。`finished` 后不再处理该会话的迟到事件，停止期间不再打开密码框或更新播放状态。停止命令携带 sessionId；编号返回前记住意图并在确认后补发，卸载后迟到编号也单独取消，避免旧请求影响新会话。
 
 播放端点另有原始音频启动检查：仅在首次稳定之前，端点电平大于 0.01、确认未静音且音量非零，但全部原始声道持续全零时，暂停就绪判定；矛盾持续 500 ms 后释放旧 WASAPI 客户端，再创建新客户端。尚未挂接串流时最多重建三次，每次重置采集计数与稳定窗口，并在 `source-startup.jsonl` 记录 `loopback_reopen`。连续 500 ms 无矛盾后，当前客户端永久结束这项启动检查，后续暂停/恢复不重新开启；电平和原始包不一致不能单独证明运行中的回环失败。正常安静来源也可完成检查。挂接订阅前仍核对就绪；已有串流不自动重建或重置时钟。
 
@@ -76,7 +76,7 @@
 
 启动日志、漂移日志和管线诊断都通过有界队列交给独立日志线程，打开文件、脱敏、序列化和轮转也不在采集回调执行。漂移写盘错误不再传播为音频错误；CLI 摘要由日志线程输出，GUI 不重复写控制台。协议文件在启动时打开，读线程先解析原始状态和通知就绪，再向独立日志线程提交脱敏副本，文件/控制台写入不在读线程执行；GUI 原始控制事件保持独立投递。
 
-`diagnostics.rs` 的 `LogWorker<T>` 共用非阻塞入队、丢失计数和收尾机制；`DetailLog` 继续表示 JSON 诊断，协议日志使用专门记录类型。Source 日志收尾最多等待 250 ms；会话在回收后端及读写线程后，给协议及各诊断日志共用 250 ms 截止时间。完整串流报告增加 `protocol_log_status`，各日志状态包含 `dropped_records`、`pending_records`、`timed_out` 和 `error`；pending 是尚未完成处理记录的快照，不代表磁盘持久化保证。协议日志溢出/写入失败可能丢展示文本及故障上下文，原始控制状态继续处理。超时不会取消底层 I/O，工作线程可能继续驻留；若恢复则不再处理积压。15 秒只限制后端退出等待，stderr 读取、GUI 回调、协议读线程收尾和最终报告写盘仍不是整个应用停止的硬期限。
+`diagnostics.rs` 的 `LogWorker<T>` 共用非阻塞入队、丢失计数和收尾机制；`DetailLog` 继续表示 JSON 诊断，协议日志使用专门记录类型。Source 日志收尾最多等待 250 ms；会话在回收后端及读写线程后，给协议及各诊断日志共用 250 ms 截止时间。完整串流报告增加 `protocol_log_status`，各日志状态包含 `dropped_records`、`pending_records`、`timed_out` 和 `error`；pending 是尚未完成处理记录的快照，不代表磁盘持久化保证。协议日志溢出/写入失败可能丢展示文本及故障上下文，原始控制状态继续处理。超时不会取消底层 I/O，工作线程可能继续驻留；若恢复则不再处理积压。首次停止请求建立共享 15 秒预算，涵盖后端、读写线程、诊断/报告和桌面密码管道收尾；应用退出另有进程级兜底。它不保证任意驱动或系统 I/O 在期限内退出，详情见[停止期限](stream-shutdown.md)。
 
 `test/core/unit/live/` 中的单元测试覆盖队列满/断开时的计数回滚、已入队 PCM 在 EOF 前排空、断管报错、不同音频包大小下的声道与重采样总时长，以及协议状态与日志脱敏。执行 `cargo test --manifest-path airplay-core/Cargo.toml --locked --offline --lib`；需要声卡或真实接收设备的测试仍单独忽略，编译和这些单元测试不能代替实机听感验证。
 
@@ -156,4 +156,4 @@ pnpm --dir airplay-frontend format:check
 
 ## Source 缓冲与状态阅读入口
 
-`source.rs/Subscription::send_audio` 在时长预算接受后调用 `source/buffers.rs/Pool::copy`，仍复制完整输入。`Source::consume` 在 sink 借用结束后归还当前 Vec，解除订阅释放池和剩余块。先读 [Source 测量与限制](source-performance.md)，再看 `test/core/unit/source/buffers.rs` 和 `source.rs` 的跨线程回归；新建/复用/扩容计数不等于全进程分配次数。多个会话布尔值和各层锁的语义见[状态说明](session-state.md)，本轮没有改变生产状态机。
+`source.rs/Subscription::send_audio` 在时长预算接受后调用 `source/buffers.rs/Pool::copy`，仍复制完整输入。`Source::consume` 在 sink 借用结束后归还当前 Vec，解除订阅释放池和剩余块。先读 [Source 测量与限制](source-performance.md)，再看 `test/core/unit/source/buffers.rs` 和 `source.rs` 的跨线程回归；新建/复用/扩容计数不等于全进程分配次数。多个会话布尔值和各层锁的语义见[状态说明](session-state.md)，后续针对启动长时间持锁加入 Preparing 专用阶段及配置占用；前端观察状态继续保留，详见[启动准备](stream-startup.md)。

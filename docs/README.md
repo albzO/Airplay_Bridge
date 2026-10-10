@@ -17,6 +17,7 @@
 - [测试说明](../test/README.md)：根目录测试分类、DOM 自动交互、运行入口、合成样例与生成内容。
 - [架构](architecture.md)：模块职责、音频与控制通道。
 - [代码阅读与修改指南](code-reading-guide.md)：关键入口、状态变化、数据流、参数单位和 TypeScript 兼容说明。
+- [启动准备与取消](stream-startup.md)：短锁预留、后台准备、配置互斥、超时占用与设置提交边界。
 - [stderr 与停止期限](stream-shutdown.md)：独立读取状态、共享收尾预算、超时资源保护及应用退出。
 - [会话状态与锁](session-state.md)：各层状态含义、正常组合及并发边界。
 - [性能基线](performance-baseline.md)：无声卡合成测量、复现与解释范围。

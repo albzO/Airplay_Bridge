@@ -47,3 +47,8 @@
 这是程序等待预算及应用退出兜底，不是 Windows 调度/驱动的硬实时保证。普通“停止串流”不会强杀整个应用，也不能安全终止任意 Rust 回调；未结束资源会阻止重连。已进入的文件写入可能在等待到期后才完成，报告文件也可能晚于界面错误落盘。应用强制退出可能丢失尚未完成的日志或报告。
 
 Windows API 语义依据：[CancelSynchronousIo](https://learn.microsoft.com/en-us/windows/win32/api/ioapiset/nf-ioapiset-cancelsynchronousio) 明确取消不等待操作完成；[Job Objects](https://learn.microsoft.com/en-us/windows/win32/procthread/job-objects) 说明 Job 的进程组管理与句柄关闭终止规则。
+
+
+## 后续：启动准备也可登记停止
+
+`374f3e8` 后的优化把会话占用提前到慢准备之前，停止命令按编号设置标志。准备有独立 15 秒预算，慢配置/发现/预览与启动共用占用仲裁，驱动/写盘不再占用全局会话锁。设置提交点、迟到结果、新建 Source 清理及配置命令尚无统一上限的边界见[启动准备](stream-startup.md)。

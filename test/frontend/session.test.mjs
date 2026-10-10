@@ -324,3 +324,53 @@ for (const code of ['STOP_TIMEOUT', 'BACKEND_STDERR_FAILED']) {
     assert.equal(p.error.value, error);
   });
 }
+
+test('stop before startup acknowledgement waits for the trusted id and sends one scoped command', async (t) => {
+  const command = deferred();
+  const stops = [];
+  const p = page(t, (name, args) => {
+    if (name === 'start_stream') return command.promise;
+    if (name === 'stop_stream') stops.push(args);
+    return Promise.resolve();
+  });
+  const started = p.start();
+  await p.stop();
+  assert.deepEqual(stops, []);
+  p.event(event(999, 'finished'));
+  p.event(event(101, 'password_required', { host: 'fixture' }));
+  command.resolve(101);
+  await started;
+  assert.deepEqual(stops, [{ sessionId: 101 }]);
+  assert.equal(p.pending.value, '');
+  assert.equal(p.stopping.value, true);
+  p.event(event(101, 'finished', { cancelled: true }));
+  assert.equal(p.busy.value, false);
+});
+
+test('unmount cancels a late acknowledged reservation without updating the disposed page', async (t) => {
+  const command = deferred();
+  const stops = [];
+  const p = page(t, (name, args) => {
+    if (name === 'start_stream') return command.promise;
+    if (name === 'stop_stream') stops.push(args);
+    return Promise.resolve();
+  });
+  const started = p.start();
+  p.unmount();
+  command.resolve(101);
+  await started;
+  assert.deepEqual(stops, [{ sessionId: 101 }]);
+  assert.equal(p.session.value, null);
+});
+
+test('preparation timeout can finish before the acknowledgement and retains the failure', async (t) => {
+  const command = deferred();
+  const p = page(t, () => command.promise);
+  const started = p.start();
+  p.event(event(101, 'finished', { error: '[START_TIMEOUT] fixture blocked driver' }));
+  command.resolve(101);
+  await started;
+  assert.equal(p.busy.value, false);
+  assert.equal(p.phase.value, '串流失败');
+  assert.match(p.error.value, /START_TIMEOUT/);
+});

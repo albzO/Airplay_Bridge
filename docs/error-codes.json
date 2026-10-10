@@ -1,5 +1,14 @@
 [
   {
+    "code": "START_TIMEOUT",
+    "exit": 1,
+    "message": "串流启动准备超过期限。",
+    "action": "检查采集驱动和磁盘；后台操作尚未确认退出时请重启应用后连接。",
+    "patterns": [
+      "[START_TIMEOUT]"
+    ]
+  },
+  {
     "code": "BACKEND_STDERR_FAILED",
     "exit": 1,
     "message": "读取后端 stderr 失败。",

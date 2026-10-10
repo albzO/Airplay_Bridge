@@ -71,13 +71,29 @@ impl Settings {
             .unwrap_or_default()
     }
 
+    #[cfg(test)]
     pub fn save(&self, root: &Path) -> Result<(), String> {
+        self.save_checked(root, || Ok(()))
+    }
+
+    /// 调用者独占配置写入；慢写入后再次检查取消，再提交文件替换。
+    /// The caller serializes writers; check cancellation again after writing, before committing.
+    pub fn save_checked(
+        &self,
+        root: &Path,
+        check: impl Fn() -> Result<(), String>,
+    ) -> Result<(), String> {
         self.validate()?;
+        check()?;
         let pending = root.join("settings.pending.json");
         let bytes = serde_json::to_vec_pretty(self).map_err(|e| e.to_string())?;
         // 完整写入后再替换，避免中断时截断现有设置文件。
         // Write the complete pending file before replacing the saved file to avoid truncating it.
         fs::write(&pending, bytes).map_err(|e| e.to_string())?;
+        if let Err(error) = check() {
+            let _ = fs::remove_file(&pending);
+            return Err(error);
+        }
         fs::rename(pending, root.join("settings.json")).map_err(|e| e.to_string())
     }
 }

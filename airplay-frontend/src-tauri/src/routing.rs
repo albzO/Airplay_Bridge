@@ -15,10 +15,11 @@ pub fn set_mapping(
     session: Option<&Mutex<[usize; 2]>>,
     source: Option<&Mutex<[usize; 2]>>,
     mapping: [usize; 2],
+    check: impl Fn() -> Result<(), String>,
 ) -> Result<(), String> {
     let mut next = settings.clone();
     next.mapping = mapping;
-    next.save(root)?;
+    next.save_checked(root, check)?;
     // 保存失败时，不改变内存设置和正在播放的声道。
     // A failed save leaves both remembered and live routing unchanged.
     *settings = next;
@@ -36,10 +37,11 @@ pub fn set_speaker_order(
     settings: &mut Settings,
     active: Option<&AtomicBool>,
     swapped: bool,
+    check: impl Fn() -> Result<(), String>,
 ) -> Result<(), String> {
     let mut next = settings.clone();
     next.speakers_swapped = swapped;
-    next.save(root)?;
+    next.save_checked(root, check)?;
     *settings = next;
     if let Some(active) = active {
         active.store(swapped, Ordering::Relaxed);

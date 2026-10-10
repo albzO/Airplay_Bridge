@@ -952,7 +952,10 @@ test('connecting and stopping lock controls and suppress late password/ready eve
   await stop.click();
   await expect(page.getByRole('button', { name: '停止中…', exact: true })).toBeDisabled();
   await send(page, 101, { kind: 'password_required', host });
+  expect(await calls(page, 'stop_stream')).toHaveLength(0);
   await resolve(page, 'start_stream', 101);
+  await expect.poll(async () => (await calls(page, 'stop_stream')).length).toBe(1);
+  expect((await calls(page, 'stop_stream'))[0].args).toEqual({ sessionId: 101 });
   await send(page, 101, { kind: 'native', line: '[PROBE] PCM_READY' });
   await send(page, 101, telemetry);
   await expect(page.getByRole('dialog')).toHaveCount(0);
@@ -1056,4 +1059,23 @@ test('pending password submission cannot submit twice or alter a new session aft
   await password(page).press('Enter');
   await expect.poll(async () => (await calls(page, 'submit_password')).length).toBe(2);
   expect((await calls(page, 'submit_password'))[1].args.sessionId).toBe(102);
+});
+
+test('background preparation failure after acknowledgement restores controls with its timeout code', async ({
+  page,
+}) => {
+  await open(page);
+  await start(page).click();
+  await send(page, 101, { kind: 'preparing_source' });
+  await expect(page.locator('.status')).toHaveText('等待采集稳定');
+  await send(page, 101, {
+    kind: 'finished',
+    error: '[START_TIMEOUT] fixture blocked driver',
+    error_code: 'START_TIMEOUT',
+  });
+  await expect(start(page)).toBeEnabled();
+  await expect(source(page)).toBeEnabled();
+  await expect(page.locator('.alert')).toContainText('START_TIMEOUT');
+  await send(page, 101, { kind: 'password_required', host });
+  await expect(page.getByRole('dialog')).toHaveCount(0);
 });

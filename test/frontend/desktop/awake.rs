@@ -1,6 +1,32 @@
 use super::*;
 #[test]
 fn system_and_display_request_is_idempotent_and_closes_its_handle() {
+    // 数值句柄可被并行测试复用；独立进程里保留真实 CloseHandle 验证。
+    // Isolate the real CloseHandle check from handle-value reuse in concurrent tests.
+    if std::env::var_os("AIRPLAY_AWAKE_HANDLE_CHILD").is_none() {
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "awake::tests::system_and_display_request_is_idempotent_and_closes_its_handle",
+                "--nocapture",
+            ])
+            .env("AIRPLAY_AWAKE_HANDLE_CHILD", "1")
+            .spawn()
+            .unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            if let Some(status) = child.try_wait().unwrap() {
+                assert!(status.success());
+                return;
+            }
+            if std::time::Instant::now() >= deadline {
+                let _ = child.kill();
+                let _ = child.wait();
+                panic!("isolated awake handle check timed out");
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+    }
     let mut request = Awake::default();
     request.set(true).unwrap();
     let first = request.handle.unwrap();

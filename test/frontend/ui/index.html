@@ -81,7 +81,8 @@
                 });
               }
             }, 40);
-          if (cmd === 'stop_stream') send(id, { kind: 'finished', cancelled: true });
+          if (cmd === 'stop_stream' && args.sessionId === id)
+            send(id, { kind: 'finished', cancelled: true });
         },
         { shouldMockEvents: true },
       );

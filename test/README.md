@@ -6,6 +6,8 @@ Test sources are committed under root `test/`. Production modules retain attachm
 
 结构整理后，核心子模块测试归入 `core/unit/capture/`、`live/`、`source/`；后端定位测试为 `core/unit/backend.rs`。原模块名、Cargo 过滤器和默认忽略规则不变，测试挂接统一位于生产模块尾部。前端脚本直接观察生产会话模块的内部编号，不依赖 App 模板未使用的绑定。完整改动与清理范围见[仓库复查](../docs/repository-review.md)。
 
+启动准备阶段：桌面 **17**、前端脚本 **28**、DOM **29**、核心 **112 通过 / 9 默认忽略**。新增 `frontend/desktop/session.rs` 的 6 项回归，覆盖生产步骤边界的阻塞取消、准备/停止期限、迟到编号、互斥占用及真实暂存写入后取消；脚本/DOM 检查编号返回前停止、卸载迟到编号取消和准备超时。旧唤醒句柄释放检查在独立子进程执行，避免并行测试复用句柄数值。测试替身及未覆盖范围见[启动准备](../docs/stream-startup.md)。
+
 stderr/停止预算阶段：核心 **112 通过 / 9 默认忽略**、桌面 **11**、前端脚本 **25**、DOM **28**。新增 `core/unit/shutdown.rs` 及 `frontend/desktop/shutdown.rs`；协议/传输/Source/报告/密码管道回归覆盖独立读取失败、共享期限、阻塞等待、真实 Windows 子进程和管道、超时资源保留及用户停止后的真实错误。均无需音频设备，边界见 [stderr 与停止期限](../docs/stream-shutdown.md)。
 
 Source 缓冲池阶段：核心 97 通过 / 9 默认忽略（7 项设备/本机环境检查及 2 项显式基线）、桌面 9、前端脚本 23 通过。新增 `core/unit/source/buffers.rs` 的位值/所有权/扩容和保留上限回归，`source.rs` 的非法/超预算/大包及跨线程变长包/采样率回归；原失败、停止、重连清理测试继续通过。`source/baseline.rs` 使用真实 send_audio 路径，显式 Release 执行；产物忽略、默认覆盖固定文件且每份小于 64 KiB。方法、命令和前后结果见 [Source 性能记录](../docs/source-performance.md)。本阶段没有改变前端状态机或重跑 DOM/设备播放。

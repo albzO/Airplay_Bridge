@@ -7,7 +7,7 @@
 | 层 | 当前边界 | 结论 |
 |---|---|---|
 | Vue 页面与组件 | App 编排设置/命令/设备选择；视图组件只展示及发事件；useStreamSession 管会话，useDiagnostics 管诊断 | 分工已有实现和回归，不按行数继续拆分 |
-| Tauri 桌面 | main 注册命令与共享状态；settings/routing/auth/awake/window 各管持久化、控制及资源 | 保留单一 Engine；状态和锁含义见[会话状态](session-state.md) |
+| Tauri 桌面 | main 注册命令与共享状态；session/stream_start/configuration 管理预留、后台准备及配置互斥，settings/routing/auth/awake/window 管持久化、控制及资源 | 保留单一 Engine；状态和锁含义见[会话状态](session-state.md) |
 | Rust 核心 | Source 持续采集及单订阅，capture 子模块负责时间线/解码/统计；live 子模块负责转换、管道、协议与日志 | 继续保持持续来源与每次播放会话的区别 |
 | C 后端 | 本地 Windows 兼容层、上下文补丁、固定上游版本和校验/选择脚本 | 文件通过 CMake、include 或生成选择器使用，不能只按文件名判断为废弃 |
 | 测试 | frontend/backend/core 分类，Rust 私有模块通过 path 挂接 | 将零散子模块测试归位，保留模块名与运行过滤器 |
@@ -57,6 +57,7 @@ NSIS 与 Inno 两套脚本分别由当前打包脚本和已有安装版升级流
 
 1. stderr 独立读取状态已在后续任务补齐，保留原始 OS 错误、EOF/取消区别与协议首因。
 2. 后续任务增加共享 15 秒收尾期限和应用退出兜底；任意回调及底层 I/O 仍不能安全强杀，未退出资源阻止重连。实现和验证边界见 [stderr 与停止期限](stream-shutdown.md)。
-3. App、桌面 main 和 capture 仍负责必要的跨模块编排。后续拆分应围绕实际变更或可测试的职责，不继续以减少行数为目标。
+3. 后续任务已将启动准备和配置命令迁出 main，增加短锁预留、取消核对与准备期限，见[启动准备](stream-startup.md)。配置/初始化驱动调用仍无统一响应期限，未完成操作持有占用阻止重复累积。
+4. App、桌面编排模块和 capture 仍负责必要的跨模块编排。后续拆分应围绕实际变更或可测试的职责，不继续以减少行数为目标。
 
 前两项由后续独立变更处理，本次结构清理自身没有包含这些行为修改。仍未宣称完成驱动或并发模型证明。

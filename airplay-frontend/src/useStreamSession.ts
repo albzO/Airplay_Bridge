@@ -41,6 +41,8 @@ export function useStreamSession(options: SessionOptions) {
   let disposed = false;
 
   onUnmounted(() => {
+    if (busy.value && session.value !== null)
+      void invokeCommand('stop_stream', { sessionId: session.value }).catch(() => {});
     disposed = true;
     request++;
     starting = false;
@@ -82,7 +84,12 @@ export function useStreamSession(options: SessionOptions) {
       if (!disposed && ticket === request) error.value = String(e);
       return undefined;
     });
-    if (disposed || ticket !== request) return;
+    if (disposed || ticket !== request) {
+      // 编号迟到也只取消它所属的会话，不能停止后来建立的连接。
+      // A late id cancels only its own reservation, never a newer connection.
+      if (id !== undefined) void invokeCommand('stop_stream', { sessionId: id }).catch(() => {});
+      return;
+    }
     starting = false;
     const queued = early;
     early = [];
@@ -95,12 +102,13 @@ export function useStreamSession(options: SessionOptions) {
       return;
     }
     session.value = id;
-    if (overflow) {
-      error.value = '连接期间事件积压过多，已请求停止；请重新连接';
+    if (overflow || stopping.value) {
+      if (overflow) error.value = '连接期间事件积压过多，已请求停止；请重新连接';
       await stop();
+      if (disposed || ticket !== request) return;
       // 溢出后仍处理收尾：已结束的后端不会再次发送 finished。
       // Finalize on overflow too; an exited backend will not emit finished again.
-      for (const entry of queued) if (entry.kind === 'finished') event(entry);
+      for (const entry of queued) if (!overflow || entry.kind === 'finished') event(entry);
     } else {
       for (const entry of queued) event(entry);
     }
@@ -114,7 +122,9 @@ export function useStreamSession(options: SessionOptions) {
     password.value = '';
     pending.value = '';
     try {
-      await invokeCommand('stop_stream');
+      // 返回编号之前记住停止意图；取得可信编号后由 start 补发。
+      // Keep stop intent before acknowledgement; start sends it once the trusted id arrives.
+      if (session.value !== null) await invokeCommand('stop_stream', { sessionId: session.value });
     } catch (e) {
       if (!disposed && ticket === request && busy.value) error.value = String(e);
     }

@@ -2,6 +2,9 @@
 
 ## 未发布 / Unreleased
 
+- 启动改为短锁预留编号、后台准备及取消后核对发布；准备预算 15 秒，超时保留占用防止线程累积。配置/发现/预览改为互斥后台操作，设置提交前再次检查取消，停止命令按编号隔离，并补充文件/并发/交互回归。
+  Reserve stream ids before background preparation, enforce preparation deadlines and scoped cancellation, serialize background configuration, and cover late results and failed/cancelled saves.
+
 - 独立记录后端 stderr 读取状态与原始 Win32 错误；统一首次停止请求的 15 秒预算，收尾涵盖后端、线程、DACP、日志、报告及密码管道。增加 Job Object 和应用退出兜底，未确认退出的资源阻止重连/重复采集，补充无设备管道与交互回归。
   Track stderr read failures separately and share one stop deadline across cleanup; guard child processes with Job Objects, bound final persistence, and prevent resource overlap after timeouts.
 

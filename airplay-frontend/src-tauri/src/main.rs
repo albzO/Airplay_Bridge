@@ -11,19 +11,18 @@
 mod auth;
 mod auth_memory;
 mod awake;
+mod configuration;
 mod routing;
+mod session;
 mod settings;
 mod startup;
 #[path = "../../../test/frontend/desktop/startup.rs"]
 mod startup_checks;
+mod stream_start;
 mod window;
-use homepod_test::{
-    capture,
-    discovery::{self, Device},
-    live::{self, GuiContext, GuiControl, GuiEmitter},
-    source::Source,
-};
+use homepod_test::{capture, discovery::Device, source::Source};
 use serde_json::{Value, json};
+use session::Session;
 use settings::Settings;
 use std::{
     fs,
@@ -31,10 +30,8 @@ use std::{
     sync::{
         Arc, Mutex,
         atomic::{AtomicBool, Ordering},
-        mpsc::Sender,
     },
-    thread,
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    time::Instant,
 };
 use tauri::{
     Emitter, Manager, State,
@@ -42,16 +39,6 @@ use tauri::{
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
 };
 use window::{quit, reveal, window_action};
-/// 一个播放会话持有控制标志和密码回复通道，不拥有持续采集线程。
-/// hosts 是已校验的目标地址，用于拒绝发给其他设备的密码回复。
-/// A session owns control flags and a password reply channel, not the persistent capture thread.
-/// hosts contains validated target addresses and rejects password replies for other devices.
-struct Session {
-    id: u64,
-    control: Arc<GuiControl>,
-    reply: Sender<auth::Reply>,
-    hosts: Vec<String>,
-}
 /// 应用级共享状态。Mutex 保护可替换对象；AtomicBool 用于跨线程快速通知。
 /// session 的 Some 同时充当连接/播放占用标志，直到工作线程收尾才清除。
 /// source 可以在 session 为 None 时继续运行，为页面提供音量预览。
@@ -66,7 +53,7 @@ struct Engine {
     auth_memory: Mutex<auth_memory::Memory>,
     session: Mutex<Option<Session>>,
     source: Mutex<Option<Arc<Source>>>,
-    discovering: AtomicBool,
+    configuration_busy: AtomicBool,
     quitting: AtomicBool,
     capture_enabled: AtomicBool,
     awake: Mutex<awake::Awake>,
@@ -87,73 +74,44 @@ fn stop_source_until(e: &Engine, deadline: Instant) -> Result<(), String> {
 /// 切换端点时先等待旧线程退出再创建新来源，保证不会同时占用两份采集资源。
 /// Reuse a healthy source at the same endpoint and update mapping instead of reopening WASAPI.
 /// Join the previous thread before switching endpoints to avoid holding two capture resources.
-fn ensure_source(app: tauri::AppHandle, e: &Engine) -> Result<Arc<Source>, String> {
+fn ensure_source(
+    app: tauri::AppHandle,
+    e: &Engine,
+    settings: &Settings,
+    check: impl Fn() -> Result<(), String>,
+) -> Result<(Arc<Source>, bool), String> {
+    check()?;
     if e.quitting.load(Ordering::Relaxed) {
         return Err("应用正在退出".into());
     }
-    let settings = e.settings.lock().unwrap().clone();
     let mut active = e.source.lock().unwrap();
+    check()?;
     if let Some(source) = active.as_ref() {
         if source.endpoint == settings.endpoint && source.is_running() && !source.is_stopping() {
             *source.mapping.lock().unwrap() = settings.mapping;
-            return Ok(source.clone());
+            return Ok((source.clone(), false));
         }
     }
     if let Some(source) = active.as_ref() {
         source.stop()?;
     }
     *active = None;
+    check()?;
     if settings.endpoint.is_empty() {
         return Err("未选择音频来源".into());
     }
     let emit = Arc::new(move |event: Value| {
         let _ = app.emit("source-level", event);
     });
-    let source = Source::start(e.root.clone(), settings.endpoint, settings.mapping, emit);
-    *active = Some(source.clone());
-    Ok(source)
-}
-#[tauri::command]
-async fn monitor_source(
-    app: tauri::AppHandle,
-    engine: State<'_, Arc<Engine>>,
-) -> Result<(), String> {
-    if engine.session.lock().unwrap().is_some() {
-        return Err("串流时不能更换来源".into());
-    }
-    if !engine.capture_enabled.load(Ordering::SeqCst) {
-        return Ok(());
-    }
-    let e = engine.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        let source = ensure_source(app, &e)?;
-        source.wait_ready(&e.quitting).map_err(|e| e.to_string())
-    })
-    .await
-    .map_err(|e| e.to_string())?
-}
-#[tauri::command]
-fn set_capture_enabled(
-    app: tauri::AppHandle,
-    engine: State<Arc<Engine>>,
-    enabled: bool,
-) -> Result<(), String> {
-    let session = engine.session.lock().unwrap();
-    if session.is_some() {
-        return Err("请先停止串流，再关闭采集".into());
-    }
-    if enabled {
-        ensure_source(app.clone(), &engine)?;
-    } else {
-        stop_source(&engine)?;
-    }
-    engine.capture_enabled.store(enabled, Ordering::SeqCst);
-    let endpoint = engine.settings.lock().unwrap().endpoint.clone();
-    let _ = app.emit(
-        "source-level",
-        json!({"endpoint":endpoint,"captureEnabled":enabled,"peaks":[0.,0.]}),
+    let source = Source::start(
+        e.root.clone(),
+        settings.endpoint.clone(),
+        settings.mapping,
+        emit,
     );
-    Ok(())
+    // 新来源先由调用者持有；准备成功/再次核对取消后才发布到 Engine。
+    // The caller owns a new source until validation/cancellation checks allow publication.
+    Ok((source, true))
 }
 #[tauri::command]
 fn set_autostart(enabled: bool) -> Result<(), String> {
@@ -164,9 +122,6 @@ fn devices(e: &Engine) -> Vec<Device> {
         .ok()
         .and_then(|b| serde_json::from_slice(&b).ok())
         .unwrap_or_default()
-}
-fn save(e: &Engine, s: &Settings) -> Result<(), String> {
-    s.save(&e.root)
 }
 #[tauri::command]
 async fn initialize(engine: State<'_, Arc<Engine>>) -> Result<Value, String> {
@@ -179,258 +134,6 @@ async fn initialize(engine: State<'_, Arc<Engine>>) -> Result<Value, String> {
     Ok(
         json!({"devices":devices(&e),"inputs":inputs,"settings":e.settings.lock().unwrap().clone(),"dataPath":e.root,"dataMode":if e.portable { "portable" } else { "installed" },"backendAvailable":e.backend.exists(),"awakeActive":e.awake.lock().unwrap().active(),"awakeError":e.awake_startup_error,"autostart":startup.as_ref().copied().unwrap_or(false),"autostartError":startup.err(),"captureEnabled":e.capture_enabled.load(Ordering::SeqCst)}),
     )
-}
-#[tauri::command]
-async fn discover_devices(engine: State<'_, Arc<Engine>>) -> Result<Vec<Device>, String> {
-    let e = engine.inner().clone();
-    if e.session.lock().unwrap().is_some() {
-        return Err("请停止串流后刷新设备".into());
-    }
-    if e.discovering.swap(true, Ordering::SeqCst) {
-        return Err("正在发现设备".into());
-    }
-    let worker = e.clone();
-    let result = tauri::async_runtime::spawn_blocking(move || {
-        discovery::discover(&worker.root, 6).map_err(|e| e.to_string())
-    })
-    .await;
-    e.discovering.store(false, Ordering::SeqCst);
-    result.map_err(|e| e.to_string())??;
-    Ok(devices(&e))
-}
-#[tauri::command]
-fn save_settings(engine: State<Arc<Engine>>, settings: Settings) -> Result<(), String> {
-    settings.validate()?;
-    if engine.quitting.load(Ordering::SeqCst) {
-        return Err("应用正在退出".into());
-    }
-    let mut current_settings = engine.settings.lock().unwrap();
-    let mut request = engine.awake.lock().unwrap();
-    let was_active = request.active();
-    request.set(settings.keep_awake)?;
-    if let Err(error) = save(&engine, &settings) {
-        let _ = request.set(was_active);
-        return Err(error);
-    }
-    *current_settings = settings;
-    Ok(())
-}
-#[tauri::command]
-fn start_stream(
-    app: tauri::AppHandle,
-    engine: State<Arc<Engine>>,
-    names: Vec<String>,
-    settings: Settings,
-    password_first: bool,
-) -> Result<u64, String> {
-    let e = engine.inner().clone();
-    let mut active = e.session.lock().unwrap();
-    if active
-        .as_ref()
-        .is_some_and(|s| !s.control.cleanup_complete.load(Ordering::Acquire))
-    {
-        return Err("[STOP_TIMEOUT] 上次会话资源尚未确认退出，请重启应用后连接".into());
-    }
-    if active.is_some() || e.discovering.load(Ordering::SeqCst) {
-        return Err("已有会话或正在发现设备".into());
-    }
-    if !e.backend.exists() {
-        return Err("缺少 airplay-backend.exe，请从完整 dist 文件夹启动".into());
-    }
-    if names.is_empty() || names.len() > 2 {
-        return Err("请选择一台设备或一个立体声对".into());
-    }
-    settings.validate()?;
-    let found = devices(&e);
-    let mut chosen = Vec::new();
-    for name in &names {
-        let d: Vec<_> = found.iter().filter(|d| &d.name == name).collect();
-        if d.len() != 1 {
-            return Err("设备名称不唯一，请刷新设备".into());
-        }
-        chosen.push(d[0]);
-    }
-    if names.len() == 2
-        && (names[0] == names[1]
-            || chosen[0]
-                .properties
-                .get("tsid")
-                .filter(|v| !v.is_empty())
-                .is_none()
-            || chosen[0].properties.get("tsid") != chosen[1].properties.get("tsid"))
-    {
-        return Err("这两台设备不是同一个立体声对".into());
-    }
-    let hosts: Vec<String> = chosen
-        .iter()
-        .map(|d| {
-            d.addresses
-                .first()
-                .map(|a| a.to_string())
-                .ok_or("设备没有 IPv4 地址".to_string())
-        })
-        .collect::<Result<_, _>>()?;
-    let policies = e.auth_memory.lock().unwrap();
-    let password_first = password_first || policies.needs_password(chosen[0]);
-    let peer_password_first = chosen.get(1).is_some_and(|d| policies.needs_password(d));
-    drop(policies);
-    let identities: Vec<_> = hosts
-        .iter()
-        .cloned()
-        .zip(chosen.iter().map(|d| auth_memory::key(d)))
-        .collect();
-    let endpoint = settings.endpoint.clone();
-    let inputs = thread::spawn(|| capture::enumerate().map_err(|e| e.to_string()))
-        .join()
-        .map_err(|_| "枚举采集设备失败")??;
-    let input = inputs
-        .iter()
-        .find(|i| i.id == endpoint)
-        .ok_or("请选择有效的音频来源")?;
-    let channels = input.channels.ok_or("不支持此采集格式")? as usize;
-    if settings.mapping.iter().any(|i| *i >= channels) {
-        return Err("声道映射超出了输入设备的声道数".into());
-    }
-    save(&e, &settings)?;
-    *e.settings.lock().unwrap() = settings.clone();
-    let id = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_millis() as u64;
-    let control = Arc::new(GuiControl::new(settings.mapping));
-    // 将底层无会话编号的事件封装到本次 id；页面据此排除旧线程的延迟事件。
-    // 认证记忆只保存“设备需要密码”的策略，不保存输入的密码。
-    // Attach this session id to lower-level events so the UI can reject late callbacks from old workers.
-    // Authentication memory stores only the device's password policy, never the submitted password.
-    let event_app = app.clone();
-    let event_engine = e.clone();
-    let emit: GuiEmitter = Arc::new(move |mut event| {
-        if let Some(host) = auth_memory::password_host(&event) {
-            if let Some((_, identity)) = identities.iter().find(|(address, _)| address == host) {
-                if let Err(error) = event_engine
-                    .auth_memory
-                    .lock()
-                    .unwrap()
-                    .remember(&event_engine.root, identity)
-                {
-                    let _ = event_app.emit("stream-event", json!({"session_id":id,"kind":"auth_memory_error","error":format!("认证方式记录保存失败：{error}")}));
-                }
-            }
-        }
-        event["session_id"] = json!(id);
-        let _ = event_app.emit("stream-event", event);
-    });
-    let pipe = format!("\\\\.\\pipe\\airplay-bridge-{}-{id}", std::process::id());
-    let mut server = auth::Server::start(
-        pipe.clone(),
-        control.stop.clone(),
-        hosts.clone(),
-        emit.clone(),
-    )?;
-    server.use_shutdown_budget(control.shutdown.clone());
-    let source = ensure_source(app.clone(), &e)?;
-    e.capture_enabled.store(true, Ordering::SeqCst);
-    let _ = app.emit(
-        "source-level",
-        json!({"endpoint":endpoint,"captureEnabled":true}),
-    );
-    control.speakers_swapped.store(
-        settings.speakers_swapped && names.len() == 2,
-        Ordering::Relaxed,
-    );
-    *active = Some(Session {
-        id,
-        control: control.clone(),
-        reply: server.replies.clone(),
-        hosts,
-    });
-    // 会话登记完成后释放锁，工作线程收尾和 stop_stream 都需要访问这把锁。
-    // Release the session lock after registration; worker cleanup and stop_stream also need it.
-    drop(active);
-    let privacy = homepod_test::privacy::Redactor::from_root(&e.root);
-    thread::spawn(move || {
-        emit(json!({"kind":"preparing_source"}));
-        let mut result = (|| {
-            source
-                .wait_ready(&control.stop)
-                .map_err(|e| e.to_string())?;
-            let context = GuiContext {
-                backend: e.backend.clone(),
-                endpoint,
-                source,
-                password_pipe: pipe,
-                password_first,
-                peer_password_first,
-                detailed_logs: settings.detailed_logs,
-                capture_diagnostics: settings.capture_diagnostics,
-                control: control.clone(),
-                emit: emit.clone(),
-            };
-            live::run_gui(
-                &e.root,
-                &names[0],
-                names.get(1).map(String::as_str),
-                settings.latency,
-                settings.buffer,
-                context,
-            )
-            .map_err(|e| e.to_string())
-        })()
-        .map_err(|detail: String| homepod_test::failure::describe(&detail, "STREAM_FAILED"));
-        let cancelled = control.stop.load(Ordering::Acquire);
-        let deadline = control.shutdown.begin();
-        if !cancelled {
-            if let Err(error) = &result {
-                let root = e.root.clone();
-                let error = error.clone();
-                let privacy = privacy.clone();
-                let _ = homepod_test::shutdown::run_until(
-                    deadline.min(Instant::now() + Duration::from_millis(100)),
-                    move || {
-                        let _ = homepod_test::log_store::write(
-                            &root.join("logs").join(format!("ui-fault-{id}.log")),
-                            privacy.text(&error),
-                            64 * 1024,
-                        );
-                    },
-                );
-            }
-        }
-        // 先结束密码管道及其线程，再释放会话占用，最后通知页面 finished。
-        // 此处不 stop_source：播放停止后还要继续显示当前来源的采集预览。
-        // Close/join the password server, release the session reservation, then emit finished.
-        // Keep source running so capture preview continues after playback stops.
-        if !server.shutdown_until(deadline - Duration::from_millis(50)) {
-            control.cleanup_complete.store(false, Ordering::Release);
-            if result.is_ok() {
-                result = Err("[STOP_TIMEOUT] 密码管道收尾超过统一停止期限".into());
-            }
-        }
-        drop(server);
-        let mut session = e.session.lock().unwrap();
-        if session.as_ref().map(|s| s.id) == Some(id)
-            && control.cleanup_complete.load(Ordering::Acquire)
-        {
-            *session = None;
-        }
-        drop(session);
-        // A user stop must not hide a real cleanup/read failure.
-        let error = finished_error(
-            result,
-            cancelled,
-            control.cleanup_complete.load(Ordering::Acquire),
-        );
-        let safe_error = error.as_ref().map(|detail| privacy.text(detail));
-        let error_code = error
-            .as_ref()
-            .map(|detail| homepod_test::failure::code_for(detail, "STREAM_FAILED"));
-        let _ = homepod_test::shutdown::run_until(deadline, move || {
-            emit(
-                json!({"kind":"finished","error":error,"safe_error":safe_error,"error_code":error_code,"cancelled":cancelled}),
-            )
-        });
-    });
-    Ok(id)
 }
 fn finished_error(
     result: Result<(), String>,
@@ -470,13 +173,15 @@ fn submit_password(
     {
         return Err("密码或设备无效".into());
     }
-    s.reply.send(reply).map_err(|_| "密码请求已结束".into())
+    s.reply
+        .as_ref()
+        .ok_or("密码通道尚未建立")?
+        .send(reply)
+        .map_err(|_| "密码请求已结束".into())
 }
 #[tauri::command]
-fn stop_stream(engine: State<Arc<Engine>>) {
-    if let Some(s) = engine.session.lock().unwrap().as_ref() {
-        s.control.request_stop();
-    }
+fn stop_stream(engine: State<Arc<Engine>>, session_id: u64) {
+    session::stop(&engine.session.lock().unwrap(), session_id);
 }
 #[tauri::command]
 fn set_volume(engine: State<Arc<Engine>>, percent: f64) -> Result<(), String> {
@@ -494,50 +199,6 @@ fn set_volume(engine: State<Arc<Engine>>, percent: f64) -> Result<(), String> {
             .map_err(|_| "音量通道繁忙或已关闭")?;
     }
     Ok(())
-}
-#[tauri::command]
-fn set_mapping(engine: State<Arc<Engine>>, mapping: [usize; 2]) -> Result<(), String> {
-    let endpoint = engine.settings.lock().unwrap().endpoint.clone();
-    let inputs = thread::spawn(|| capture::enumerate().map_err(|e| e.to_string()))
-        .join()
-        .map_err(|_| "枚举采集设备失败")??;
-    let channels = inputs
-        .iter()
-        .find(|i| i.id == endpoint)
-        .and_then(|i| i.channels)
-        .ok_or("无有效采集设备")? as usize;
-    if mapping.iter().any(|c| *c >= channels) {
-        return Err("声道超出范围".into());
-    }
-    let session = engine.session.lock().unwrap();
-    let source = engine.source.lock().unwrap();
-    let mut settings = engine.settings.lock().unwrap();
-    if settings.endpoint != endpoint {
-        return Err("采集来源已更改，请重新选择声道".into());
-    }
-    routing::set_mapping(
-        &engine.root,
-        &mut settings,
-        session.as_ref().map(|s| &s.control.mapping),
-        source.as_ref().map(|s| &s.mapping),
-        mapping,
-    )
-}
-#[tauri::command]
-fn set_speaker_order(engine: State<Arc<Engine>>, swapped: bool) -> Result<(), String> {
-    let session = engine.session.lock().unwrap();
-    if let Some(session) = session.as_ref() {
-        if session.hosts.len() != 2 {
-            return Err("仅立体声对可交换扬声器".into());
-        }
-    }
-    let mut settings = engine.settings.lock().unwrap();
-    routing::set_speaker_order(
-        &engine.root,
-        &mut settings,
-        session.as_ref().map(|s| &s.control.speakers_swapped),
-        swapped,
-    )
 }
 #[tauri::command]
 fn open_logs(engine: State<Arc<Engine>>) -> Result<(), String> {
@@ -622,7 +283,7 @@ fn main() {
                 auth_memory: Mutex::new(auth_memory),
                 session: Mutex::new(None),
                 source: Mutex::new(None),
-                discovering: AtomicBool::new(false),
+                configuration_busy: AtomicBool::new(false),
                 quitting: AtomicBool::new(false),
                 // 仅创建应用状态；页面显示完成后通过采集开关命令创建首个来源。
                 // Create app state only; the rendered page enables its first source through the capture command.
@@ -660,17 +321,17 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             initialize,
-            discover_devices,
-            save_settings,
-            monitor_source,
-            set_capture_enabled,
+            configuration::discover_devices,
+            configuration::save_settings,
+            configuration::monitor_source,
+            configuration::set_capture_enabled,
             set_autostart,
-            start_stream,
+            stream_start::start_stream,
             submit_password,
             stop_stream,
             set_volume,
-            set_mapping,
-            set_speaker_order,
+            configuration::set_mapping,
+            configuration::set_speaker_order,
             open_logs,
             forget_auth_policy,
             ui_ready,

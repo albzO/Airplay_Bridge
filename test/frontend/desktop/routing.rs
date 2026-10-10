@@ -35,7 +35,8 @@ fn mapping_save_failure_preserves_disk_memory_and_both_live_controls_then_retrie
             &mut settings,
             Some(&session),
             Some(&source),
-            [1, 0]
+            [1, 0],
+            || Ok(())
         )
         .is_err()
     );
@@ -50,6 +51,7 @@ fn mapping_save_failure_preserves_disk_memory_and_both_live_controls_then_retrie
         Some(&session),
         Some(&source),
         [1, 0],
+        || Ok(()),
     )
     .unwrap();
     assert_eq!(settings.mapping, [1, 0]);
@@ -63,12 +65,12 @@ fn speaker_save_failure_preserves_disk_memory_and_live_flag_then_retries() {
     let fixture = Fixture::new("speaker");
     let mut settings = Settings::default();
     let active = AtomicBool::new(false);
-    assert!(set_speaker_order(&fixture.0, &mut settings, Some(&active), true).is_err());
+    assert!(set_speaker_order(&fixture.0, &mut settings, Some(&active), true, || Ok(())).is_err());
     assert!(!settings.speakers_swapped);
     assert!(!Settings::load(&fixture.0).speakers_swapped);
     assert!(!active.load(Ordering::Relaxed));
     fixture.allow_save();
-    set_speaker_order(&fixture.0, &mut settings, Some(&active), true).unwrap();
+    set_speaker_order(&fixture.0, &mut settings, Some(&active), true, || Ok(())).unwrap();
     assert!(settings.speakers_swapped);
     assert!(Settings::load(&fixture.0).speakers_swapped);
     assert!(active.load(Ordering::Relaxed));
