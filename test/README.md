@@ -6,11 +6,13 @@ Test sources are committed under root `test/`. Production modules retain attachm
 
 `core/unit/live/protocol.rs` 使用实际协议读线程和可注入 writer，分别阻塞/失败文件与控制台输出，验证队列溢出时就绪、认证错误及首个故障仍被处理、取消不等待日志、收尾超时后不输出积压，并检查详细/故障日志脱敏及密码提示。夹具在失败时也解除故意阻塞，无需声卡或接收设备。完整串流报告中的 `protocol_log_status` 单独表示日志健康；没有据此断言整个应用有严格停止上限。
 
+`core/unit/capture/decode.rs` 的 8 项测试直接调用生产解码模块，用固定字节验证 PCM 8/16/24/32 位、24-in-32、float32 特殊值、默认/重复/多声道映射、帧裁剪与非法输入，检查跨包输出缓冲复用及完整原始包摘要。无需声卡或模拟接收端；不验证 WASAPI 驱动或实际播放。可单独运行 `cargo test --manifest-path airplay-core/Cargo.toml --locked --offline --lib capture::decode::`。
+
 | 目录 | 内容 |
 |---|---|
 | `frontend/` | JSON 协议、会话脚本、真实模板 DOM、模拟 UI、合成设备样例和桌面 Rust 测试 |
 | `backend/` | 本机模拟接收端、认证、密码管道、立体声、延迟 SETUP 和原生 nonce 检查 |
-| `core/unit/` | 采集健康状态、转换、漂移、来源生命周期、串流管线与脱敏单元测试 |
+| `core/unit/` | 采集解码/时间线/健康状态、转换、漂移、来源生命周期、串流管线与脱敏单元测试 |
 | `core/checks/` | 已采集 WAV 与转换 PCM 的独立校验脚本 |
 | `.artifacts/` | 截图、模拟 PCM 和检查输出；不提交 Git |
 

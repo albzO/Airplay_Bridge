@@ -15,7 +15,7 @@
 - [许可证状态](licensing.md)：已确认授权、具体待确认事项和发行材料。
 - [贡献指南](../CONTRIBUTING.md)：开发约定与验证方式。
 - [维护审查记录](security-review-20261008.md)：分支封存、安全修复、历史数据边界与验证结果。
-- [维护进度](maintenance-progress.md)：会话、日志、协议回绕、上游补丁和音频队列维护记录。
+- [维护进度](maintenance-progress.md)：会话、采集解码、日志、协议回绕、上游补丁和音频队列维护记录。
 - [原审查复查](review-followup.md)：逐项完成度、剩余问题、优先级和本轮验证范围。
 - [性能基线](performance-baseline.md)：无声卡合成测量、复现与解释范围。
 

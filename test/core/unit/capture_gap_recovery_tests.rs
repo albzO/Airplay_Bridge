@@ -10,34 +10,6 @@ fn capture_ready_event_is_auto_reset_and_idle_wait_is_bounded() {
     assert!(!event.wait(0).unwrap());
 }
 #[test]
-fn raw_summary_separates_channels_and_nonfinite_float_samples() {
-    let format = Format {
-        rate: 48000,
-        channels: 2,
-        bits: 32,
-        valid_bits: 32,
-        block_align: 8,
-        channel_mask: 3,
-        encoding: "float32".into(),
-    };
-    let bytes: Vec<u8> = [0.0f32, 0.75, -0.25, f32::NAN]
-        .into_iter()
-        .flat_map(f32::to_le_bytes)
-        .collect();
-    let summary = raw_packet_summary(&bytes, &format);
-    assert_eq!(summary["channel_peaks"], serde_json::json!([0.25, 0.75]));
-    assert_eq!(summary["nonfinite_samples"], 1);
-    assert_eq!(summary["bytes"], 16);
-    // Negative float zero has nonzero raw bytes but no audio signal.
-    let negative_zero: Vec<u8> = [-0.0f32, 0.0]
-        .into_iter()
-        .flat_map(f32::to_le_bytes)
-        .collect();
-    let summary = raw_packet_summary(&negative_zero, &format);
-    assert_eq!(summary["channel_peaks"], serde_json::json!([0.0, 0.0]));
-    assert_eq!(summary["nonzero_bytes"], 1);
-}
-#[test]
 fn short_gap_requires_consistent_clock_and_rejects_bad_timeline() {
     let previous = (0, 480, 1_000_000);
     assert_eq!(

@@ -9,8 +9,10 @@
 //! float32 stereo. See convert/live for resampling and transport, source for preview lifetime.
 //! Drop pairs COM/system allocations with cleanup. Every acquired packet needs ReleaseBuffer,
 //! including error paths, or the device buffer remains occupied.
+mod decode;
 mod health;
 mod timeline;
+use decode::{decode_stereo, raw_packet_summary, sample};
 pub(crate) use health::LoopbackStalled;
 use health::{LoopbackHealth, PlaybackMonitor};
 use serde::{Deserialize, Serialize};
@@ -325,40 +327,6 @@ pub(crate) fn parse_format(blob: &[u8]) -> Result<Format> {
         return Err("WASAPI 格式的采样率、声道或帧大小无效".into());
     }
     Ok(format)
-}
-fn sample(bytes: &[u8], format: &Format) -> f64 {
-    if format.encoding == "float32" {
-        return f32::from_le_bytes(bytes.try_into().unwrap()) as f64;
-    }
-    match format.bits {
-        8 => (bytes[0] as f64 - 128.0) / 128.0,
-        16 => i16::from_le_bytes(bytes.try_into().unwrap()) as f64 / 32768.0,
-        24 => {
-            ((bytes[0] as i32 | (bytes[1] as i32) << 8 | (bytes[2] as i32) << 16) << 8 >> 8) as f64
-                / 8388608.0
-        }
-        32 => i32::from_le_bytes(bytes.try_into().unwrap()) as f64 / 2147483648.0,
-        _ => unreachable!(),
-    }
-}
-// Inspect the packet while WASAPI still owns it. Never retain the buffer pointer
-// or raw audio in a log; this separates driver data from mapping/decoding.
-fn raw_packet_summary(bytes: &[u8], format: &Format) -> serde_json::Value {
-    let mut peaks = vec![0.0f64; format.channels as usize];
-    let mut nonfinite = 0u64;
-    let width = (format.bits / 8) as usize;
-    for frame in bytes.chunks_exact(format.block_align as usize) {
-        for (channel, peak) in peaks.iter_mut().enumerate() {
-            let value = sample(&frame[channel * width..(channel + 1) * width], format);
-            if value.is_finite() {
-                *peak = peak.max(value.abs());
-            } else {
-                nonfinite += 1;
-            }
-        }
-    }
-    serde_json::json!({"channel_peaks":peaks,"nonfinite_samples":nonfinite,
-        "nonzero_bytes":bytes.iter().filter(|byte|**byte != 0).count(),"bytes":bytes.len()})
 }
 fn db(value: f64) -> String {
     if value > 0.0 {
@@ -763,52 +731,30 @@ pub fn live_selected_diagnosed(
             if pointer.is_null() {
                 return Err("采集缓冲区为空".into());
             }
+            let bytes = unsafe {
+                std::slice::from_raw_parts(
+                    pointer,
+                    available as usize * format.block_align as usize,
+                )
+            };
             // 判断原始全部声道是否全零，不受 mapping、重采样或后端发送影响。
             // 检查必须发生在 ReleaseBuffer 前；非零字节采用保守策略，避免误重建。
             // Inspect every raw channel independently of mapping/resampling/backend delivery.
             // Inspect before ReleaseBuffer; treat any nonzero byte conservatively to avoid false reopenings.
             if monitor.is_some() {
-                raw_nonzero = unsafe {
-                    std::slice::from_raw_parts(
-                        pointer,
-                        available as usize * format.block_align as usize,
-                    )
-                }
-                .iter()
-                .any(|byte| *byte != 0);
+                raw_nonzero = bytes.iter().any(|byte| *byte != 0);
             }
             if used > 0 {
                 if diagnostic.is_some() && diagnostics_active() {
-                    raw_summary = raw_packet_summary(
-                        unsafe {
-                            std::slice::from_raw_parts(
-                                pointer,
-                                available as usize * format.block_align as usize,
-                            )
-                        },
-                        &format,
-                    );
+                    raw_summary = raw_packet_summary(bytes, &format);
                 }
-                let selected = mapping
-                    .map(|m| *m.lock().unwrap())
-                    .unwrap_or([0, if format.channels > 1 { 1 } else { 0 }]);
-                if selected.iter().any(|ch| *ch >= format.channels as usize) {
-                    return Err("输入声道超出设备范围".into());
-                }
-                let bytes = unsafe {
-                    std::slice::from_raw_parts(
-                        pointer.add(skip * format.block_align as usize),
-                        used * format.block_align as usize,
-                    )
-                };
-                let width = (format.bits / 8) as usize;
-                for frame in bytes.chunks_exact(format.block_align as usize) {
-                    for channel in selected {
-                        buffer.push(
-                            sample(&frame[channel * width..(channel + 1) * width], &format) as f32,
-                        );
-                    }
-                }
+                decode_stereo(
+                    bytes,
+                    &format,
+                    skip..skip + used,
+                    mapping.map(|m| *m.lock().unwrap()),
+                    &mut buffer,
+                )?;
             }
         }
         packet.release()?;
