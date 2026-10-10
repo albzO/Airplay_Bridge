@@ -24,6 +24,40 @@ fn test_source() -> Source {
     }
 }
 #[test]
+fn consumer_failure_discards_queued_audio_and_releases_duration_budget() {
+    let source = Arc::new(test_source());
+    let producer = source.clone();
+    let worker = thread::spawn(move || {
+        let began = Instant::now();
+        loop {
+            if let Some(sub) = producer.subscriber.lock().unwrap().as_ref() {
+                let stats = sub.tx.stats.clone();
+                sub.send_audio(&[0.25, -0.5], 48000, CaptureProgress::default())
+                    .unwrap();
+                sub.send_audio(&[9., 9.], 48000, CaptureProgress::default())
+                    .unwrap();
+                return stats;
+            }
+            assert!(began.elapsed() < Duration::from_secs(2));
+            thread::sleep(Duration::from_millis(1));
+        }
+    });
+    let error = source
+        .consume(
+            &AtomicBool::new(false),
+            &Mutex::new(CaptureProgress::default()),
+            None,
+            |_, _| Err("synthetic consumer failure".into()),
+        )
+        .unwrap_err();
+    let stats = worker.join().unwrap();
+    assert_eq!(error.to_string(), "synthetic consumer failure");
+    assert_eq!(stats.pending_ms(), 0.0);
+    assert!(stats.peak_ms() > 0.0);
+    assert!(source.subscriber.lock().unwrap().is_none());
+    assert!(source.is_running());
+}
+#[test]
 fn zero_pcm_with_active_endpoint_cannot_pass_continuity_warmup() {
     let now = Instant::now();
     let mut warmup = ready_warmup();
@@ -115,7 +149,7 @@ fn recovery_is_bounded_and_never_retries_unrelated_failures() {
 #[test]
 fn active_subscription_prevents_clock_reset_and_stopping_cancels_recovery() {
     let source = test_source();
-    let (tx, _rx) = mpsc::sync_channel(64);
+    let (tx, _rx) = audio_queue::channel();
     *source.subscriber.lock().unwrap() = Some(Subscription {
         tx,
         fault: Arc::new(Mutex::new(None)),
@@ -276,20 +310,9 @@ fn stream_detach_keeps_source_alive_and_next_attach_has_no_old_audio() {
             let started = Instant::now();
             loop {
                 if let Some(sub) = producer.subscriber.lock().unwrap().as_ref() {
-                    sub.tx
-                        .try_send(Event::Audio(
-                            vec![value, value],
-                            48000,
-                            CaptureProgress::default(),
-                            Instant::now(),
-                        ))
+                    sub.send_audio(&[value, value], 48000, CaptureProgress::default())
                         .unwrap();
-                    let _ = sub.tx.try_send(Event::Audio(
-                        vec![9., 9.],
-                        48000,
-                        CaptureProgress::default(),
-                        Instant::now(),
-                    ));
+                    let _ = sub.send_audio(&[9., 9.], 48000, CaptureProgress::default());
                     break;
                 }
                 assert!(started.elapsed() < Duration::from_secs(2));

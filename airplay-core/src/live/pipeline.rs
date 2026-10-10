@@ -19,6 +19,17 @@ use std::{
 };
 use windows::Win32::System::Performance::QueryPerformanceCounter;
 
+// 左右互换使用会话缓冲；未互换时直接借用输入，不复制。
+// Swap into a session buffer; otherwise borrow input directly without copying.
+fn route<'a>(samples: &'a [f32], swapped: bool, routed: &'a mut Vec<f32>) -> &'a [f32] {
+    if !swapped {
+        return samples;
+    }
+    routed.clear();
+    routed.extend(samples.chunks_exact(2).flat_map(|f| [f[1], f[0]]));
+    routed
+}
+
 /// 每次连接独立持有滤波器及控制器；连续采集 Source 不持有这些会话状态。
 /// Each connection owns its filter/controller; persistent capture Source owns neither.
 pub(super) struct AudioPipeline<'a> {
@@ -30,6 +41,7 @@ pub(super) struct AudioPipeline<'a> {
     sender: Option<PcmSender>,
     counters: PcmCounters,
     converter: Option<Converter>,
+    routed: Vec<f32>,
     controller: Controller,
     captured_frames: u64,
     peaks: [f32; 2],
@@ -67,6 +79,7 @@ impl<'a> AudioPipeline<'a> {
             sender: Some(sender),
             counters,
             converter: None,
+            routed: Vec::new(),
             controller: Controller::new(),
             captured_frames: 0,
             peaks: [0.; 2],
@@ -99,21 +112,12 @@ impl<'a> AudioPipeline<'a> {
             self.converter = Some(Converter::new(rate, self.seed)?);
         }
         let converter = self.converter.as_mut().unwrap();
-        let routed;
-        let samples = if self.stereo
+        let swapped = self.stereo
             && self
                 .gui
                 .as_ref()
-                .is_some_and(|g| g.control.speakers_swapped.load(Ordering::Relaxed))
-        {
-            routed = samples
-                .chunks_exact(2)
-                .flat_map(|f| [f[1], f[0]])
-                .collect::<Vec<_>>();
-            &routed[..]
-        } else {
-            samples
-        };
+                .is_some_and(|g| g.control.speakers_swapped.load(Ordering::Relaxed));
+        let samples = route(samples, swapped, &mut self.routed);
         let mut sink = |pcm: &[i16]| self.sender.as_ref().unwrap().send(pcm);
         let mut converted = converter.push(samples, &mut sink);
         if let Some(origin) = *self.protocol.clock.lock().unwrap() {
@@ -252,6 +256,9 @@ impl<'a> AudioPipeline<'a> {
                 "capture_frames": self.captured_frames,
                 "conversion": self.conversion_stats(),
                 "capture": *self.progress.lock().unwrap(),
+                "pcm_queue_peak_ms": self.counters.queue.peak_ms(),
+                "pcm_buffers_created": self.counters.buffers_created.load(Ordering::Relaxed),
+                "pcm_buffers_reused": self.counters.buffers_reused.load(Ordering::Relaxed),
                 "pending_pcm_ms": self.counters.pending_bytes.load(Ordering::Relaxed) as f64 / BYTES_PER_MS,
                 "pipe_written_frames": self.counters.written_bytes.load(Ordering::Relaxed) / BYTES_PER_FRAME,
                 "error": capture_result.as_ref().err().map(ToString::to_string),

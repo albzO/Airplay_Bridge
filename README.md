@@ -109,6 +109,8 @@ GUI 配置与日志位于 `%APPDATA%\AirPlay Hub`；CLI 设备清单、日志和
 
 维护分支的安全审查、历史数据边界和验证记录见 [维护审查记录](docs/security-review-20261008.md)。
 
+本轮代码审查后的会话、日志、协议回绕、上游校验与队列维护见 [维护进度](docs/maintenance-progress.md)；合成测量方法见 [性能基线](docs/performance-baseline.md)。CI 暂缓。
+
 ## 当前限制
 
 - 仅支持 Windows；发送格式固定为 44100 Hz、16-bit、双声道。

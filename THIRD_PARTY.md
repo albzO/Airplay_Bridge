@@ -35,7 +35,7 @@
 
 `airplay-backend/` 是本项目的入口和适配代码，协议基础仍来自上游：
 
-- `select_upstream.py` 校验固定源码，提取所需协议函数并生成 Windows 编译视图。
+- `select_upstream.py` 配合 `upstream_guard.py` / `upstream-manifest.json` 校验 15 个上游输入和 60 个替换位置的逐次匹配次数，提取所需协议函数并生成 Windows 编译视图；输出快照由独立测试核对，固定子模块提交保持不变。
 - `windows_port.c/.h`、`windows_io.inc` 适配 Winsock、超时、部分读写及平台接口。
 - `auth_auto.inc` 增加按需密码、认证错误分类与配对限流处理。
 - `probe_entry.inc`、`audio_entry.inc` 组织会话、音频发送和清理流程，调用上游协议函数。

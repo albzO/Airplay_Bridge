@@ -7,6 +7,7 @@
 - `airplay-frontend/` 管理界面和桌面生命周期；`airplay-core/` 包含共用音频库与诊断 CLI；`airplay-backend/` 管理原生协议适配。
 - 测试源码统一放在根目录 `test/`，按 `frontend/`、`backend/`、`core/` 分组并随 Git 提交。生产目录仅保留模块挂接及诊断入口，生成内容放在忽略的 `test/.artifacts/`。
 - `upstream/` 是固定版本第三方子模块。修改适配优先在 `airplay-backend/` 完成，不直接编辑 `build/` 中的生成文件。更新依赖提交应单独提交，并更新第三方记录；不要把第三方源码作为普通文件提交到本仓库。
+- 上游输入或替换规则变更须审查 `upstream-manifest.json` 的哈希与逐次匹配次数，保留替换编号，审查生成差异后更新输出快照；运行 `python test/backend/test_upstream.py`。步骤见 [上游适配变更](docs/building.md#上游适配变更)，不要自动接受新清单。
 - 保留 Rust 和 pnpm 锁文件。依赖升级与功能修改尽量分开。
 - 不提交设备清单、密码、录音、日志、构建产物或个人工具路径。
 - 沿用现有命名和排版，代码注释使用中英双语，中文在前、英文在后，在同一注释块内对应说明。关键入口说明输入来源、参数单位、状态条件、资源生命周期和设计原因；复杂流程先说明整体步骤，再补充局部原因，避免只写职责标签或逐行重复代码。
@@ -50,6 +51,8 @@ cargo check --manifest-path airplay-frontend/src-tauri/Cargo.toml --locked --off
 测试源码与合成素材现在统一在 `test/` 维护，恢复 Git 提交。前端样例只使用文档保留地址和合成标识；真实设备清单、配置、录音、截图输出和日志仍不提交。目录和完整运行说明见 [测试说明](test/README.md)。
 
 后端协议模拟入口在 `test/backend/`，前端协议入口为 `pnpm --dir airplay-frontend test:protocol`，模拟界面入口为 `pnpm --dir airplay-frontend test:ui`。这些检查和编译通过都不能替代实机播放验证。音频修改请说明设备、来源、驱动、格式、提前量、Buffer、测试时长及实际听感；不要为了普通布局调整重复长测。
+
+队列、缓冲或转换性能修改先保留 Release 合成基线，再运行相同入口比较；方法见 [性能基线](docs/performance-baseline.md)。慢速回绕检查为 `python test/backend/check_wrap.py`，约 9 分钟，不需要声卡；PTP 脚本串行执行。CI 暂未纳入本轮修改。
 
 模拟检查需要 `test/backend/requirements.txt` 中的 Python 依赖。如需检查新构建的后端而保留现有发行包，可设置 `$env:AIRPLAY_TEST_BACKEND` 为后端的绝对路径，再运行 `test/backend/check_auth.py` 和 `test/backend/check_gui_pipe.py`；检查完成后清除该变量。不设置时仍使用 `dist/runtime/airplay-backend.exe`。
 

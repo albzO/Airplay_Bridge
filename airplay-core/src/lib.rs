@@ -1,3 +1,4 @@
+mod audio_queue;
 pub mod backend;
 pub mod capture;
 pub mod convert;

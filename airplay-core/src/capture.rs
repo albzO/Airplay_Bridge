@@ -10,6 +10,7 @@
 //! Drop pairs COM/system allocations with cleanup. Every acquired packet needs ReleaseBuffer,
 //! including error paths, or the device buffer remains occupied.
 mod health;
+mod timeline;
 pub(crate) use health::LoopbackStalled;
 use health::{LoopbackHealth, PlaybackMonitor};
 use serde::{Deserialize, Serialize};
@@ -21,6 +22,9 @@ use std::{
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
+use timeline::Timeline;
+#[cfg(test)]
+use timeline::{recoverable_gap, validate_packet_timestamp};
 use windows::{
     Win32::{
         Foundation::{CloseHandle, HANDLE, PROPERTYKEY, WAIT_OBJECT_0, WAIT_TIMEOUT},
@@ -510,48 +514,6 @@ fn check_loopback_health(
     }
     Ok(())
 }
-// Missing device frames are recoverable only when the packet clock agrees.
-fn recoverable_gap(
-    previous: (u64, u32, u64),
-    position: u64,
-    qpc: u64,
-    rate: u32,
-    timestamp_bad: bool,
-) -> Result<u64> {
-    let expected = previous.0.saturating_add(previous.1 as u64);
-    if position < expected {
-        return Err("采集设备位置倒退或重复，无法可信对齐音频".into());
-    }
-    let gap = position - expected;
-    if gap == 0 {
-        return Ok(0);
-    }
-    if timestamp_bad || qpc < previous.2 {
-        return Err("采集缺口的时间戳无效，无法恢复".into());
-    }
-    if gap > rate as u64 / 4 {
-        return Err("采集缺口超过 250 ms，已停止".into());
-    }
-    let device_ms = (position - previous.0) as f64 * 1000.0 / rate as f64;
-    let clock_ms = (qpc - previous.2) as f64 / 10000.0;
-    if (device_ms - clock_ms).abs() > 5.0 {
-        return Err("采集设备位置与时间戳不一致，无法恢复缺口".into());
-    }
-    Ok(gap)
-}
-fn validate_packet_timestamp(
-    previous: Option<u64>,
-    current: u64,
-    timestamp_bad: bool,
-) -> Result<()> {
-    if timestamp_bad {
-        return Err("WASAPI 采集包时间戳无效，已停止以避免错误对齐".into());
-    }
-    if previous.is_some_and(|previous| current <= previous) {
-        return Err("WASAPI 采集包时间戳倒退或重复，已停止；请查看采集诊断".into());
-    }
-    Ok(())
-}
 #[cfg(test)]
 #[path = "../../test/core/unit/capture_gap_recovery_tests.rs"]
 mod gap_recovery_tests;
@@ -617,7 +579,7 @@ pub fn live_selected_diagnosed(
         0
     };
     let mut silent_frames = 0u64;
-    let mut timeline_silence = false;
+    let mut timeline = Timeline::new(format.rate, target, loopback, origin_100ns);
     unsafe {
         client.Start()?;
     }
@@ -635,8 +597,6 @@ pub fn live_selected_diagnosed(
         );
     }
     let mut previous_packet: Option<(Instant, u64, u64)> = None;
-    let mut previous_device: Option<(u64, u32, u64)> = None;
-    let mut repairs = std::collections::VecDeque::<(Instant, u64)>::new();
     let diagnostics_active =
         || diagnostic_enabled.is_none_or(|flag| flag.load(std::sync::atomic::Ordering::Relaxed));
     let mut last_packet = Instant::now();
@@ -655,8 +615,7 @@ pub fn live_selected_diagnosed(
         // has queued a packet without signalling; only a nonzero size permits
         // GetBuffer. This also avoids inserting idle silence over queued audio.
         if loopback && !loopback_ready {
-            let idle_target =
-                ((started.elapsed().as_secs_f64() - 0.04).max(0.0) * format.rate as f64) as u64;
+            let idle_target = timeline.idle_target(started.elapsed());
             // Catch up idle silence without paying another wait per 10 ms block.
             // Still check the event first so resumed audio wins over silence.
             let timeout = if last_packet.elapsed() >= Duration::from_millis(40)
@@ -690,11 +649,8 @@ pub fn live_selected_diagnosed(
                 if last_packet.elapsed() < Duration::from_millis(40) {
                     continue;
                 }
-                let expected =
-                    ((started.elapsed().as_secs_f64() - 0.04).max(0.0) * format.rate as f64) as u64;
-                let gap = expected.min(target).saturating_sub(frames);
-                if gap > 0 {
-                    let count = gap.min((format.rate / 100).max(1) as u64);
+                let count = timeline.idle_frames(frames, started.elapsed(), last_packet.elapsed());
+                if count > 0 {
                     buffer.clear();
                     buffer.resize(count as usize * 2, 0.0);
                     if let Some(progress) = progress {
@@ -710,7 +666,7 @@ pub fn live_selected_diagnosed(
                     delivered?;
                     frames += count;
                     silent_frames += count;
-                    timeline_silence = true;
+                    timeline.mark_silence();
                     continue;
                 }
                 continue;
@@ -757,82 +713,45 @@ pub fn live_selected_diagnosed(
             client: &capture,
             frames: available,
         };
-        let mut skip = 0usize;
-        let mut prefix_silence = 0u64;
-        if let Err(error) = validate_packet_timestamp(
-            previous_device.map(|(_, _, qpc)| qpc),
+        let previous_qpc = timeline.previous_qpc();
+        let plan = match timeline.plan(
+            frames,
+            device_position,
+            available,
             qpc,
             flags & AUDCLNT_BUFFERFLAGS_TIMESTAMP_ERROR.0 as u32 != 0,
+            started.elapsed(),
+            Instant::now(),
         ) {
+            Ok(plan) => plan,
+            Err(error) => {
+                if let Some(log) = diagnostic.as_mut() {
+                    log(
+                        serde_json::json!({"kind":"timeline_fault","device_position":device_position,
+                        "packet_qpc_100ns":qpc,"previous_packet_qpc_100ns":previous_qpc,"flags":flags,"error":error.to_string()}),
+                    );
+                }
+                return Err(error);
+            }
+        };
+        let timeline::PacketPlan {
+            skip,
+            used,
+            mut prefix_silence,
+            repaired_gap,
+        } = plan;
+        if repaired_gap > 0 {
+            if let Some(progress) = progress {
+                let mut p = progress.lock().unwrap();
+                p.repaired_gaps += 1;
+                p.repaired_gap_frames += repaired_gap;
+            }
             if let Some(log) = diagnostic.as_mut() {
                 log(
-                    serde_json::json!({"kind":"timestamp_fault","device_position":device_position,"packet_qpc_100ns":qpc,"previous_packet_qpc_100ns":previous_device.map(|(_,_,qpc)|qpc),"flags":flags,"error":error.to_string()}),
+                    serde_json::json!({"kind":"gap_repaired","gap_frames":repaired_gap,
+                    "gap_ms":repaired_gap as f64*1000.0/format.rate as f64,"device_position":device_position,"packet_qpc_100ns":qpc}),
                 );
             }
-            return Err(error);
-        }
-        // Playback idle silence already covers elapsed time; QPC alignment below
-        // trims that overlap. Real packet gaps use the same recovery as recording.
-        if !loopback || !timeline_silence {
-            if let Some(previous) = previous_device {
-                let gap = recoverable_gap(
-                    previous,
-                    device_position,
-                    qpc,
-                    format.rate,
-                    flags & AUDCLNT_BUFFERFLAGS_TIMESTAMP_ERROR.0 as u32 != 0,
-                )?;
-                if gap > 0 {
-                    while repairs
-                        .front()
-                        .is_some_and(|(t, _)| t.elapsed() > Duration::from_secs(60))
-                    {
-                        repairs.pop_front();
-                    }
-                    if repairs.len() >= 5
-                        || repairs.iter().map(|(_, f)| *f).sum::<u64>() + gap
-                            > format.rate as u64 / 2
-                    {
-                        return Err(
-                            "采集缺口频繁发生，60 秒内超过 5 次或累计 500 ms，已停止".into()
-                        );
-                    }
-                    repairs.push_back((Instant::now(), gap));
-                    if let Some(progress) = progress {
-                        let mut p = progress.lock().unwrap();
-                        p.repaired_gaps += 1;
-                        p.repaired_gap_frames += gap;
-                    }
-                    prefix_silence = gap.min(target - frames);
-                    if let Some(log) = diagnostic.as_mut() {
-                        log(
-                            serde_json::json!({"kind":"gap_repaired","gap_frames":gap,"gap_ms":gap as f64*1000.0/format.rate as f64,"device_position":device_position,"packet_qpc_100ns":qpc}),
-                        );
-                    }
-                }
-            }
-        }
-        previous_device = Some((device_position, available, qpc));
-        if loopback && timeline_silence {
-            if flags & AUDCLNT_BUFFERFLAGS_TIMESTAMP_ERROR.0 as u32 != 0 {
-                return Err("播放设备 loopback 时间戳无效，无法对齐采集".into());
-            }
-            let packet_start = ((qpc as u128).saturating_sub(origin_100ns) * format.rate as u128
-                / 10_000_000) as u64;
-            if packet_start > ((started.elapsed().as_secs_f64() + 0.2) * format.rate as f64) as u64
-            {
-                return Err("播放设备 loopback 时间戳超出采集时钟".into());
-            }
-            if packet_start > frames {
-                prefix_silence = (packet_start - frames).min(target - frames);
-            }
-            skip = (frames + prefix_silence)
-                .saturating_sub(packet_start)
-                .min(available as u64) as usize;
-        }
-        let used = (target - frames - prefix_silence).min(available as u64 - skip as u64) as usize;
-        if used > 0 {
-            timeline_silence = false;
         }
         let mut raw_summary = serde_json::Value::Null;
         let mut raw_nonzero = false;

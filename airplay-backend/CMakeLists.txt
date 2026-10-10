@@ -12,12 +12,23 @@ set(UPSTREAM "${CMAKE_CURRENT_SOURCE_DIR}/../upstream/airplay-cli")
 set(GENERATED "${CMAKE_CURRENT_BINARY_DIR}/generated")
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
   "${CMAKE_CURRENT_SOURCE_DIR}/select_upstream.py"
+  "${CMAKE_CURRENT_SOURCE_DIR}/upstream_guard.py"
+  "${CMAKE_CURRENT_SOURCE_DIR}/upstream-manifest.json"
   "${CMAKE_CURRENT_SOURCE_DIR}/auth_auto.inc"
   "${CMAKE_CURRENT_SOURCE_DIR}/probe_entry.inc"
   "${CMAKE_CURRENT_SOURCE_DIR}/audio_entry.inc"
   "${CMAKE_CURRENT_SOURCE_DIR}/volume_entry.inc"
   "${CMAKE_CURRENT_SOURCE_DIR}/events_entry.inc"
   "${CMAKE_CURRENT_SOURCE_DIR}/windows_io.inc")
+# 清单中的输入变化必须重新配置，不能继续使用旧的生成代码。
+# Manifest input changes must reconfigure instead of silently using stale generated code.
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/upstream-manifest.json" UPSTREAM_MANIFEST)
+string(JSON UPSTREAM_INPUT_COUNT LENGTH "${UPSTREAM_MANIFEST}" inputs)
+math(EXPR UPSTREAM_INPUT_LAST "${UPSTREAM_INPUT_COUNT} - 1")
+foreach(INDEX RANGE ${UPSTREAM_INPUT_LAST})
+  string(JSON INPUT_NAME MEMBER "${UPSTREAM_MANIFEST}" inputs ${INDEX})
+  set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${UPSTREAM}/${INPUT_NAME}")
+endforeach()
 execute_process(COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/select_upstream.py"
   "${UPSTREAM}" "${GENERATED}" COMMAND_ERROR_IS_FATAL ANY)
 add_executable(airplay-backend main.c windows_port.c logging.c shm_disabled.c raw_codec.c pcm_source.c audio_nonce.c

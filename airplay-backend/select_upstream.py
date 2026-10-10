@@ -3,20 +3,15 @@
 HAP/SRP, framing, RTSP parsing and plist implementations remain upstream code.
 Control tests stop after session SETUP/events. Tone tests select realtime audio.
 """
-import hashlib
 import pathlib
 import re
 import sys
+from upstream_guard import PatchGuard
 
 root, out = map(pathlib.Path, sys.argv[1:])
+guard = PatchGuard(root, pathlib.Path(__file__).with_name('upstream-manifest.json'))
 out.mkdir(parents=True, exist_ok=True)
 client = (root / 'src/ap2_client.c').read_text(encoding='utf-8')
-expected = '5e9e30835193c4b73d954b134f4052dfb8ac8f04b6584deabb042540afcb479e'
-# Git on Windows may check out CRLF; compare normalized content as well.
-raw_hash = hashlib.sha256((root / 'src/ap2_client.c').read_bytes()).hexdigest()
-normalized_hash = hashlib.sha256(client.encode()).hexdigest()
-if expected not in (raw_hash, normalized_hash):
-    raise SystemExit('Upstream client changed; review extraction before building: ' + raw_hash)
 
 def function(name, source=client):
     pattern = re.compile(r'^(?:static[ \t]+)?[A-Za-z_]\w*(?:[ \t]+[A-Za-z_]\w*)*[ \t*]+' + re.escape(name) + r'\([^;{}]*\)\s*\{', re.M)
@@ -65,12 +60,12 @@ for name in names:
         # An accepted control session is not a ready audio stream; takeover SETUP needs its full budget.
         marker = '    if (!p->rtsp_established) return AP2_RTSP_SETUP_TIMEOUT_MS;'
         if body.count(marker) != 1: raise ValueError('RTSP setup timeout boundary changed')
-        body = body.replace(marker, '''    /* 音频 SETUP 仍使用 8 秒启动预算，避免误用普通控制请求的 2 秒超时。
+        body = guard.replace(body, marker, '''    /* 音频 SETUP 仍使用 8 秒启动预算，避免误用普通控制请求的 2 秒超时。
      * Audio SETUP retains the 8-second startup budget instead of the 2-second control timeout.
      * 响应到达立即继续；不增加播放延迟，也不重复认证或重发 SETUP。
      * Continue as soon as the reply arrives; no playback delay, reauthentication or repeated SETUP. */
     if (!p->rtsp_established || !strcmp(method, "SETUP"))
-        return AP2_RTSP_SETUP_TIMEOUT_MS;''')
+        return AP2_RTSP_SETUP_TIMEOUT_MS;''', site='R001')
     if name == 'ap2_native_connect':
         marker = '    /* 5. RECORD'
         if marker not in body: raise ValueError('Session boundary changed')
@@ -80,39 +75,39 @@ for name in names:
     return true;
 }
 '''
-        body = body.replace('if (!ap2_native_open_socket(p)) return false;',
-                            'if (!ap2_native_open_socket(p)) return false;\n    ap2_io_status_line("[PROBE] TCP_CONNECTED");')
-        body = body.replace('if (!ap2_native_get_info(p)) return false;',
-                            'p->phase = "info";\n    ap2_io_status_line("[PROBE] GET_INFO_SENT");\n    if (!ap2_native_get_info(p)) return false;\n    ap2_io_status_line("[PROBE] GET_INFO_OK");')
-        body = body.replace('if (!ap2_native_pair(p)) return false;',
-                            'p->phase = "pairing";\n    if (!ap2_native_pair(p)) return false;')
-        body = body.replace('LOG_INFO("[AP2] Channel encrypted");',
-                            'LOG_INFO("[AP2] Channel encrypted");\n    ap2_io_status_line("[PROBE] ENCRYPTION_KEYS_DERIVED");')
-        body = body.replace('int status = ap2_rtsp_send(p, "SETUP",',
-                            'p->phase = "session-setup";\n    ap2_io_status_line("[PROBE] RTSP_SETUP_SENT");\n    int status = ap2_rtsp_send(p, "SETUP",')
-        body = body.replace('LOG_INFO("[AP2] Session SETUP OK',
-                            'ap2_io_status_line("[PROBE] ENCRYPTED_RESPONSE_OK");\n    ap2_io_status_line("[PROBE] RTSP_SETUP_200_OK");\n    LOG_INFO("[AP2] Session SETUP OK')
-        body = body.replace('LOG_INFO("[AP2] Events connection OK");',
-                            'LOG_INFO("[AP2] Events connection OK");\n                ap2_io_status_line("[PROBE] EVENTS_CONNECTED");')
-        body = body.replace('event_port = (int)v;', 'event_port = (int)v;')
-        body = body.replace('free(resp);\n\n    /* Open events',
-                            'free(resp);\n    p->event_required = event_port > 0;\n\n    /* Open events')
-        body = body.replace('p->ptp = ap2_ptp_create();',
-                            'p->phase = "timing";\n    if (!p->ptp) p->ptp = ap2_ptp_create();\n    if (!p->ptp) return false;')
-        body = body.replace('    if (want_ptp) {',
-                            '    if (p->ptp_borrowed) {\n        if (!want_ptp) return false;\n        p->use_ptp = true;\n    } else if (want_ptp) {',1)
-        body = body.replace('ap2_gen_uuid(p->group_uuid);','if (!p->group_uuid[0]) ap2_gen_uuid(p->group_uuid);')
-        body = body.replace('    /* Buffered (type 103)', '''    if (!p->use_ptp && timing_port <= 0) {
+        body = guard.replace(body, 'if (!ap2_native_open_socket(p)) return false;',
+                            'if (!ap2_native_open_socket(p)) return false;\n    ap2_io_status_line("[PROBE] TCP_CONNECTED");', site='R002')
+        body = guard.replace(body, 'if (!ap2_native_get_info(p)) return false;',
+                            'p->phase = "info";\n    ap2_io_status_line("[PROBE] GET_INFO_SENT");\n    if (!ap2_native_get_info(p)) return false;\n    ap2_io_status_line("[PROBE] GET_INFO_OK");', site='R003')
+        body = guard.replace(body, 'if (!ap2_native_pair(p)) return false;',
+                            'p->phase = "pairing";\n    if (!ap2_native_pair(p)) return false;', site='R004')
+        body = guard.replace(body, 'LOG_INFO("[AP2] Channel encrypted");',
+                            'LOG_INFO("[AP2] Channel encrypted");\n    ap2_io_status_line("[PROBE] ENCRYPTION_KEYS_DERIVED");', site='R005')
+        body = guard.replace(body, 'int status = ap2_rtsp_send(p, "SETUP",',
+                            'p->phase = "session-setup";\n    ap2_io_status_line("[PROBE] RTSP_SETUP_SENT");\n    int status = ap2_rtsp_send(p, "SETUP",', site='R006')
+        body = guard.replace(body, 'LOG_INFO("[AP2] Session SETUP OK',
+                            'ap2_io_status_line("[PROBE] ENCRYPTED_RESPONSE_OK");\n    ap2_io_status_line("[PROBE] RTSP_SETUP_200_OK");\n    LOG_INFO("[AP2] Session SETUP OK', site='R007')
+        body = guard.replace(body, 'LOG_INFO("[AP2] Events connection OK");',
+                            'LOG_INFO("[AP2] Events connection OK");\n                ap2_io_status_line("[PROBE] EVENTS_CONNECTED");', site='R008')
+        body = guard.replace(body, 'event_port = (int)v;', 'event_port = (int)v;', site='R009')
+        body = guard.replace(body, 'free(resp);\n\n    /* Open events',
+                            'free(resp);\n    p->event_required = event_port > 0;\n\n    /* Open events', site='R010')
+        body = guard.replace(body, 'p->ptp = ap2_ptp_create();',
+                            'p->phase = "timing";\n    if (!p->ptp) p->ptp = ap2_ptp_create();\n    if (!p->ptp) return false;', site='R011')
+        body = guard.replace(body, '    if (want_ptp) {',
+                            '    if (p->ptp_borrowed) {\n        if (!want_ptp) return false;\n        p->use_ptp = true;\n    } else if (want_ptp) {',1, site='R012')
+        body = guard.replace(body, 'ap2_gen_uuid(p->group_uuid);','if (!p->group_uuid[0]) ap2_gen_uuid(p->group_uuid);', site='R013')
+        body = guard.replace(body, '    /* Buffered (type 103)', '''    if (!p->use_ptp && timing_port <= 0) {
         ap2_set_connect_error(p, AP2_CONNECT_ERROR_GENERIC, 0, "Timing responder failed to start");
         return false;
     }
     ap2_io_status_line("[PROBE] TIMING value=%s", p->use_ptp ? "ptp" : "ntp");
 
-    /* Buffered (type 103)''')
+    /* Buffered (type 103)''', site='R014')
     if name == 'ap2_native_pair':
         marker='    int password_status = err.http_status;'
         if body.count(marker)!=1: raise ValueError('Pairing error boundary changed')
-        body=body.replace(marker,'''    if (err.tlv_error == 3 || err.tlv_error == 5) {
+        body=guard.replace(body, marker,'''    if (err.tlv_error == 3 || err.tlv_error == 5) {
         p->probe_error = 12;
         ap2_set_connect_error(p, AP2_CONNECT_ERROR_AUTH_FAILED, err.http_status,
                               "pairing temporarily rate-limited by receiver");
@@ -124,22 +119,22 @@ for name in names:
                               "device rejected the supplied password");
         return false;
     }
-''' + marker)
-        body = body.replace('LOG_INFO("[AP2] Device accepted the password',
-                            'p->auth_method = "password";\n        ap2_io_status_line("[PROBE] PASSWORD_ACCEPTED");\n        LOG_INFO("[AP2] Device accepted the password')
-        body = body.replace('if (ap2_native_pair_verify(p, &err)) return true;',
-                            'if (ap2_native_pair_verify(p, &err)) { p->auth_method = "credentials"; return true; }')
-        body = body.replace('if (ap2_native_transient(p, NULL, &err)) return true;',
-                            'if (ap2_native_transient(p, NULL, &err)) { p->auth_method = "fixed-pin"; return true; }')
-        body = body.replace('LOG_INFO("[AP2] Stored credentials accepted',
-                            'p->auth_method = "credentials";\n            LOG_INFO("[AP2] Stored credentials accepted')
-        body = body.replace('LOG_WARN("[AP2] Device paired with the fixed',
-                            'p->auth_method = "fixed-pin";\n        LOG_WARN("[AP2] Device paired with the fixed')
-        body = body.replace('static bool ap2_native_pair(', 'static bool probe_pair_once(', 1)
+''' + marker, site='R015')
+        body = guard.replace(body, 'LOG_INFO("[AP2] Device accepted the password',
+                            'p->auth_method = "password";\n        ap2_io_status_line("[PROBE] PASSWORD_ACCEPTED");\n        LOG_INFO("[AP2] Device accepted the password', site='R016')
+        body = guard.replace(body, 'if (ap2_native_pair_verify(p, &err)) return true;',
+                            'if (ap2_native_pair_verify(p, &err)) { p->auth_method = "credentials"; return true; }', site='R017')
+        body = guard.replace(body, 'if (ap2_native_transient(p, NULL, &err)) return true;',
+                            'if (ap2_native_transient(p, NULL, &err)) { p->auth_method = "fixed-pin"; return true; }', site='R018')
+        body = guard.replace(body, 'LOG_INFO("[AP2] Stored credentials accepted',
+                            'p->auth_method = "credentials";\n            LOG_INFO("[AP2] Stored credentials accepted', site='R019')
+        body = guard.replace(body, 'LOG_WARN("[AP2] Device paired with the fixed',
+                            'p->auth_method = "fixed-pin";\n        LOG_WARN("[AP2] Device paired with the fixed', site='R020')
+        body = guard.replace(body, 'static bool ap2_native_pair(', 'static bool probe_pair_once(', 1, site='R021')
         body += '\n' + (pathlib.Path(__file__).parent / 'auth_auto.inc').read_text(encoding='utf-8')
     if name in ('ap2_native_transient', 'ap2_native_pair_verify'):
-        body = body.replace('    LOG_ERROR("[AP2] HAP ', '    p->last_pair_error = *err;\n    LOG_ERROR("[AP2] HAP ', 1)
-    body = body.replace('int events_sock = socket(', 'ap2_socket_t events_sock = socket(')
+        body = guard.replace(body, '    LOG_ERROR("[AP2] HAP ', '    p->last_pair_error = *err;\n    LOG_ERROR("[AP2] HAP ', 1, site='R022')
+    body = guard.replace(body, 'int events_sock = socket(', 'ap2_socket_t events_sock = socket(', site='R023')
     selected.append(body)
 
 # Retain the pinned realtime stream setup, excluding buffered TCP and MRP.
@@ -148,26 +143,26 @@ audio = native[native.index('    /* 5. RECORD'):native.index('    /* 6b. MRP')]
 buffered = audio.index('    /* Buffered audio: open the TCP')
 peers = audio.index('    /* 6. SETPEERS')
 audio = audio[:buffered] + audio[peers:]
-audio = audio.replace('status = ap2_rtsp_send(p, "RECORD",',
-                      'p->phase = "record";\n    status = ap2_rtsp_send(p, "RECORD",')
-audio = audio.replace('    if (status <= 0) {\n        free(plist_data);',
-                      '    if (status != 200) {\n        ap2_report_failed_exchange(p, "RECORD", status);\n        free(plist_data);')
-audio = audio.replace('LOG_INFO("[AP2] RECORD OK");',
-                      'LOG_INFO("[AP2] RECORD OK");\n        ap2_io_status_line("[PROBE] RECORD_OK");')
-audio = audio.replace('    status = ap2_rtsp_send(p, "SETUP",',
-                      '    p->phase = "stream-setup";\n    status = ap2_rtsp_send(p, "SETUP",')
-audio = audio.replace('    LOG_INFO("[AP2] Stream SETUP OK");', '''    if (!p->data_addr.sin_port || !p->ctrl_addr.sin_port) {
+audio = guard.replace(audio, 'status = ap2_rtsp_send(p, "RECORD",',
+                      'p->phase = "record";\n    status = ap2_rtsp_send(p, "RECORD",', site='R024')
+audio = guard.replace(audio, '    if (status <= 0) {\n        free(plist_data);',
+                      '    if (status != 200) {\n        ap2_report_failed_exchange(p, "RECORD", status);\n        free(plist_data);', site='R025')
+audio = guard.replace(audio, 'LOG_INFO("[AP2] RECORD OK");',
+                      'LOG_INFO("[AP2] RECORD OK");\n        ap2_io_status_line("[PROBE] RECORD_OK");', site='R026')
+audio = guard.replace(audio, '    status = ap2_rtsp_send(p, "SETUP",',
+                      '    p->phase = "stream-setup";\n    status = ap2_rtsp_send(p, "SETUP",', site='R027')
+audio = guard.replace(audio, '    LOG_INFO("[AP2] Stream SETUP OK");', '''    if (!p->data_addr.sin_port || !p->ctrl_addr.sin_port) {
         free(resp);
         ap2_set_connect_error(p, AP2_CONNECT_ERROR_GENERIC, 200, "Stream response has missing/invalid remote ports");
         return false;
     }
     ap2_io_status_line("[PROBE] STREAM_SETUP_OK");
-    LOG_INFO("[AP2] Stream SETUP OK");''')
-audio = audio.replace('        if (sp_status <= 0) return false;', '''        if (sp_status != 200) {
+    LOG_INFO("[AP2] Stream SETUP OK");''', site='R028')
+audio = guard.replace(audio, '        if (sp_status <= 0) return false;', '''        if (sp_status != 200) {
             ap2_report_failed_exchange(p, "SETPEERS", sp_status);
             return false;
         }
-        ap2_io_status_line("[PROBE] SETPEERS_OK");''')
+        ap2_io_status_line("[PROBE] SETPEERS_OK");''', site='R029')
 audio = '''static bool ap2_set_nonblocking(ap2_socket_t fd, const char *name) {
     u_long mode = 1;
     if (ioctlsocket((SOCKET)fd, FIONBIO, &mode) == 0) return true;
@@ -193,18 +188,18 @@ static bool probe_audio_setup(struct ap2cl_s *p) {
 for name in ['ap2_rtx_store', 'ap2_rtx_resend', 'ap2_rtx_thread_main', 'ap2_rtx_start', 'ap2_rtx_stop',
              'ap2_send_sync_packet', 'ap2_send_sync_packet_ptp', 'ap2_encrypt_audio', 'ap2_native_send_chunk']:
     body = function(name)
-    body = body.replace('    if (p->use_buffered) return ap2_buffered_send_chunk(p, sample, frames);', '')
+    body = guard.replace(body, '    if (p->use_buffered) return ap2_buffered_send_chunk(p, sample, frames);', '', site='R030')
     if name == 'ap2_native_send_chunk':
         original_nonce = '    uint16_t seq16 = (uint16_t)p->seq_number;\n    memcpy(nonce + 4, &seq16, 2);'
         assert body.count(original_nonce) == 1, 'Pinned audio nonce block changed'
-        body = body.replace(original_nonce, '''    if (!probe_audio_nonce(&p->audio_nonce_counter, nonce)) {
+        body = guard.replace(body, original_nonce, '''    if (!probe_audio_nonce(&p->audio_nonce_counter, nonce)) {
         free(encoded);
         return AP2_SEND_FATAL;
-    }''')
-        body = body.replace('Nonce: 12 bytes, all zero except the 2-byte sequence number at [4..5].',
-                            'Nonce: four zero bytes followed by an independent 64-bit counter.')
-        body = body.replace('/* seqnum at offset 4 in native (little-endian) byte order, matching owntone\n     * (memcpy(nonce+4, &seqnum, 2)). The same bytes are appended to the wire. */',
-                            '/* Independent little-endian counter survives 16-bit RTP wrap. */')
+    }''', site='R031')
+        body = guard.replace(body, 'Nonce: 12 bytes, all zero except the 2-byte sequence number at [4..5].',
+                            'Nonce: four zero bytes followed by an independent 64-bit counter.', site='R032')
+        body = guard.replace(body, '/* seqnum at offset 4 in native (little-endian) byte order, matching owntone\n     * (memcpy(nonce+4, &seqnum, 2)). The same bytes are appended to the wire. */',
+                            '/* Independent little-endian counter survives 16-bit RTP wrap. */', site='R033')
     selected.append(body)
 selected.append(audio)
 
@@ -309,9 +304,9 @@ footer = (pathlib.Path(__file__).parent / 'events_entry.inc').read_text(encoding
 
 def platform_view(text):
     # Include Windows declarations before anything that can include windows.h.
-    text = re.sub(r'^#include <(?:arpa/inet.h|netinet/in.h|netinet/tcp.h|sys/socket.h|netdb.h|poll.h|unistd.h)>\n', '', text, flags=re.M)
-    text = re.sub(r'^#include "\.\./libraop/(?:crosstools/src/(?:platform|cross_net)|src/raop_client)\.h"\n', '', text, flags=re.M)
-    text = text.replace('int sock_fd', 'ap2_socket_t sock_fd').replace('int fd,', 'ap2_socket_t fd,')
+    text = guard.sub(r'^#include <(?:arpa/inet.h|netinet/in.h|netinet/tcp.h|sys/socket.h|netdb.h|poll.h|unistd.h)>\n', '', text, flags=re.M, site='R034')
+    text = guard.sub(r'^#include "\.\./libraop/(?:crosstools/src/(?:platform|cross_net)|src/raop_client)\.h"\n', '', text, flags=re.M, site='R035')
+    text = guard.replace(guard.replace(text, 'int sock_fd', 'ap2_socket_t sock_fd', site='R037'), 'int fd,', 'ap2_socket_t fd,', site='R036')
     return '#include "windows_port.h"\n' + text
 
 for name in ['ap2_hap.c', 'ap2_hap.h', 'ap2_io.c', 'ap2_io.h', 'ap2_ptp.c', 'ap2_ptp.h',
@@ -326,12 +321,12 @@ for name in ['ap2_hap.c', 'ap2_hap.h', 'ap2_io.c', 'ap2_io.h', 'ap2_ptp.c', 'ap2
         # Preserve the actual TLV state; M2 rejection is a pairing/policy issue,
         # whereas M4 error 2 rejects the client's SRP secret.
         transient = function('ap2_hap_pair_setup_transient', text)
-        text = text.replace(transient, transient.replace('    if (err && err_len > 0) {',
-                            '    if (err_out && state_val && state_len == 1) err_out->pair_state = *state_val;\n    if (err && err_len > 0) {'), 1)
+        text = guard.replace(text, transient, guard.replace(transient, '    if (err && err_len > 0) {',
+                            '    if (err_out && state_val && state_len == 1) err_out->pair_state = *state_val;\n    if (err && err_len > 0) {', site='R039'), 1, site='R038')
         # Derive reverse-event keys before the full transient SRP key is wiped.
         # Audio intentionally retains only 32 bytes; it cannot supply these keys.
-        text = text.replace('uint8_t shared_secret[32];\n',
-            'uint8_t shared_secret[32];\n    uint8_t event_read_key[32], event_write_key[32];\n', 1)
+        text = guard.replace(text, 'uint8_t shared_secret[32];\n',
+            'uint8_t shared_secret[32];\n    uint8_t event_read_key[32], event_write_key[32];\n', 1, site='R040')
         for secret, size in [('shared_secret', '32'), ('session_key', 'SRP_HASH_LEN')]:
             old = f'''!hkdf_sha512({secret}, {size},
                      "Control-Salt", "Control-Read-Encryption-Key",
@@ -342,7 +337,7 @@ for name in ['ap2_hap.c', 'ap2_hap.h', 'ap2_io.c', 'ap2_io.h', 'ap2_ptp.c', 'ap2
         !hkdf_sha512({secret}, {size}, "Events-Salt", "Events-Read-Encryption-Key",
                      ctx->event_write_key, 32))'''
             if text.count(old) != 1: raise ValueError('HAP key derivation boundary changed')
-            text = text.replace(old, new)
+            text = guard.replace(text, old, new, site='R041')
         text += '''
 /* Local reverse-channel context: independent keys and nonce counters. */
 struct ap2_hap_ctx *probe_hap_events_create(struct ap2_hap_ctx *control) {
@@ -356,43 +351,43 @@ struct ap2_hap_ctx *probe_hap_events_create(struct ap2_hap_ctx *control) {
 }
 '''
         # Keep status/header diagnostics while excluding raw authentication bodies.
-        text = re.sub(r'(#define\s+HAP_DIAG_BODY_MAX\s+)\d+', r'\g<1>0', text)
-        text = text.replace('LOG_INFO("[HAP] SRP challenge computed, sending M3...");',
-                            'ap2_io_status_line("[PROBE] PAIR_M2_VALIDATED");\n    ap2_io_status_line("[PROBE] SRP_SALT_AND_SERVER_KEY_RECEIVED");\n    LOG_INFO("[HAP] SRP challenge computed, sending M3...");')
-        text = text.replace('LOG_INFO("[HAP] Transient pair-setup completed successfully");',
-                            'ap2_io_status_line("[PROBE] SRP_VERIFIED");\n    LOG_INFO("[HAP] Transient pair-setup completed successfully");')
-        text = text.replace('int status = hap_post_pair_setup_path(sock_fd, "/pair-setup", 1, 4,',
-                            'ap2_io_status_line("[PROBE] PAIR_M1_SENT");\n    int status = hap_post_pair_setup_path(sock_fd, "/pair-setup", 1, 4,')
-        text = text.replace('status = hap_post_pair_setup_path(sock_fd, "/pair-setup", 2, 4,',
-                            'ap2_io_status_line("[PROBE] PAIR_M3_SENT");\n    status = hap_post_pair_setup_path(sock_fd, "/pair-setup", 2, 4,')
+        text = guard.sub(r'(#define\s+HAP_DIAG_BODY_MAX\s+)\d+', r'\g<1>0', text, site='R042')
+        text = guard.replace(text, 'LOG_INFO("[HAP] SRP challenge computed, sending M3...");',
+                            'ap2_io_status_line("[PROBE] PAIR_M2_VALIDATED");\n    ap2_io_status_line("[PROBE] SRP_SALT_AND_SERVER_KEY_RECEIVED");\n    LOG_INFO("[HAP] SRP challenge computed, sending M3...");', site='R043')
+        text = guard.replace(text, 'LOG_INFO("[HAP] Transient pair-setup completed successfully");',
+                            'ap2_io_status_line("[PROBE] SRP_VERIFIED");\n    LOG_INFO("[HAP] Transient pair-setup completed successfully");', site='R044')
+        text = guard.replace(text, 'int status = hap_post_pair_setup_path(sock_fd, "/pair-setup", 1, 4,',
+                            'ap2_io_status_line("[PROBE] PAIR_M1_SENT");\n    int status = hap_post_pair_setup_path(sock_fd, "/pair-setup", 1, 4,', site='R045')
+        text = guard.replace(text, 'status = hap_post_pair_setup_path(sock_fd, "/pair-setup", 2, 4,',
+                            'ap2_io_status_line("[PROBE] PAIR_M3_SENT");\n    status = hap_post_pair_setup_path(sock_fd, "/pair-setup", 2, 4,', site='R046')
     if name == 'ap2_hap.h':
-        text = text.replace('    int tlv_error;', '    int pair_state; /* actual transient M2/M4 state */\n    int tlv_error;')
-        text = text.replace('#endif /*', 'struct ap2_hap_ctx *probe_hap_events_create(struct ap2_hap_ctx *control);\n\n#endif /*', 1)
+        text = guard.replace(text, '    int tlv_error;', '    int pair_state; /* actual transient M2/M4 state */\n    int tlv_error;', site='R047')
+        text = guard.replace(text, '#endif /*', 'struct ap2_hap_ctx *probe_hap_events_create(struct ap2_hap_ctx *control);\n\n#endif /*', 1, site='R048')
     if name == 'ap2_ptp.c':
         text = text[:text.index('/* ---- PTP daemon ---- */')]
-        text = re.sub(r'\bint (timing_sock|event_sock|general_sock|sock)\b', r'ap2_socket_t \1', text)
-        text = text.replace('static int ptp_open_socket(', 'static ap2_socket_t ptp_open_socket(')
-        text = text.replace('int s = socket(', 'ap2_socket_t s = socket(')
+        text = guard.sub(r'\bint (timing_sock|event_sock|general_sock|sock)\b', r'ap2_socket_t \1', text, site='R049')
+        text = guard.replace(text, 'static int ptp_open_socket(', 'static ap2_socket_t ptp_open_socket(', site='R050')
+        text = guard.replace(text, 'int s = socket(', 'ap2_socket_t s = socket(', site='R051')
         # Thread flags are shared; make them atomic rather than relying on volatile.
-        text = re.sub(r'\b(?:volatile )?bool (running|ptp_running);', r'atomic_bool \1;', text)
+        text = guard.sub(r'\b(?:volatile )?bool (running|ptp_running);', r'atomic_bool \1;', text, site='R052')
         text = '#include <stdatomic.h>\n' + text
         # NTP shutdown can otherwise race closing a socket with a blocking recv.
-        text = text.replace('close(ctx->timing_sock);\n            ctx->timing_sock = -1;',
-                            'shutdown(ctx->timing_sock, SHUT_RDWR);\n            close(ctx->timing_sock);\n            ctx->timing_sock = -1;')
+        text = guard.replace(text, 'close(ctx->timing_sock);\n            ctx->timing_sock = -1;',
+                            'shutdown(ctx->timing_sock, SHUT_RDWR);\n            close(ctx->timing_sock);\n            ctx->timing_sock = -1;', site='R053')
     if name == 'ap2_bplist.cpp':
-        text = text.replace('../libraop/src/bplist.h', 'bplist.h')
+        text = guard.replace(text, '../libraop/src/bplist.h', 'bplist.h', site='R054')
     (out / name).write_text(text, encoding='utf-8')
 for name in ['bplist.cpp', 'bplist.h']:
     text = (root / 'libraop/src' / name).read_text(encoding='utf-8')
     text = '#include <cstdint>\n' + text
-    text = text.replace('#define be64toh ntohll', '#define be64toh __builtin_bswap64')
-    text = text.replace('#define htobe64 htonll', '#define htobe64 __builtin_bswap64')
+    text = guard.replace(text, '#define be64toh ntohll', '#define be64toh __builtin_bswap64', site='R055')
+    text = guard.replace(text, '#define htobe64 htonll', '#define htobe64 __builtin_bswap64', site='R056')
     (out / name).write_text(text, encoding='utf-8')
 # Only the pinned raw 16-bit stereo ALAC escape-frame encoder is needed here.
-raw_source = (root / 'src/alac_ext.cpp').read_text(encoding='utf-8').replace('extern "C" ', '')
-raw = function('pcm_to_alac_raw', raw_source).replace('std::min(frames, bsize)', '(frames < bsize ? frames : bsize)')
-raw = raw.replace('    /* Raw ALAC framing', '    if (!sample || !out || !size || frames <= 0 || frames > bsize || bsize > 352) return false;\n    /* Raw ALAC framing')
-raw = raw.replace('    p = *out;', '    if (!*out) return false;\n    p = *out;')
+raw_source = guard.replace((root / 'src/alac_ext.cpp').read_text(encoding='utf-8'), 'extern "C" ', '', site='R057')
+raw = guard.replace(function('pcm_to_alac_raw', raw_source), 'std::min(frames, bsize)', '(frames < bsize ? frames : bsize)', site='R058')
+raw = guard.replace(raw, '    /* Raw ALAC framing', '    if (!sample || !out || !size || frames <= 0 || frames > bsize || bsize > 352) return false;\n    /* Raw ALAC framing', site='R059')
+raw = guard.replace(raw, '    p = *out;', '    if (!*out) return false;\n    p = *out;', site='R060')
 (out / 'raw_alac.c').write_text('/* Copyright (C) 2024-2026 Music Assistant Contributors\n * SPDX-License-Identifier: Apache-2.0\n * Selected from alac_ext.cpp; allocation/argument checks added. */\n#include <stdint.h>\n#include <stdlib.h>\n#include <stdbool.h>\n' + raw, encoding='utf-8')
+guard.finish(out)
 print('Selected pinned control/realtime source; buffered audio/FIFO/shared-daemon excluded.')
-

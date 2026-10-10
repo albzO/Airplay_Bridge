@@ -19,6 +19,23 @@ const body = parsed.statements
 const { outputText } = ts.transpileModule(body, {
   compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None },
 });
+const sessionSource = await readFile(
+  new URL('../../airplay-frontend/src/useStreamSession.ts', import.meta.url),
+  'utf8',
+);
+const sessionParsed = ts.createSourceFile(
+  'session.ts',
+  sessionSource,
+  ts.ScriptTarget.Latest,
+  true,
+);
+const sessionBody = sessionParsed.statements
+  .filter((s) => !ts.isImportDeclaration(s))
+  .map((s) => s.getText(sessionParsed))
+  .join('\n');
+const sessionJs = ts.transpileModule(sessionBody, {
+  compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
+}).outputText;
 
 // 执行真实页面脚本和 Vue ref；只替换桌面 IPC 与浏览器接口，不复制事件处理逻辑。
 // Execute the actual page script and Vue refs; replace desktop IPC/browser APIs, not event logic.
@@ -26,7 +43,11 @@ function page(t, invokeCommand) {
   const scope = vue.effectScope();
   const unmounts = [];
   const deps = {
-    ...vue,
+    ref: vue.ref,
+    shallowRef: vue.shallowRef,
+    computed: vue.computed,
+    nextTick: vue.nextTick,
+    watch: vue.watch,
     onMounted: () => {},
     onUnmounted: (callback) => unmounts.push(callback),
     invokeCommand,
@@ -35,6 +56,9 @@ function page(t, invokeCommand) {
     localStorage: { getItem: () => null, setItem() {} },
     document: { documentElement: { dataset: {} }, querySelector: () => null },
   };
+  const sessionExports = {};
+  new Function('exports', ...Object.keys(deps), sessionJs)(sessionExports, ...Object.values(deps));
+  deps.useStreamSession = sessionExports.useStreamSession;
   const names = Object.keys(deps);
   const create = new Function(
     ...names,

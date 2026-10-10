@@ -26,6 +26,19 @@ git -C upstream/airplay-cli/libraop submodule update --init -- crosstools
 
 无需获取其他上游子模块，不要使用 `--remote` 将依赖升级到最新分支。GitHub 自动生成的源码 ZIP 不包含子模块内容；请通过 Git 克隆后执行上述命令。使用根目录构建脚本，上游原始 Makefile 的完整功能不属于本项目构建范围。
 
+### 上游适配变更
+
+`airplay-backend/upstream-manifest.json` 核对生成脚本读取的 15 个上游文件，SHA-256 按 UTF-8 文本及 LF 规范化，允许 Git 的 CRLF 检出差异。60 个替换位置使用稳定的 `R001` 等编号，每次调用的匹配次数必须符合清单；循环中合法的零匹配也显式记录。CMake 监视清单、校验模块、适配文件和清单中的上游输入，变化后重新配置并校验。
+
+更新上游或适配规则时，先审查原函数和每个替换的语义，再更新相应输入哈希/匹配次数；新增替换分配新编号，不重排已有编号。运行生成脚本，审查生成源码差异后更新 `outputs` 快照哈希。不得仅为了通过构建批量接受新哈希或自动重写匹配次数。清单是维护断言，不是上游可信度认证。
+
+```powershell
+python airplay-backend/select_upstream.py upstream/airplay-cli test/.artifacts/upstream-review
+python test/backend/test_upstream.py
+```
+
+生成目录的 `selection-report.json` 提供输入、实际匹配次数和输出哈希，供审查对照。同步更新子模块固定提交及 `THIRD_PARTY.md`，重新构建后端并运行协议模拟；具体命令见 [测试说明](../test/README.md)。
+
 保留根目录 `test/`：生产模块通过挂接复用其中的测试及诊断检查实现，完整源码检出已包含这些文件。测试源码和合成样例随 Git 提交，测试生成内容位于忽略的 `test/.artifacts/`；运行方式见 [测试说明](../test/README.md)。
 
 ### 构建桌面应用

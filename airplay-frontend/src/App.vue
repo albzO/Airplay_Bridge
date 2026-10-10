@@ -3,7 +3,7 @@ import { computed, onMounted, onUnmounted, ref, shallowRef, nextTick, watch } fr
 import { getVersion } from '@tauri-apps/api/app';
 import { listen } from '@tauri-apps/api/event';
 import { invokeCommand } from './commands';
-import { describeError } from './errors';
+import { useStreamSession } from './useStreamSession';
 import {
   decodeDevices,
   decodeInitialization,
@@ -58,29 +58,41 @@ const page = ref('播放'),
   });
 const selection = ref<string[]>([]),
   expanded = ref(''),
-  busy = ref(false),
-  playing = ref(false),
-  stopping = ref(false),
   refreshing = ref(false),
-  ready = ref(false),
-  phase = ref('尚未连接'),
-  error = ref('');
-// busy 覆盖准备、认证和播放；playing 收到遥测后置真；stopping 等 finished 才清除。
-// connected 仅表示原生后端已完成握手（PCM_READY），并不保证已经收到音频遥测。
-// busy covers preparation/authentication/playback; playing starts on telemetry; finished clears stopping.
-// connected means the native handshake reached PCM_READY, not that audio telemetry has arrived.
-const session = ref<number | null>(null),
-  pending = ref(''),
-  password = ref(''),
-  sending = ref(false),
-  connected = ref(false);
-// 命令返回前只暂存事件，不从事件猜测会话编号；过量事件显式停止，避免无限积压。
-// Buffer early events until the command identifies the session; overflow stops explicitly to bound memory.
-const startEventLimit = 512;
-let startRequest = 0;
-let starting = false;
-let startEvents: StreamEvent[] = [];
-let startEventsOverflow = false;
+  ready = ref(false);
+const {
+  busy,
+  playing,
+  stopping,
+  connected,
+  phase,
+  error,
+  session,
+  pending,
+  password,
+  sending,
+  retry,
+  retrySending,
+  start,
+  stop,
+  submit,
+  event,
+  clearRetry,
+} = useStreamSession({
+  startArgs: () => ({ names: selection.value, settings: settings.value }),
+  reset: resetSessionView,
+  showPassword: (isRetry) => {
+    expanded.value = isRetry ? attemptCard.value : chosen.value?.id || '';
+    void focusPassword();
+  },
+  ready: () => {
+    deviceStates.value[attemptCard.value] = 'green';
+  },
+  startFailed: () => {
+    deviceStates.value[attemptCard.value] = 'red';
+  },
+  render: renderSessionEvent,
+});
 // 连接前没有遥测，保留空快照让界面显示“—”；报告只在串流收尾时到达。
 // Keep an empty snapshot before telemetry so the UI shows “—”; reports arrive during stream cleanup.
 const telemetry = ref<Partial<Telemetry>>({}),
@@ -103,10 +115,7 @@ const autostart = ref(false),
   captureChanging = ref(false);
 const tone = computed(() => (playing.value ? 'green' : busy.value ? 'yellow' : 'red'));
 const deviceStates = ref<Record<string, string>>({}),
-  attemptCard = ref(''),
-  lastPasswordHost = ref(''),
-  retry = ref(false),
-  retrySending = ref(false);
+  attemptCard = ref('');
 // sessionStats 保存后端本次累计计数，stats 累加每次增量，避免重连后重复计入。
 // sessionStats tracks this session's counters; stats accumulates deltas without counting reconnects twice.
 const sessionStats = ref<Record<string, Record<string, string>>>({});
@@ -348,11 +357,7 @@ function choose(card: (typeof cards.value)[number]) {
   if (!busy.value) {
     if (chosen.value?.id !== card.id) {
       deviceStates.value = {};
-      pending.value = '';
-      password.value = '';
-      retry.value = false;
-      retrySending.value = false;
-      lastPasswordHost.value = '';
+      clearRetry();
       error.value = '';
     }
     selection.value = card.members.map((d) => d.name);
@@ -376,18 +381,9 @@ async function refresh() {
   }
 }
 
-/**
- * 先清空本次会话的快照，再请求桌面线程启动。密码重试会建立新会话，
- * 暂存输入直到新会话再次发出 password_required，随后立即提交并清空。
- * Reset session snapshots before starting the desktop worker. Password retries create a new
- * session; retain the input until its password_required event, then submit and clear it immediately.
- */
-async function start(passwordFirst = false) {
-  if (busy.value || disposed) return;
-  const request = ++startRequest;
-  starting = true;
-  startEvents = [];
-  startEventsOverflow = false;
+// 页面只清空本次展示快照；会话生命周期、密码和事件归属由 composable 管理。
+// Reset presentation snapshots here; the composable owns session lifetime, passwords and attribution.
+function resetSessionView() {
   activeDiagnostics.value = settings.value.captureDiagnostics;
   diagnosticLogs.value = [];
   diagnosticPath.value = '';
@@ -395,103 +391,14 @@ async function start(passwordFirst = false) {
   previewError.value = '';
   activeDetailedLogs.value = settings.value.detailedLogs;
   pipelinePath.value = '';
-  error.value = '';
-  busy.value = true;
-  playing.value = false;
-  stopping.value = false;
-  phase.value = '正在连接';
-  session.value = null;
-  pending.value = '';
-  if (!passwordFirst) {
-    password.value = '';
-    retry.value = false;
-  }
   attemptCard.value = chosen.value?.id || '';
   deviceStates.value[attemptCard.value] = 'yellow';
-  connected.value = false;
   telemetry.value = {};
   report.value = {};
   sessionStats.value = {};
   technical.value = {};
   logs.value = [];
   volume.value = null;
-  const id = await call<number>('start_stream', {
-    names: selection.value,
-    settings: settings.value,
-    passwordFirst,
-  });
-  if (disposed || request !== startRequest) return;
-  starting = false;
-  const queued = startEvents;
-  startEvents = [];
-  if (id === undefined) {
-    busy.value = false;
-    stopping.value = false;
-    phase.value = '连接失败';
-    deviceStates.value[attemptCard.value] = 'red';
-    retrySending.value = false;
-  } else {
-    session.value = id;
-    if (startEventsOverflow) {
-      error.value = '连接期间事件积压过多，已请求停止；请重新连接';
-      await stop();
-      // 即使已请求停止，提前到达的 finished 仍需负责清理页面状态。
-      // Even after requesting stop, an early finished event must finalize the page.
-      for (const entry of queued) if (entry.kind === 'finished') event(entry);
-    } else {
-      for (const entry of queued) event(entry);
-    }
-  }
-}
-
-async function stop() {
-  if (!busy.value || disposed) return;
-  const request = startRequest;
-  // 停止是异步请求：禁用遥测更新，但让 finished 负责最终状态和失败信息。
-  // Stop is asynchronous: suppress telemetry updates and let finished set final state and errors.
-  stopping.value = true;
-  phase.value = '正在停止';
-  password.value = '';
-  pending.value = '';
-  try {
-    await invokeCommand('stop_stream');
-  } catch (e) {
-    if (!disposed && request === startRequest && busy.value) error.value = String(e);
-  }
-}
-
-async function submit() {
-  if (!pending.value || !password.value || sending.value) return;
-  if (retry.value && !busy.value) {
-    // 密码失败后旧会话已经结束，不能把密码发给旧 session_id。
-    // The failed session has ended; create a new one instead of sending to its old session_id.
-    retrySending.value = true;
-    await start(true);
-    return;
-  }
-  sending.value = true;
-  const request = startRequest;
-  const submittedSession = session.value;
-  const secret = password.value;
-  // 交给桌面命令后不在响应式页面状态中保留密码。
-  // Clear the reactive password state once the value is handed to the desktop command.
-  password.value = '';
-  lastPasswordHost.value = pending.value;
-  try {
-    await invokeCommand('submit_password', {
-      sessionId: session.value,
-      host: pending.value,
-      password: secret,
-    });
-    if (disposed || request !== startRequest || !busy.value || stopping.value) return;
-    pending.value = '';
-    phase.value = '正在验证密码';
-  } catch (e) {
-    if (!disposed && request === startRequest && busy.value && !stopping.value)
-      error.value = String(e);
-  } finally {
-    if (request === startRequest && submittedSession === session.value) sending.value = false;
-  }
 }
 
 async function setVolume(value: number) {
@@ -524,50 +431,13 @@ async function swap() {
  * 仅接收 protocol.ts 已验证的事件；kind 收窄后只能读取该事件拥有的字段。
  * Accept only events validated by protocol.ts; narrowing kind exposes only that variant's fields.
  */
-function event(e: StreamEvent) {
-  if (disposed) return;
-  if (starting) {
-    if (startEvents.length < startEventLimit) startEvents.push(e);
-    else {
-      startEventsOverflow = true;
-      // 溢出时仍保留收尾事件，否则已经结束的后端无法再通知页面解除 busy。
-      // Preserve terminal events on overflow; an exited backend cannot emit finished again.
-      if (e.kind === 'finished') {
-        const replace = startEvents.findIndex((entry) => entry.kind !== 'finished');
-        startEvents[replace < 0 ? startEvents.length - 1 : replace] = e;
-      }
-    }
-    return;
-  }
-  // 只接受命令确认的活动会话；finished 后的迟到事件也不能重新打开密码框或连接状态。
-  // Accept only the command-confirmed active session; late events after finished cannot reopen UI state.
-  if (!busy.value || session.value === null || e.session_id !== session.value) return;
-  if (e.kind === 'preparing_source') {
-    if (!stopping.value) phase.value = '等待采集稳定';
-  }
-  if (e.kind === 'password_required') {
-    if (stopping.value) return;
-    pending.value = e.host;
-    phase.value = '需要 AirPlay 密码';
-    expanded.value = chosen.value?.id || '';
-    if (retrySending.value) {
-      retrySending.value = false;
-      void submit();
-    } else void focusPassword();
-  }
-  if (e.kind === 'auth_memory_error' || e.kind === 'auth_pipe_error')
-    error.value = describeError(e.error, e.kind);
+function renderSessionEvent(e: StreamEvent) {
   if (e.kind === 'log_path') {
     logPath.value = logDisplayPath(e.path);
     activeDetailedLogs.value = !!e.detailed_logs;
     pipelinePath.value = logDisplayPath(e.pipeline_path);
   }
-  if (e.kind === 'telemetry') {
-    if (!busy.value || stopping.value) return;
-    telemetry.value = e;
-    playing.value = true;
-    phase.value = '串流中';
-  }
+  if (e.kind === 'telemetry') telemetry.value = e;
   if (e.kind === 'report') report.value = e.report;
   if (e.kind === 'diagnostic_path') {
     diagnosticPath.value = logDisplayPath(e.path);
@@ -622,13 +492,6 @@ function event(e: StreamEvent) {
     }
     if (line.includes('AUTH_METHOD') || line.includes('TIMING'))
       technical.value[line.includes('TIMING') ? '时钟协议' : '认证方式'] = f.value || line;
-    if (line.includes('PCM_READY') && !stopping.value) {
-      connected.value = true;
-      phase.value = '启动音频采集';
-      deviceStates.value[attemptCard.value] = 'green';
-      password.value = '';
-      retry.value = false;
-    }
     if (line.includes('VOLUME_CURRENT') || (line.includes('VOLUME_APPLIED') && f.http === '200')) {
       const value =
         f.percent !== undefined
@@ -645,35 +508,11 @@ function event(e: StreamEvent) {
     }
   }
   if (e.kind === 'finished') {
-    // finished 是本次会话唯一收尾入口；仍保留最后的遥测和报告供用户诊断。
-    // finished is the session cleanup entry; retain the last telemetry and report for diagnosis.
-    password.value = '';
-    busy.value = false;
-    playing.value = false;
-    connected.value = false;
     telemetry.value.peaks = [0, 0];
-    stopping.value = false;
-    sending.value = false;
-    retrySending.value = false;
-    pending.value = '';
-    phase.value = e.error ? '串流失败' : '已停止';
     deviceStates.value[attemptCard.value] = e.error ? 'red' : '';
     if (e.error) {
-      error.value = e.error;
       logs.value.push(String(e.safe_error || e.error));
       if (logs.value.length > 300) logs.value.shift();
-      if (String(e.error).includes('PASSWORD_REJECTED') && lastPasswordHost.value) {
-        retry.value = true;
-        pending.value = lastPasswordHost.value;
-        expanded.value = attemptCard.value;
-        void focusPassword();
-      } else {
-        password.value = '';
-        retry.value = false;
-      }
-    } else {
-      password.value = '';
-      retry.value = false;
     }
   }
 }
@@ -697,9 +536,6 @@ let uiInitialized = false;
 let initialCapturePending = true;
 onUnmounted(() => {
   disposed = true;
-  startRequest++;
-  starting = false;
-  startEvents = [];
   systemTheme.removeEventListener('change', applyTheme);
   unlisteners.forEach((unlisten) => unlisten());
 });

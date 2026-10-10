@@ -4,29 +4,32 @@ import re
 import socket
 import struct
 import subprocess
+from harness import managed_case
 import threading
 import time
 import mock_receiver as m
 
-listeners=[]; workers=[]; summaries=[{},{}]; errors=[]
-for summary in summaries:
-    listener=socket.socket();listener.bind(('127.0.0.1',0));listener.listen(2);listener.settimeout(15)
-    listeners.append(listener)
-    worker=threading.Thread(target=m.receiver,args=(listener,'live-group-ptp',errors,summary),daemon=True)
-    workers.append(worker);worker.start()
-command=[str(m.BACKEND),'--host','127.0.0.1','--port',str(listeners[0].getsockname()[1]),
-    '--peer-host','127.0.0.1','--peer-port',str(listeners[1].getsockname()[1]),
-    '--peer-identity','A1B2C3D4E5F60719','--peer-active-remote','2',
-    '--password',m.SECRET,'--bind-ip','127.0.0.1','--timing','ptp','--hold-seconds','0',
-    '--pcm-stdin','--latency-ms','300']
-child=subprocess.Popen(command,stdin=subprocess.PIPE,stdout=subprocess.DEVNULL,stderr=subprocess.PIPE)
-ready=threading.Event();lines=[]
-def read_log():
-    for line in child.stderr:
-        text=line.decode('utf-8',errors='replace');lines.append(text)
-        if '[PROBE] PCM_READY' in text: ready.set()
-reader=threading.Thread(target=read_log,daemon=True);reader.start()
-try:
+
+@managed_case
+def check_stereo(*, resources):
+    listeners=[]; workers=[]; summaries=[{},{}]; errors=[]
+    for summary in summaries:
+        listener=resources.socket();listener.bind(('127.0.0.1',0));listener.listen(2);listener.settimeout(15)
+        listeners.append(listener)
+        worker=resources.thread(m.receiver,(listener,'live-group-ptp',errors,summary,resources))
+        workers.append(worker)
+    command=[str(m.BACKEND),'--host','127.0.0.1','--port',str(listeners[0].getsockname()[1]),
+        '--peer-host','127.0.0.1','--peer-port',str(listeners[1].getsockname()[1]),
+        '--peer-identity','A1B2C3D4E5F60719','--peer-active-remote','2',
+        '--password',m.SECRET,'--bind-ip','127.0.0.1','--timing','ptp','--hold-seconds','0',
+        '--pcm-stdin','--latency-ms','300']
+    child=resources.popen(command,stdin=subprocess.PIPE,stdout=subprocess.DEVNULL,stderr=subprocess.PIPE)
+    ready=threading.Event();lines=[]
+    def read_log():
+        for line in child.stderr:
+            text=line.decode('utf-8',errors='replace');lines.append(text)
+            if '[PROBE] PCM_READY' in text: ready.set()
+    reader=resources.thread(read_log)
     assert ready.wait(12),''.join(lines)
     raw=b''.join(struct.pack('<hh',*frame) for frame in m.LIVE_FIXTURE)
     began=time.monotonic()
@@ -57,5 +60,7 @@ try:
     assert summaries[0]['audio']['first_anchor']['clock_id']==summaries[1]['audio']['first_anchor']['clock_id']
     (m.ARTIFACTS/'stereo-check.json').write_text(json.dumps(summaries,indent=2))
     print('PASS two receivers: same stereo samples/RTP progression, one PTP engine, same clock/anchor/group UUID, retransmission and both TEARDOWNs')
-finally:
-    if child.poll() is None:child.kill();child.wait()
+
+
+if __name__ == '__main__':
+    check_stereo()

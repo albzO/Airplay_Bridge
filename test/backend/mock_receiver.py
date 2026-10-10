@@ -17,6 +17,9 @@ import time
 import math
 import select
 import struct
+from collections import deque
+from audio_sequence import AudioSequence
+from harness import managed_case
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from cryptography.hazmat.primitives.ciphers.aead import ChaCha20Poly1305
@@ -147,9 +150,12 @@ def decode_raw_stereo(frame):
     assert set(bits[offset:]) <= {'0'}
     return samples
 
-def receive_audio(data, control, key, stream, ptp, stop, errors, stats, pcm=False, live=False, allow_short=False):
+def receive_audio(data, control, key, stream, ptp, stop, errors, stats, pcm=False, live=False, allow_short=False, require_wrap=False):
     cipher = ChaCha20Poly1305(key[:32])
     wire_packets = {}
+    recent = deque()
+    requests = {}
+    sequence = AudioSequence()
     next_seq = 0
     samples_seen = sync_seen = 0
     retransmitted = False
@@ -160,8 +166,9 @@ def receive_audio(data, control, key, stream, ptp, stop, errors, stats, pcm=Fals
                 packet, _ = endpoint.recvfrom(4096)
                 if endpoint is control:
                     if packet[1] == 0xd6:
-                        assert packet[:4] == b'\x80\xd6\x00\x42'
-                        assert packet[4:] == wire_packets[9]
+                        request_id = int.from_bytes(packet[2:4], 'big')
+                        assert packet[0] == 0x80 and request_id in requests
+                        assert packet[4:] == requests[request_id].pop(0)
                         retransmitted = True
                     else:
                         assert len(packet) == (28 if ptp else 20)
@@ -176,12 +183,8 @@ def receive_audio(data, control, key, stream, ptp, stop, errors, stats, pcm=Fals
                                     'clock_id':int.from_bytes(packet[20:28],'big')}
                         sync_seen += 1
                     continue
-                assert packet[0] == 0x80 and packet[1] == (0xe0 if next_seq == 0 else 0x60)
-                seq, timestamp, ssrc = struct.unpack('!HII', packet[2:12])
-                assert seq == next_seq
-                assert timestamp == 441000 + seq*352
+                seq, timestamp, ssrc = sequence.inspect(packet)
                 assert ssrc == (0 if ptp else stream['streamConnectionID'])
-                assert packet[-8:] == seq.to_bytes(2, 'little') + b'\0'*6
                 assert len(packet) <= 1472  # fits a standard Ethernet IPv4 MTU
                 plain = cipher.decrypt(b'\0'*4 + packet[-8:], packet[12:-8], packet[4:12])
                 samples = decode_raw_stereo(plain)
@@ -199,15 +202,27 @@ def receive_audio(data, control, key, stream, ptp, stop, errors, stats, pcm=Fals
                         fade = min(1, local/.05, (4-local)/.05)
                         expected = round(1036*fade*math.sin(2*math.pi*440*local))
                     assert value[0] == value[1] and abs(value[0]-expected) <= 1, (seq, i, value, expected)
-                wire_packets[seq] = packet
-                if seq == 10:
+                wire_packets[next_seq] = packet
+                recent.append(next_seq)
+                if len(recent) > 512:
+                    del wire_packets[recent.popleft()]
+                if next_seq == 10:
+                    requests[0x42] = [wire_packets[9]]
                     control.sendto(b'\x80\xd5\x00\x42\x00\x09\x00\x01', ('127.0.0.1', stream['controlPort']))
+                if require_wrap and next_seq == 65537:
+                    requests[0x43] = [wire_packets[65535], wire_packets[65536]]
+                    control.sendto(struct.pack('!BBHHH', 0x80, 0xd5, 0x43, 65535, 2),
+                                   ('127.0.0.1', stream['controlPort']))
                 samples_seen += 352
                 next_seq += 1
         if not allow_short:
             assert samples_seen >= (3*44100 + len(LIVE_FIXTURE) if live else 4*44100 + len(PCM_FIXTURE) if pcm else 8*44100), samples_seen
             assert sync_seen > 0 and retransmitted
-        stats.update(packets=next_seq, frames=samples_seen, sync=sync_seen, retransmit_verified=True)
+            assert all(not expected for expected in requests.values()), requests.keys()
+        if require_wrap:
+            assert next_seq > 65538 and 0x43 in requests and not requests[0x43]
+        stats.update(packets=next_seq, frames=samples_seen, sync=sync_seen,
+                     retransmit_verified=retransmitted, wrap_verified=require_wrap)
     except Exception as error:
         errors.append('audio: '+repr(error))
 
@@ -257,8 +272,11 @@ def send_events(conn, key, mode, errors, ready, stats):
     except Exception as error:
         errors.append('events: '+repr(error))
 
-def receiver(listener, mode, errors, summary=None):
+def receiver(listener, mode, errors, summary=None, resources=None):
+    # 每个接收端独立结束音频，立体声一侧 TEARDOWN 不能提前终止另一侧。
+    # Each receiver stops its own audio; one stereo member's TEARDOWN must not stop its peer.
     audio_stop = threading.Event()
+    track = resources.socket if resources else lambda endpoint: endpoint
     audio_worker = None
     audio_sockets = []
     audio_stats = {}
@@ -266,11 +284,12 @@ def receiver(listener, mode, errors, summary=None):
     event_listener = event_connection = event_worker = None
     event_ready = threading.Event()
     event_stats = {}
-    rejected_event = socket.socket()
+    rejected_event = track(socket.socket())
     rejected_event.bind(('127.0.0.1', 0))
     try:
         for attempt in range(2):
             conn, _ = listener.accept()
+            track(conn)
             with conn:
                 conn.settimeout(15)
                 header, _ = plain_message(conn)
@@ -331,16 +350,21 @@ def receiver(listener, mode, errors, summary=None):
                     return
                 reply = {'eventPort': 0, 'diagnosticPadding': '测'*1200}
                 if mode.startswith('events-') and mode!='events-fail' or mode=='tone-events-ptp':
-                    event_listener=socket.socket();event_listener.bind(('127.0.0.1',0));event_listener.listen(1);event_listener.settimeout(5)
+                    event_listener=track(socket.socket());event_listener.bind(('127.0.0.1',0));event_listener.listen(1);event_listener.settimeout(5)
                     reply['eventPort']=event_listener.getsockname()[1]
                 if mode == 'events-fail': reply['eventPort'] = rejected_event.getsockname()[1]
                 channel.send(conn, response(header, body=plistlib.dumps(reply, fmt=plistlib.FMT_BINARY)), corrupt=mode == 'bad-tag')
                 if mode == 'bad-tag': return
                 if event_listener:
                     event_connection,_=event_listener.accept()
+                    track(event_connection)
                     if not mode.startswith('tone'): event_ready.set()
-                    event_worker=threading.Thread(target=send_events,args=(event_connection,key,mode,errors,event_ready,event_stats),daemon=True)
-                    event_worker.start()
+                    event_args = (event_connection,key,mode,errors,event_ready,event_stats)
+                    if resources:
+                        event_worker = resources.thread(send_events, event_args)
+                    else:
+                        event_worker=threading.Thread(target=send_events,args=event_args,daemon=True)
+                        event_worker.start()
                 while True:
                     header, body = channel.receive(conn)
                     if header.startswith(b'TEARDOWN '):
@@ -386,13 +410,19 @@ def receiver(listener, mode, errors, summary=None):
                                 channel.send(conn, response(header, body=plistlib.dumps({'streams': [{'dataPort': 0, 'controlPort': 0}]}, fmt=plistlib.FMT_BINARY)))
                                 continue
                             for _ in range(2):
-                                udp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                                udp = track(socket.socket(socket.AF_INET, socket.SOCK_DGRAM))
                                 udp.bind(('127.0.0.1', 0)); audio_sockets.append(udp)
                             reply = {'streams': [{'dataPort': audio_sockets[0].getsockname()[1], 'controlPort': audio_sockets[1].getsockname()[1]}]}
                             if mode == 'live-clamp-ptp':
                                 reply['streams'][0].update(latencyMin=44100, latencyMax=88200)
-                            audio_worker = threading.Thread(target=receive_audio, args=(*audio_sockets, key, stream, ptp, audio_stop, errors, audio_stats, mode.startswith('pcm'), mode.startswith('live'), mode in ('live-truncated', 'live-stall')), daemon=True)
-                            audio_worker.start()
+                            audio_args = (*audio_sockets, key, stream, ptp, audio_stop, errors, audio_stats,
+                                          mode.startswith('pcm'), mode.startswith('live'),
+                                          mode in ('live-truncated', 'live-stall'), 'wrap' in mode)
+                            if resources:
+                                audio_worker = resources.thread(receive_audio, audio_args)
+                            else:
+                                audio_worker = threading.Thread(target=receive_audio, args=audio_args, daemon=True)
+                                audio_worker.start()
                             channel.send(conn, response(header, body=plistlib.dumps(reply, fmt=plistlib.FMT_BINARY)))
                             continue
                         if header.startswith(b'SETPEERS '):
@@ -419,13 +449,13 @@ def receiver(listener, mode, errors, summary=None):
         if event_worker: event_worker.join(2)
         listener.close()
 
-def test_case(mode, password, expected_code, required, forbidden=(), automatic=False):
-    listener = socket.socket()
+@managed_case
+def test_case(mode, password, expected_code, required, forbidden=(), automatic=False, *, resources):
+    listener = resources.socket()
     listener.bind(('127.0.0.1', 0)); listener.listen(2); listener.settimeout(15)
     port = listener.getsockname()[1]
     errors = []
-    worker = threading.Thread(target=receiver, args=(listener, mode, errors), daemon=True)
-    worker.start()
+    worker = resources.thread(receiver, (listener, mode, errors, None, resources))
     command = [str(BACKEND), '--host', '127.0.0.1', '--port', str(port),
                '--password-stdin', '--bind-ip', '127.0.0.1', '--timing', 'ptp' if mode.endswith('-ptp') else 'ntp',
                '--hold-seconds', '2' if mode in ('success', 'success-ptp', 'hold403') or mode.startswith('events-') and mode!='events-fail' else '0']
@@ -434,16 +464,17 @@ def test_case(mode, password, expected_code, required, forbidden=(), automatic=F
     controls = None
     controls_worker = None
     if mode.startswith('volume'):
-        controls=socket.socket(); controls.bind(('127.0.0.1',0));controls.listen(1);controls.settimeout(15)
+        controls=resources.socket(); controls.bind(('127.0.0.1',0));controls.listen(1);controls.settimeout(15)
         command.extend(['--volume-control-port',str(controls.getsockname()[1])])
         def forward():
             conn,_=controls.accept()
+            resources.socket(conn)
             with conn:
                 payload=b'SET 10\nSET 0\nREPORT -6\nSTEP 5\nSET NaN\n'
                 for index in range(0,len(payload),3): conn.sendall(payload[index:index+3]);time.sleep(.002)
-                time.sleep(9)
+                resources.stop.wait(9)
             controls.close()
-        controls_worker=threading.Thread(target=forward,daemon=True);controls_worker.start()
+        controls_worker=resources.thread(forward)
     if mode.startswith('pcm'):
         fixture = ARTIFACTS / 'mock-stereo.pcm'
         fixture.write_bytes(b''.join(struct.pack('<hh', *frame) for frame in PCM_FIXTURE))
@@ -461,19 +492,19 @@ def test_case(mode, password, expected_code, required, forbidden=(), automatic=F
     print(f'PASS {mode}: exit={result.returncode}, required markers verified')
     return {'case': mode, 'exit': result.returncode, 'passed': True}
 
-def test_live_case(mode, expected_code):
-    listener = socket.socket()
+@managed_case
+def test_live_case(mode, expected_code, seconds=None, *, resources):
+    listener = resources.socket()
     listener.bind(('127.0.0.1', 0)); listener.listen(2); listener.settimeout(15)
     errors = []
-    worker = threading.Thread(target=receiver, args=(listener, mode, errors), daemon=True)
-    worker.start()
+    worker = resources.thread(receiver, (listener, mode, errors, None, resources))
     command = [str(BACKEND), '--host', '127.0.0.1',
                '--port', str(listener.getsockname()[1]), '--password', SECRET,
                '--bind-ip', '127.0.0.1', '--timing', 'ptp' if mode.endswith('-ptp') else 'ntp',
                '--hold-seconds', '0', '--pcm-stdin']
     if mode in ('live-lowlatency-ptp', 'live-clamp-ptp'):
         command.extend(['--latency-ms', '500', '--buffer-ms', '64'])
-    child = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    child = resources.popen(command, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
     ready = threading.Event()
     logs = []
     def read_log():
@@ -481,7 +512,7 @@ def test_live_case(mode, expected_code):
             text = line.decode('utf-8', errors='replace')
             logs.append(text)
             if 'PCM_READY' in text: ready.set()
-    reader = threading.Thread(target=read_log, daemon=True); reader.start()
+    reader = resources.thread(read_log)
     assert ready.wait(10), logs
     if mode == 'live-truncated':
         child.stdin.write(b'abc'); child.stdin.close()
@@ -491,8 +522,10 @@ def test_live_case(mode, expected_code):
     else:
         payload = b''.join(struct.pack('<hh', *frame) for frame in LIVE_FIXTURE)
         began = time.monotonic()
-        for pos in range(0, len(payload), 1764):
-            block = payload[pos:pos+1764]
+        length = len(payload) if seconds is None else int(seconds * 176400)
+        for pos in range(0, length, 1764):
+            count = min(1764, length-pos)
+            block = payload[pos:pos+count].ljust(count, b'\0')
             # Partial writes split even stereo sample boundaries.
             for index in range(0, len(block), 37):
                 child.stdin.write(block[index:index+37]); child.stdin.flush()

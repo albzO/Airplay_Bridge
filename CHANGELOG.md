@@ -1,5 +1,16 @@
 # 更新日志
 
+## 未发布 / Unreleased
+
+- 将会话控制与采集时间线分别提取到独立模块，保留旧事件、密码重试和停止回归覆盖。
+  Extract stream session control and capture timeline planning with lifecycle regression coverage.
+- 两级音频队列改按各自 640 ms 预算限量，计入处理中块；复用 PCM 字节及左右互换缓冲，增加显式 Release 合成基线。
+  Bound each audio queue by 640 ms including in-flight work, reuse buffers and add an explicit synthetic release baseline.
+- 模拟接收端校验序号/时间戳模运算与独立 nonce，增加跨 RTP 回绕重传长测和失败清理守卫。
+  Check wrapping RTP counters and independent nonces; add full-chain wrap/retransmission checks and fixture cleanup.
+- 上游生成增加输入哈希清单、替换次数断言和输出快照检查；固定依赖版本保持不变。CI 暂缓。
+  Guard pinned extraction inputs, patch counts and generated snapshots. CI is deferred.
+
 ## 1.0.2 — 2026-10-10
 
 - 修复暂停播放后误报回环无音频并重建采集的问题：回环一致性检查仅在启动阶段运行，后续暂停、恢复或停止串流不重新触发。

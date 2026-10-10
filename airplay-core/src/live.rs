@@ -17,6 +17,7 @@ pub(crate) mod diagnostics;
 mod pipeline;
 mod protocol;
 mod transport;
+use crate::audio_queue::{AUDIO_BUDGET_MS, BLOCK_LIMIT};
 use crate::{capture, discovery::Device};
 use control::{Control, STOP};
 pub use control::{GuiContext, GuiControl, GuiEmitter};
@@ -31,7 +32,7 @@ use std::{
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
-use transport::{BYTES_PER_FRAME, BYTES_PER_MS, Backend, BackendOptions, PcmWriter, QUEUE_BLOCKS};
+use transport::{BYTES_PER_FRAME, BYTES_PER_MS, Backend, BackendOptions, PcmWriter};
 type Result<T> = std::result::Result<T, Box<dyn Error>>;
 /// CLI 单设备串流；seconds 为 0 时持续运行，latency_ms / buffer_ms 的单位为毫秒。
 /// CLI streaming to one device; zero seconds runs indefinitely, latency_ms / buffer_ms use milliseconds.
@@ -299,7 +300,8 @@ fn run_targets(
             "endpoint": gui.as_ref().map(|g|&g.endpoint),
             "mapping": gui.as_ref().map(|g| *g.control.mapping.lock().unwrap()),
             "output_rate": 44100,
-            "queue_blocks_max": QUEUE_BLOCKS,
+            "queue_blocks_max": BLOCK_LIMIT,
+            "queue_budget_ms": AUDIO_BUDGET_MS,
             "buffer_ms": buffer_ms,
             "latency_ms": latency_ms,
         }));
@@ -412,7 +414,11 @@ fn run_targets(
         "conversion": audio.conversion_stats(),
         "pipe_bytes": written.as_ref().ok(),
         "pipe_error": written.as_ref().err().map(|e| crate::failure::describe(&format!("PCM 发送管道：{e}"), "PCM_PIPE_FAILED")),
-        "queue_blocks_max": QUEUE_BLOCKS,
+        "queue_blocks_max": BLOCK_LIMIT,
+        "queue_budget_ms": AUDIO_BUDGET_MS,
+        "pcm_queue_peak_ms": counters.queue.peak_ms(),
+        "pcm_buffers_created": counters.buffers_created.load(Ordering::Relaxed),
+        "pcm_buffers_reused": counters.buffers_reused.load(Ordering::Relaxed),
         "clock": *protocol.clock.lock().unwrap(),
         "requested_latency_ms": latency_ms,
         "requested_buffer_ms": buffer_ms,

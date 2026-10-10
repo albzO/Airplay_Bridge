@@ -10,7 +10,7 @@
 |---|---|---|
 | 1 | `airplay-frontend/src/types.ts` | 页面接收什么数据？哪些数值是帧、毫秒、Hz 或 ppm？ |
 | 2 | `airplay-frontend/src/protocol.ts` | 桌面 JSON 怎样从 `unknown` 变成可读取的数据？缺失或错误字段如何处理？ |
-| 3 | `airplay-frontend/src/App.vue` | 用户点击怎样变成命令？事件怎样改变页面状态？ |
+| 3 | `airplay-frontend/src/useStreamSession.ts`、`App.vue` | 会话控制怎样独立于设备视图？事件怎样改变页面状态？ |
 | 4 | `airplay-frontend/src-tauri/src/main.rs` | 命令怎样校验设备、来源和会话，并启动工作线程？ |
 | 5 | `airplay-core/src/source.rs` | 谁持有持续采集线程？预览与串流如何共用它？ |
 | 6 | `airplay-core/src/live.rs` | 采集、转换、管道、协议日志和最终报告怎样连接？ |
@@ -19,7 +19,7 @@
 
 ## 从点击播放到实际串流
 
-1. `App.vue/start` 清空本次快照，设置 `busy`，发送 `start_stream`。设置中的 `latency` 是播放提前量，`buffer` 是后端预缓冲时长；两者单位都是 ms。`mapping` 是来源声道下标，从 0 开始。
+1. `useStreamSession/start` 调用页面快照重置，设置 `busy`，发送 `start_stream`。设置中的 `latency` 是播放提前量，`buffer` 是后端预缓冲时长；两者单位都是 ms。`mapping` 是来源声道下标，从 0 开始。
 2. 桌面 `start_stream` 检查有没有活动会话或设备发现、设备名称是否唯一、两台设备是否同一个立体声对、端点是否存在以及映射是否越界。校验通过后保存偏好并创建会话控制和密码管道。
 3. `ensure_source` 复用同端点的健康采集线程；来源改变时先结束旧线程。工作线程先发 `preparing_source`，再调用 `wait_ready`。连续采集至少稳定 500 ms、至少收到 3 包、最近一包不超过 250 ms 才算就绪；故障或长间隔会重置窗口，最长等待 8 秒。静音也可就绪。
 4. `live::run_gui` 启动原生后端进行协议连接。`PCM_READY` 表示握手完成，页面进入启动采集阶段；遥测到达后才置 `playing` 并显示串流中。
@@ -47,9 +47,11 @@
 |---|---|---|
 | `live.rs` | 设备校验、连接参数、启动顺序、采集入口、收尾与最终报告 | 先认证再订阅；错误优先级；报告字段与脱敏 |
 | `live/control.rs` | GUI 会话控制、来源引用、CLI Ctrl+C 守卫 | GUI 停止不销毁持续 Source；CLI 处理器随守卫注销 |
-| `live/transport.rs` | 原生子进程、唯一 PCM 发送端、写线程、计数与单位常量 | 64 块有界队列；满队列立即报错并撤销待发送计数；EOF 收尾 |
+| `live/transport.rs` | 原生子进程、唯一 PCM 发送端、写线程、计数与单位常量 | 640 ms 时长预算（含写入中块）及 256 块硬上限；满时立即报错；缓冲回收；EOF 收尾 |
 | `live/protocol.rs` | stderr 读线程、就绪通知、QPC 播放计划、成员统计、首个故障 | 原文用于控制，脱敏副本用于展示/落盘；`PCM_READY` 只通知一次 |
 | `live/pipeline.rs` | 本次会话的重采样器、水位控制器、左右路由、遥测与管线诊断 | 滤波器跨包连续；帧/字节/ms 单位；遥测与控制更新时机 |
+| `audio_queue.rs` | 两级队列共用的时长策略、预留与 RAII 归还 | 每级各 640 ms；时长按帧数/采样率计算；不能当作实际延迟 |
+| `capture/timeline.rs` | 空闲静音、缺口修复与恢复重叠 | 纯时间线计划，不读取或释放 WASAPI；60 秒修复预算可确定性测试 |
 | `live/diagnostics.rs` | 有界诊断队列、落盘线程、轮转与丢记录统计 | 容量不决定轮转策略；逐包日志保留 4 段，每段 8 MiB |
 
 阅读顺序是 `live.rs` 的启动 → `pipeline.rs/process` 的音频处理 → `live.rs` 的停止和报告。遇到具体问题再进入协议、发送或诊断模块；不必先通读所有线程实现。
@@ -61,6 +63,8 @@
 `test/core/unit/live/` 中的单元测试覆盖队列满/断开时的计数回滚、已入队 PCM 在 EOF 前排空、断管报错、不同音频包大小下的声道与重采样总时长，以及协议状态与日志脱敏。执行 `cargo test --manifest-path airplay-core/Cargo.toml --locked --offline --lib`；需要声卡或真实接收设备的测试仍单独忽略，编译和这些单元测试不能代替实机听感验证。
 
 ## 页面状态与密码重试
+
+`useStreamSession.ts` 持有会话命令、事件暂存、编号确认、停止和密码重试。`App.vue` 通过回调重置或渲染展示快照，不从展示日志认领会话；页面卸载时 composable 使未完成命令失效并清空密码。
 
 | 状态 | 设置条件 | 清除条件 |
 |---|---|---|
@@ -86,7 +90,7 @@
 | 修改目标 | 主要入口 | 需要同步检查 |
 |---|---|---|
 | 新增设置 | `types.ts`、`protocol.ts`、桌面 `settings.rs`、页面控件 | 默认值、单位、范围、旧文件缺字段时的行为 |
-| 新增桌面事件 | Rust 事件发送点、`types.ts/StreamEvent`、`protocol.ts`、`App.vue/event` | 会话编号、必填字段、已知事件损坏时的报错、协议测试 |
+| 新增桌面事件 | Rust 事件发送点、`types.ts/StreamEvent`、`protocol.ts`、`useStreamSession/event`、`App.vue/renderSessionEvent` | 会话编号、必填字段、已知事件损坏时的报错、协议测试 |
 | 新增报告字段 | `live.rs`、`privacy.rs`；页面显示字段补充类型及校验 | 日志脱敏、扩展 JSON 保留、数值单位 |
 | 修改来源预览 | `source.rs`、桌面 `ensure_source`、页面 `source-level` 监听 | 端点过滤、静音就绪、取消、线程复用 |
 | 修改采样或水位控制 | `capture.rs`、`convert.rs`、`drift.rs`、`live/pipeline.rs` | 帧与采样区别、包边界、尾帧、缓冲积压及实机听感 |

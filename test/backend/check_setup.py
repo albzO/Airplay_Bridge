@@ -8,6 +8,7 @@ import subprocess
 import sys
 import threading
 import time
+from harness import managed_case
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 import mock_receiver as m
@@ -26,14 +27,14 @@ def delayed_receive(self, conn):
 
 m.Channel.receive = delayed_receive
 
-def failure_case(binary, budget):
-    listener = socket.socket()
+@managed_case
+def failure_case(binary, budget, *, resources):
+    listener = resources.socket()
     listener.bind(('127.0.0.1', 0))
     listener.listen(2)
     listener.settimeout(15)
     errors = []
-    worker = threading.Thread(target=m.receiver, args=(listener, 'live-ptp', errors), daemon=True)
-    worker.start()
+    worker = resources.thread(m.receiver, (listener, 'live-ptp', errors, None, resources))
     began = time.monotonic()
     result = subprocess.run([str(binary), '--host', '127.0.0.1', '--port',
         str(listener.getsockname()[1]), '--password', m.SECRET, '--bind-ip', '127.0.0.1',

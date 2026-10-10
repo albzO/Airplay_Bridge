@@ -8,6 +8,7 @@
 //! Bounded audio queues report overflow as a fault; diagnostic queues may drop records and
 //! report the count during cleanup instead of allowing unbounded memory growth.
 use crate::{
+    audio_queue::{self, AUDIO_BUDGET_MS, AudioSender, QueueError},
     capture::{self, CaptureProgress},
     live::diagnostics::DetailLog,
 };
@@ -79,10 +80,25 @@ impl Warmup {
 #[path = "../../test/core/unit/source.rs"]
 mod tests;
 struct Subscription {
-    tx: mpsc::SyncSender<Event>,
+    tx: AudioSender<Event>,
     fault: Arc<Mutex<Option<String>>>,
     diagnostic_tx: Option<mpsc::SyncSender<Value>>,
     diagnostic_drops: Arc<AtomicU64>,
+}
+impl Subscription {
+    fn send_audio(
+        &self,
+        samples: &[f32],
+        rate: u32,
+        position: CaptureProgress,
+    ) -> std::result::Result<(), QueueError> {
+        if samples.is_empty() {
+            return Ok(());
+        }
+        self.tx.try_send(samples.len() / 2, rate, || {
+            Event::Audio(samples.to_vec(), rate, position, Instant::now())
+        })
+    }
 }
 pub struct Source {
     pub endpoint: String,
@@ -199,14 +215,8 @@ impl Source {
                         }
                         let mut subscriber = s.subscriber.lock().unwrap();
                         if let Some(sub) = subscriber.as_ref() {
-                            let event = Event::Audio(
-                                samples.to_vec(),
-                                rate,
-                                *s.progress.lock().unwrap(),
-                                Instant::now(),
-                            );
-                            if let Err(error) = sub.tx.try_send(event) {
-                                if matches!(error, mpsc::TrySendError::Full(_)) {
+                            if let Err(error) = sub.send_audio(samples, rate, progress) {
+                                if error == QueueError::Full {
                                     *sub.fault.lock().unwrap() = Some(
                                         "持续采集分支队列已满，处理跟不上采集；电平预览继续运行"
                                             .into(),
@@ -338,11 +348,11 @@ impl Source {
         }
     }
     /// 订阅后续采集数据，sink 接收交错排列的 float32 左右声道及来源采样率。
-    /// 仅允许一个订阅者；64 个音频块的队列与 1024 条诊断队列各自限量。
+    /// 仅允许一个订阅者；音频时长最多 640 ms（含处理中块），诊断最多 1024 条。
     /// stop 只结束本次订阅，保留来源线程；统计以挂接时的计数作基线，避免把
     /// 连接前预览阶段的故障算进本次报告。sink 出错也会先解除订阅再返回。
     /// Subscribe to future interleaved float32 stereo samples and their source sample rate.
-    /// Allow one subscriber; bound audio at 64 blocks and diagnostics at 1024 records.
+    /// Allow one subscriber; bound audio at 640 ms including in-flight work and diagnostics at 1024 records.
     /// stop ends this subscription, not capture. Use attach-time counters as the report baseline
     /// to exclude earlier preview faults. Detach before returning even when sink fails.
     pub fn consume(
@@ -352,7 +362,8 @@ impl Source {
         mut diagnostic: Option<&mut dyn FnMut(Value)>,
         mut sink: impl FnMut(&[f32], u32) -> Result<()>,
     ) -> Result<Value> {
-        let (tx, rx) = mpsc::sync_channel(64);
+        let (tx, rx) = audio_queue::channel();
+        let queue_stats = tx.stats.clone();
         let (diagnostic_tx, diagnostic_rx) = mpsc::sync_channel(1024);
         let diagnostic_drops = Arc::new(AtomicU64::new(0));
         let fault = Arc::new(Mutex::new(None));
@@ -407,11 +418,12 @@ impl Source {
                     }
                 }
                 match rx.recv_timeout(Duration::from_millis(50)) {
-                    Ok(Event::Audio(samples, rate, position, received)) => {
-                        *progress.lock().unwrap() = position;
+                    Ok(block) => {
+                        let Event::Audio(samples, rate, position, received) = &block.value;
+                        *progress.lock().unwrap() = *position;
                         let processing = Instant::now();
                         let backlog_ms = received.elapsed().as_secs_f64() * 1000.0;
-                        let result = sink(&samples, rate);
+                        let result = sink(samples, *rate);
                         if let Some(log) = diagnostic.as_mut() {
                             log(
                                 json!({"kind":"consumer_delivery","frames":samples.len()/2,"source_backlog_ms":backlog_ms,"consumer_ms":processing.elapsed().as_secs_f64()*1000.0,"capture_position":position,"error":result.as_ref().err().map(ToString::to_string)}),
@@ -434,6 +446,7 @@ impl Source {
             Ok(())
         })();
         *self.subscriber.lock().unwrap() = None;
+        drop(rx);
         self.diagnostic_enabled.store(false, Ordering::Relaxed);
         for entry in diagnostic_rx.try_iter() {
             if let Some(log) = diagnostic.as_mut() {
@@ -443,12 +456,12 @@ impl Source {
         let final_position = *self.progress.lock().unwrap();
         if let Some(log) = diagnostic.as_mut() {
             log(
-                json!({"kind":"stream_detach","diagnostic_drops":diagnostic_drops.load(Ordering::Relaxed),"frames":frames,"capture_position":final_position,"error":result.as_ref().err().map(ToString::to_string)}),
+                json!({"kind":"stream_detach","source_queue_budget_ms":AUDIO_BUDGET_MS,"source_queue_peak_ms":queue_stats.peak_ms(),"source_queue_pending_ms":queue_stats.pending_ms(),"diagnostic_drops":diagnostic_drops.load(Ordering::Relaxed),"frames":frames,"capture_position":final_position,"error":result.as_ref().err().map(ToString::to_string)}),
             );
         }
         result?;
         Ok(
-            json!({"capture_info":*self.info.lock().unwrap(),"mode":"continuous_shared","endpoint":self.endpoint,"frames":frames,"discontinuities":final_position.discontinuities.saturating_sub(initial.discontinuities),"timestamp_errors":final_position.timestamp_errors.saturating_sub(initial.timestamp_errors),"repaired_gaps":final_position.repaired_gaps.saturating_sub(initial.repaired_gaps),"repaired_gap_frames":final_position.repaired_gap_frames.saturating_sub(initial.repaired_gap_frames),"capture_position":final_position,"stopped_by_user":stop.load(Ordering::Relaxed)}),
+            json!({"capture_info":*self.info.lock().unwrap(),"mode":"continuous_shared","endpoint":self.endpoint,"frames":frames,"source_queue_budget_ms":AUDIO_BUDGET_MS,"source_queue_peak_ms":queue_stats.peak_ms(),"discontinuities":final_position.discontinuities.saturating_sub(initial.discontinuities),"timestamp_errors":final_position.timestamp_errors.saturating_sub(initial.timestamp_errors),"repaired_gaps":final_position.repaired_gaps.saturating_sub(initial.repaired_gaps),"repaired_gap_frames":final_position.repaired_gap_frames.saturating_sub(initial.repaired_gap_frames),"capture_position":final_position,"stopped_by_user":stop.load(Ordering::Relaxed)}),
         )
     }
 }
