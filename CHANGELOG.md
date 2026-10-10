@@ -2,6 +2,8 @@
 
 ## 未发布 / Unreleased
 
+- 协议控制台/文件日志改为 128 条有界队列异步输出；就绪及故障解析不等待写入，报告增加日志丢失、写入错误和共享收尾期限状态。
+  Move protocol console/file output to a bounded async worker; preserve readiness/fault processing and report log drops, errors and shared-deadline cleanup.
 - 将会话控制与采集时间线分别提取到独立模块，保留旧事件、密码重试和停止回归覆盖。
   Extract stream session control and capture timeline planning with lifecycle regression coverage.
 - 两级音频队列改按各自 640 ms 预算限量，计入处理中块；复用 PCM 字节及左右互换缓冲，增加显式 Release 合成基线。

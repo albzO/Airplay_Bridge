@@ -1,10 +1,10 @@
 //! 原生协议标记解析、会话统计和就绪等待；日志先脱敏，控制解析保留原始文本。
 //! Native marker parsing, session statistics and readiness waits; redact logs but parse raw control text.
-use super::{GuiEmitter, Result, transport::Backend};
+use super::{GuiEmitter, Result, diagnostics::LogWorker, protocol_log, transport::Backend};
 use std::{
     collections::BTreeMap,
     fs::File,
-    io::{BufRead, BufReader, Read, Write},
+    io::{BufRead, BufReader, Read},
     sync::{
         Arc, Mutex,
         atomic::{AtomicBool, Ordering},
@@ -132,84 +132,83 @@ impl ProtocolState {
     }
 }
 
-/// 独立 stderr 读线程。日志限额和最近上下文保持原有行为，PCM_READY 只通知一次。
-/// Dedicated stderr reader; preserve log limits/recent context and announce PCM_READY once.
+/// stderr 读线程先解析状态/通知就绪，再投递日志及 GUI 事件；不等待日志写入。
+/// Parse state/announce readiness before submitting logs and GUI events; never wait for log writes.
 pub(super) struct BackendReader {
     pub(super) state: ProtocolState,
     ready: mpsc::Receiver<()>,
     worker: Option<thread::JoinHandle<()>>,
+    log: Option<LogWorker<protocol_log::Entry>>,
 }
 impl BackendReader {
     pub(super) fn start(
         stderr: impl Read + Send + 'static,
-        mut log: File,
+        log: File,
         privacy: crate::privacy::Redactor,
         detailed_logs: bool,
         emit: Option<GuiEmitter>,
-    ) -> Self {
+    ) -> std::io::Result<Self> {
+        Self::start_with_log(
+            stderr,
+            protocol_log::start(log, std::io::stdout(), detailed_logs)?,
+            privacy,
+            emit,
+        )
+    }
+    fn start_with_log(
+        stderr: impl Read + Send + 'static,
+        log: LogWorker<protocol_log::Entry>,
+        privacy: crate::privacy::Redactor,
+        emit: Option<GuiEmitter>,
+    ) -> std::io::Result<Self> {
         let state = ProtocolState::default();
         let reader_state = state.clone();
         let (ready_tx, ready) = mpsc::channel();
-        let worker = thread::spawn(move || {
+        let log_sender = log.sender();
+        let worker = thread::Builder::new().name("airplay-protocol".into()).spawn(move || {
             let state = reader_state;
-            let faults_only = !detailed_logs;
             let mut announced = false;
-            let mut recent = std::collections::VecDeque::<String>::new();
-            let mut context_written = false;
-            let mut log_bytes = 0usize;
             for line in BufReader::new(stderr).lines() {
                 let Ok(line) = line else {
                     break;
                 };
+                state.record(&line);
+                if line.contains("[PROBE] PCM_READY") && !announced {
+                    let _ = ready_tx.send(());
+                    announced = true;
+                }
                 let safe_line = privacy.text(&line);
-                println!("{safe_line}");
                 let is_fault = key_fault(&line);
-                if !faults_only {
-                    let _ = writeln!(log, "{safe_line}");
-                } else if is_fault && log_bytes < 262144 {
-                    if !context_written {
-                        let _ = writeln!(log, "[CONTEXT] 最近的会话标记，仅在故障时保存");
-                        for item in &recent {
-                            let _ = writeln!(log, "{item}");
-                            log_bytes += item.len() + 1;
-                        }
-                        context_written = true;
-                    }
-                    let bounded: String = safe_line.chars().take(2048).collect();
-                    let _ = writeln!(log, "{bounded}");
-                    log_bytes += bounded.len() + 1;
-                }
-                if faults_only {
-                    recent.push_back(safe_line.chars().take(1024).collect());
-                    if recent.len() > 24 {
-                        recent.pop_front();
-                    }
-                }
+                log_sender.record(protocol_log::Entry {
+                    safe_line: safe_line.clone(),
+                    is_fault,
+                    password_needed: line.contains("[PROBE] PASSWORD_NEEDED "),
+                });
                 if let Some(emit) = &emit {
                     emit(
                         serde_json::json!({"kind":"native","line":line,"safe_line":safe_line,"is_fault":is_fault}),
                     );
                 }
-                state.record(&line);
-                if line.contains("[PROBE] PASSWORD_NEEDED ") {
-                    println!("设备要求 AirPlay 密码，请在本窗口隐藏输入并按回车。");
-                }
-                if line.contains("[PROBE] PCM_READY") && !announced {
-                    let _ = ready_tx.send(());
-                    announced = true;
-                }
             }
-        });
-        Self {
+        })?;
+        Ok(Self {
             state,
             ready,
             worker: Some(worker),
-        }
+            log: Some(log),
+        })
     }
 
     /// 轮询 50 ms，取消可快速响应；90 秒仍未就绪则沿用现有超时错误。
     /// Poll every 50 ms for responsive cancellation; retain the existing 90-second timeout.
     pub(super) fn wait_ready(&mut self, backend: &mut Backend, stop: &AtomicBool) -> Result<()> {
+        self.wait_ready_with(stop, || Ok(backend.try_wait()?.is_some()))
+    }
+    fn wait_ready_with(
+        &mut self,
+        stop: &AtomicBool,
+        mut backend_exited: impl FnMut() -> Result<bool>,
+    ) -> Result<()> {
         let waiting = Instant::now();
         loop {
             match self.ready.recv_timeout(Duration::from_millis(50)) {
@@ -228,7 +227,7 @@ impl BackendReader {
             if waiting.elapsed() > Duration::from_secs(90) {
                 return Err("建立流或等待密码超过 90 秒".into());
             }
-            if backend.try_wait()?.is_some() {
+            if backend_exited()? {
                 self.join();
                 if let Some(error) = self.state.auth_failure.lock().unwrap().clone() {
                     return Err(error.into());
@@ -241,6 +240,12 @@ impl BackendReader {
         if let Some(worker) = self.worker.take() {
             let _ = worker.join();
         }
+        if let Some(log) = &mut self.log {
+            log.close();
+        }
+    }
+    pub(super) fn finish_log(&mut self, deadline: Instant) -> Option<serde_json::Value> {
+        self.log.take().map(|log| log.finish_until(deadline))
     }
 }
 

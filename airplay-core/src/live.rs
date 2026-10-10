@@ -16,6 +16,7 @@ mod control;
 pub(crate) mod diagnostics;
 mod pipeline;
 mod protocol;
+mod protocol_log;
 mod transport;
 use crate::audio_queue::{AUDIO_BUDGET_MS, BLOCK_LIMIT};
 use crate::{capture, discovery::Device};
@@ -255,7 +256,7 @@ fn run_targets(
         privacy.clone(),
         detailed_logs,
         gui.as_ref().map(|g| g.emit.clone()),
-    );
+    )?;
     let protocol = reader.state.clone();
     reader.wait_ready(&mut backend, stop)?;
     let (sender, writer) = PcmWriter::start(backend.stdin()?);
@@ -396,6 +397,7 @@ fn run_targets(
     let trace_status = audio.finish_trace(log_deadline);
     let drift_log_status = audio.finish_drift(log_deadline);
     let packet_log_status = packet_log.take().map(|log| log.finish_until(log_deadline));
+    let protocol_log_status = reader.finish_log(log_deadline);
     if let Some(g) = &gui {
         if capture_diagnostics {
             (g.emit)(serde_json::json!({"kind":"diagnostic_end","status":packet_log_status}));
@@ -442,6 +444,7 @@ fn run_targets(
         "pipeline_trace_status": trace_status,
         "drift_trace": if detailed_logs { Some(log_path.with_extension("drift.jsonl")) } else { None },
         "drift_trace_status": drift_log_status,
+        "protocol_log_status": protocol_log_status,
     });
     let report_path = log_path.with_extension("json");
     let report = privacy.value(&report);

@@ -16,13 +16,31 @@ use std::{
 // 队列满时计数 dropped；收尾等待有期限，超时后禁止继续处理队列。
 // A separate disk worker keeps slow storage off the capture path and bounds logging memory.
 // Count overflow; cleanup has a deadline and abandons queued work after timeout.
-pub(crate) struct DetailLog {
-    tx: Option<mpsc::SyncSender<serde_json::Value>>,
-    dropped: AtomicU64,
+pub(crate) struct LogWorker<T> {
+    input: Option<LogSender<T>>,
+    dropped: Arc<AtomicU64>,
     pending: Arc<AtomicU64>,
     abandon: Arc<AtomicBool>,
     completed: mpsc::Receiver<std::io::Result<()>>,
     worker: thread::JoinHandle<()>,
+}
+pub(crate) type DetailLog = LogWorker<serde_json::Value>;
+
+// 读线程只持有非阻塞发送端，收尾句柄留在会话编排层。
+// Readers own only a nonblocking sender; session orchestration retains the cleanup handle.
+pub(super) struct LogSender<T> {
+    tx: mpsc::SyncSender<T>,
+    pending: Arc<AtomicU64>,
+    dropped: Arc<AtomicU64>,
+}
+impl<T> LogSender<T> {
+    pub(super) fn record(&self, entry: T) {
+        self.pending.fetch_add(1, Ordering::Relaxed);
+        if self.tx.try_send(entry).is_err() {
+            self.pending.fetch_sub(1, Ordering::Relaxed);
+            self.dropped.fetch_add(1, Ordering::Relaxed);
+        }
+    }
 }
 impl DetailLog {
     pub(crate) fn start(path: &Path) -> std::io::Result<Self> {
@@ -91,37 +109,6 @@ impl DetailLog {
             Ok(())
         })
     }
-    fn spawn_worker(
-        capacity: usize,
-        work: impl FnOnce(
-            mpsc::Receiver<serde_json::Value>,
-            Arc<AtomicU64>,
-            Arc<AtomicBool>,
-        ) -> std::io::Result<()>
-        + Send
-        + 'static,
-    ) -> std::io::Result<Self> {
-        let (tx, rx) = mpsc::sync_channel(capacity);
-        let (done_tx, completed) = mpsc::channel();
-        let pending = Arc::new(AtomicU64::new(0));
-        let abandon = Arc::new(AtomicBool::new(false));
-        let worker_pending = pending.clone();
-        let worker_abandon = abandon.clone();
-        let worker = thread::Builder::new()
-            .name("audio-diagnostics".into())
-            .spawn(move || {
-                let result = work(rx, worker_pending, worker_abandon);
-                let _ = done_tx.send(result);
-            })?;
-        Ok(Self {
-            tx: Some(tx),
-            dropped: AtomicU64::new(0),
-            pending,
-            abandon,
-            completed,
-            worker,
-        })
-    }
     // 队列容量与落盘保留策略独立，调整容量不应隐式改变日志是否轮转。
     // Queue capacity and retention are independent; changing capacity must not silently enable rotation.
     fn start_writer(
@@ -176,14 +163,51 @@ impl DetailLog {
             Ok(())
         })
     }
-    pub(crate) fn record(&self, entry: serde_json::Value) {
-        self.pending.fetch_add(1, Ordering::Relaxed);
-        if self
-            .tx
-            .as_ref()
-            .is_none_or(|tx| tx.try_send(entry).is_err())
-        {
-            self.pending.fetch_sub(1, Ordering::Relaxed);
+}
+impl<T: Send + 'static> LogWorker<T> {
+    pub(super) fn spawn_worker(
+        capacity: usize,
+        work: impl FnOnce(mpsc::Receiver<T>, Arc<AtomicU64>, Arc<AtomicBool>) -> std::io::Result<()>
+        + Send
+        + 'static,
+    ) -> std::io::Result<Self> {
+        let (tx, rx) = mpsc::sync_channel(capacity);
+        let (done_tx, completed) = mpsc::channel();
+        let pending = Arc::new(AtomicU64::new(0));
+        let dropped = Arc::new(AtomicU64::new(0));
+        let abandon = Arc::new(AtomicBool::new(false));
+        let worker_pending = pending.clone();
+        let worker_abandon = abandon.clone();
+        let worker = thread::Builder::new()
+            .name("audio-diagnostics".into())
+            .spawn(move || {
+                let result = work(rx, worker_pending, worker_abandon);
+                let _ = done_tx.send(result);
+            })?;
+        Ok(Self {
+            input: Some(LogSender {
+                tx,
+                pending: pending.clone(),
+                dropped: dropped.clone(),
+            }),
+            dropped,
+            pending,
+            abandon,
+            completed,
+            worker,
+        })
+    }
+    pub(super) fn sender(&self) -> LogSender<T> {
+        LogSender {
+            tx: self.input.as_ref().expect("log sender is open").tx.clone(),
+            pending: self.pending.clone(),
+            dropped: self.dropped.clone(),
+        }
+    }
+    pub(crate) fn record(&self, entry: T) {
+        if let Some(input) = &self.input {
+            input.record(entry);
+        } else {
             self.dropped.fetch_add(1, Ordering::Relaxed);
         }
     }
@@ -193,7 +217,7 @@ impl DetailLog {
     // 所有发送端先一起关闭，让健康线程并行排空，再等待共享期限。
     // Close all senders first so healthy workers can drain concurrently before the shared deadline.
     pub(super) fn close(&mut self) {
-        self.tx.take();
+        self.input.take();
     }
     /// 多个日志共用截止时间，不能每个线程重新获得一份等待预算。
     /// Share one deadline across logs rather than granting each worker a fresh wait budget.
