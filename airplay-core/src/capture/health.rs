@@ -134,3 +134,36 @@ impl std::error::Error for LoopbackStalled {}
 #[cfg(test)]
 #[path = "../../../test/core/unit/capture/health.rs"]
 mod tests;
+
+// 原始包已复制/检查后才能释放，再查询端点状态；任何查询失败都不能单独判定故障。
+// Inspect/copy the raw packet before releasing it, then query controls; query failures alone are not faults.
+pub(super) fn check_loopback_health(
+    monitor: &mut Option<PlaybackMonitor>,
+    health: &mut LoopbackHealth,
+    progress: Option<&std::sync::Mutex<super::CaptureProgress>>,
+    raw_nonzero: bool,
+) -> super::Result<()> {
+    if let Some(monitor) = monitor {
+        let now = Instant::now();
+        let (reading, age_ms) = monitor.read(now);
+        let suspect = health.observe(now, reading, raw_nonzero);
+        if let Some(progress) = progress {
+            let mut p = progress.lock().unwrap();
+            p.windows_endpoint_peak = reading.peak;
+            p.windows_endpoint_peak_age_ms = Some(age_ms);
+            p.windows_endpoint_muted = reading.muted;
+            p.windows_endpoint_volume = reading.volume;
+            p.loopback_suspect = suspect;
+        }
+        if health.stalled(now) {
+            return Err(LoopbackStalled.into());
+        }
+    }
+    Ok(())
+}
+
+// 缓冲大小只作诊断元数据；查询失败保留缺失值，不中断采集。
+// Buffer size is diagnostic metadata only; query failure remains absent without stopping capture.
+pub(super) fn buffer_frames(client: &windows::Win32::Media::Audio::IAudioClient) -> Option<u32> {
+    unsafe { client.GetBufferSize().ok() }
+}

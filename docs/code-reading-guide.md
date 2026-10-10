@@ -10,7 +10,7 @@
 |---|---|---|
 | 1 | `airplay-frontend/src/types.ts` | 页面接收什么数据？哪些数值是帧、毫秒、Hz 或 ppm？ |
 | 2 | `airplay-frontend/src/protocol.ts` | 桌面 JSON 怎样从 `unknown` 变成可读取的数据？缺失或错误字段如何处理？ |
-| 3 | `airplay-frontend/src/useStreamSession.ts`、`App.vue` | 会话控制怎样独立于设备视图？事件怎样改变页面状态？ |
+| 3 | `airplay-frontend/src/useStreamSession.ts`、`useDiagnostics.ts`、`App.vue` | 会话控制怎样独立于设备视图？事件怎样改变页面状态？ |
 | 4 | `airplay-frontend/src-tauri/src/main.rs` | 命令怎样校验设备、来源和会话，并启动工作线程？ |
 | 5 | `airplay-core/src/source.rs` | 谁持有持续采集线程？预览与串流如何共用它？ |
 | 6 | `airplay-core/src/live.rs` | 采集、转换、管道、协议日志和最终报告怎样连接？ |
@@ -38,6 +38,8 @@
 
 设置操作先看 `App.vue/commitSettings`：它保存独立快照并持有保存锁，成功更新已确认值，失败恢复该值；保持唤醒不再反转当前布尔值。来源切换还持有跨保存/预览的锁，只有保存成功且页面仍存在才启动后续命令。桌面 `routing.rs` 保证候选设置保存成功后才更新运行路由，不能只从页面 IPC 拒绝测试推断桌面没有副作用。冷启动保存失败不自动采集，自动发现成功仍保留初始化错误。
 
+`useDiagnostics.ts` 统一管理快照、300 条日志/120 条摘要、单条文本截断、1 MiB 报告显示限制及路径；结束摘要也计入上限。全部落盘规则见 [日志保留限制](log-retention.md)。
+
 日志路径由初始化 `dataMode` 生成脱敏根目录。便携模式使用 `[程序目录]/data/logs`，安装模式使用 `%APPDATA%/AirPlay Hub/logs`；文件事件只附加文件名，空路径保持空值。实际打开目录仍使用桌面的 `Engine.root/logs`。
 
 端点电平在端点音量调整前测量，因此不能仅凭电平非零触发恢复，需同时查询静音与音量。接口约定见 [微软 IAudioMeterInformation 说明](https://learn.microsoft.com/en-us/windows/win32/api/endpointvolume/nn-endpointvolume-iaudiometerinformation)。
@@ -60,6 +62,9 @@
 | `audio_queue.rs` | 两级队列共用的时长策略、预留与 RAII 归还 | 每级各 640 ms；时长按帧数/采样率计算；不能当作实际延迟 |
 | `capture/timeline.rs` | 空闲静音、缺口修复与恢复重叠 | 纯时间线计划，不读取或释放 WASAPI；60 秒修复预算可确定性测试 |
 | `capture/decode.rs` | PCM/float32 解码、帧裁剪、声道映射与原始包摘要 | 借用原始字节、复用输出；完整包检查不受映射影响；格式验证及 WASAPI 释放仍在 `capture.rs` |
+| `capture/clock.rs`、`capture/health.rs` | Windows QPC、端点读取、健康检查和快照 | 原始字节检查在释放前，健康读取在释放后；查询失败不单独判故障 |
+| `capture/state.rs`、`capture/diagnostics.rs` | 观察/交付计数，诊断及最终报告 JSON | 首包断续口径保留；sink 成功才提交交付数；日志暂停不推进诊断时间差 |
+| `log_store.rs` | 日志文件上限、活动预留和目录回收 | 只删除识别的普通文件；规则见 [日志限制](log-retention.md) |
 | `capture/metrics.rs` | 每包电平、信号帧、可选指纹与诊断时间差 | 只读样本；统计结果共用；非有限值/阈值/位指纹规则；时钟由调用者提供 |
 | `live/diagnostics.rs` | 有界诊断队列、落盘线程、轮转与丢记录统计 | 容量不决定轮转策略；逐包日志保留 4 段，每段 8 MiB |
 
@@ -83,11 +88,11 @@
 
 常规设置从 `GeneralSettings.vue` 阅读：控件先通过 `update:*` 事件更新页面持有的设置/自启/主题，再发送保存、自启、唤醒或映射操作事件。设置字段与二元映射生成新对象/数组，不直接修改 props；`App/startupChanged` 和 `awakeChanged` 保留失败回退，主题 watcher 保留样式与 localStorage 同步。连接期间播放提前量禁用，声道映射仍调用 `set_mapping`，不重新启动会话。
 
-运行统计从 `RuntimeStats.vue` 阅读：组件只读遥测、报告、累计计数与名称，`display.ts/num` 统一数值格式。`App/renderSessionEvent` 从原始 `PACKET_STATS` 解析当前会话累计值，与 `sessionStats` 比较后将非负增量加到 `stats`。`resetSessionView` 只清空本次基线及遥测/报告，累计 `stats` 保留；切换标签不改变数据。事件仍由 `useStreamSession` 校验归属，因此旧会话计数不能进入当前统计。
+运行统计从 `RuntimeStats.vue` 阅读：组件只读遥测、报告、累计计数与名称，`display.ts/num` 统一数值格式。`App/renderSessionEvent` 把已验证且归属本次会话的事件交给 `useDiagnostics/accept`；后者从原始 `PACKET_STATS` 解析累计值，与每设备会话基线比较后将非负增量加到 `stats`。缺失/非法/负值不覆盖有效基线，设备历史最多 128 项。`resetSessionView` 只清空本次基线及遥测/报告，累计 `stats` 保留；切换标签不改变数据。事件仍由 `useStreamSession` 校验归属，因此旧会话计数不能进入当前统计。
 
 技术详情从 `TechnicalDetails.vue` 阅读：格式和电平使用 `display.ts/formatAudioFormat`、`level`，与底部来源栏/设备卡片共用；Buffer 先发更新事件，保存事件交给 `App/persist`。重检事件交给 `App/resetAuth`，页面把当前 `selection` 传给 `forget_auth_policy`；命令成功后才显示已清除通知，失败进入原有错误提示。没有所选设备或会话忙碌时按钮禁用，组件不修改设备、认证记录或音频。
 
-日志视图从 `LogView.vue` 阅读：开关先发 `update:*` 更新页面设置，再发送保存事件，配置下次连接；当前会话的详细日志/诊断状态由独立快照决定。打开目录事件交给 `App/call('open_logs')`，“清空显示”事件只将 `diagnosticLogs` 置空；日志、路径及报告保留，后续诊断继续接收。完整报告在 `report.device` 存在时显示可展开 JSON。组件不拥有日志数组、IPC 或会话生命周期；过滤、截断、重连重置及旧事件隔离仍由页面和 composable 负责。
+日志视图从 `LogView.vue` 阅读：开关先发 `update:*` 更新页面设置，再发送保存事件，配置下次连接；当前会话的详细日志/诊断状态由独立快照决定。打开目录事件交给 `App/call('open_logs')`，“清空显示”事件只将 `diagnosticLogs` 置空；日志、路径及报告保留，后续诊断继续接收。完整报告在 `report.device` 存在时显示可展开 JSON。组件不拥有日志数组、IPC 或会话生命周期；页面和 `useStreamSession` 过滤事件及会话归属；`useDiagnostics` 统一截断、汇总和重连快照重置。
 
 | 状态 | 设置条件 | 清除条件 |
 |---|---|---|

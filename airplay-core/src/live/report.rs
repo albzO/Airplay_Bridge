@@ -2,7 +2,7 @@
 //! Session outcome and best-effort report persistence are independent.
 use super::{GuiEmitter, Result};
 use serde_json::Value;
-use std::{fs, path::Path};
+use std::path::Path;
 
 pub(super) fn session_result(
     backend_error: Option<String>,
@@ -33,7 +33,8 @@ pub(super) fn finish(
     report["report_write_error"] = Value::Null;
     let saved = (|| -> std::result::Result<(), String> {
         let bytes = serde_json::to_vec_pretty(&report).map_err(|e| e.to_string())?;
-        fs::write(path, bytes).map_err(|e| e.to_string())
+        crate::log_store::write(path, bytes, crate::log_store::REPORT_BYTES)
+            .map_err(|e| e.to_string())
     })()
     .map_err(|e| crate::failure::describe(&format!("写入串流报告：{e}"), "REPORT_WRITE_FAILED"));
     if let Err(error) = &saved {

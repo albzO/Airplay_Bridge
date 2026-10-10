@@ -20,6 +20,11 @@ fn system_errors_keep_namespace_context_and_application_category() {
         "Windows / Winsock 10054"
     );
     assert!(!origin("HTTP 403; exit=12").contains("Windows"));
+    assert_eq!(code_for("[LOG_LIMIT] full", "INTERNAL_ERROR"), "LOG_LIMIT");
+    assert_eq!(
+        code_for("report write: [LOG_LIMIT] full", "REPORT_WRITE_FAILED"),
+        "REPORT_WRITE_FAILED"
+    );
 }
 #[test]
 fn authentication_codes_and_messages_are_unambiguous() {

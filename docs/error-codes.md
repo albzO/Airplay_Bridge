@@ -72,6 +72,7 @@ HTTP 状态码、Windows HRESULT、HAP TLV error 是三个独立命名空间，�
 | `CAPTURE_BUFFER_INVALID` | 1 | 采集缓冲区无效。 | 检查驱动及当前采集格式。 |
 | `PCM_PIPE_FAILED` | 1 | PCM 写入或管道异常。 | 检查后端进程和最早的故障日志。 |
 | `LOG_WRITE_FAILED` | 1 | 诊断日志写入异常。 | 检查磁盘和目录权限，音频故障需另行判断。 |
+| `LOG_LIMIT` | 1 | 日志达到文件或目录保留上限。 | 及时复制相关片段，结束占用日志的旧会话后重试；详见 [日志保留限制](log-retention.md)。 |
 | `REPORT_WRITE_FAILED` | 1 | 串流报告写入失败。 | 检查日志目录权限和可用空间；界面仍保留内存报告，已有串流故障优先显示。 |
 
 | `AUTH_PIPE_FAILED` | 1 | 密码通信管道异常。 | 检查会话和最早的后端故障；不表示密码错误。 |

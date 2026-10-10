@@ -2,7 +2,6 @@
 use mdns_sd::{ServiceDaemon, ServiceInfo};
 use std::{
     error::Error,
-    fs::File,
     io::{Read, Write},
     net::{IpAddr, Ipv4Addr, TcpListener, TcpStream, UdpSocket},
     path::Path,
@@ -16,7 +15,7 @@ use std::{
 };
 type Result<T> = std::result::Result<T, Box<dyn Error>>;
 struct Log {
-    file: File,
+    file: crate::log_store::LogFile,
     faults_only: bool,
     bytes: usize,
 }
@@ -28,7 +27,7 @@ fn record(log: &Mutex<Log>, text: &str) {
         return;
     }
     let safe = crate::privacy::Redactor::default().text(text);
-    let _ = writeln!(log.file, "{safe}");
+    let _ = log.file.record(format!("{safe}\n").as_bytes());
     log.bytes += text.len() + 1;
 }
 
@@ -124,7 +123,10 @@ impl Dacp {
         faults_only: bool,
     ) -> Result<Self> {
         let log = Arc::new(Mutex::new(Log {
-            file: File::create(log_path)?,
+            file: crate::log_store::LogFile::create_limited(
+                log_path,
+                if faults_only { 65536 } else { 1024 * 1024 },
+            )?,
             faults_only,
             bytes: 0,
         }));

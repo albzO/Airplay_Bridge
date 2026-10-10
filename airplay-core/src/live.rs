@@ -28,7 +28,7 @@ use pipeline::{AudioPipeline, PipelineOptions};
 use protocol::BackendReader;
 use std::{
     error::Error,
-    fs::{self, File},
+    fs,
     path::Path,
     sync::{Mutex, atomic::Ordering},
     thread,
@@ -135,8 +135,15 @@ fn run_targets(
     fs::create_dir_all(root.join("logs"))?;
     let log_path = root.join("logs").join(format!("live-{stamp}.log"));
     let privacy = crate::privacy::Redactor::new(&devices);
-    let log = File::create(&log_path)?;
     let detailed_logs = gui.as_ref().is_none_or(|g| g.detailed_logs);
+    let log = crate::log_store::LogFile::create_limited(
+        &log_path,
+        if detailed_logs {
+            crate::log_store::FILE_BYTES
+        } else {
+            256 * 1024
+        },
+    )?;
     let drift_log = if detailed_logs || gui.is_none() {
         Some(DetailLog::start_drift(
             detailed_logs

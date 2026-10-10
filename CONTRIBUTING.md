@@ -16,6 +16,7 @@
 - 前端使用 2 空格、单引号、分号和约 100 列换行；Rust 使用 rustfmt。不要将第三方或生成文件纳入统一格式化。
 - `.editorconfig` 与 `.gitattributes` 统一文本编码、缩进和 LF 换行；图片保持二进制内容。
 - 通用数据类型放在 `src/types.ts`，桌面数据格式校验放在 `src/protocol.ts`，命令错误转换放在 `src/commands.ts`；设置校验与持久化放在 `src-tauri/src/settings.rs`，窗口行为放在 `window.rs`。外部 JSON 接收为 `unknown`，验证后再使用；不要用 `any` 或直接断言掩盖字段不一致。
+- 新日志路径应通过 `log_store.rs` 限制单文件并纳入保留命名；队列和页面历史也须有上限，规则见 [日志保留限制](docs/log-retention.md)。
 - 日志在落盘和展示日志前脱敏；真实设备数据只用于发现、选择和控制。凭据不要加入日志、进程参数、配置文件或发布包。
 - 界面修改应检查浅色/深色、最小窗口尺寸、键盘交互和托盘状态。
 
@@ -39,6 +40,7 @@ cargo test --manifest-path airplay-frontend/src-tauri/Cargo.toml --locked --offl
 # 前端类型检查和构建
 pnpm --dir airplay-frontend test:protocol
 pnpm --dir airplay-frontend test:session
+pnpm --dir airplay-frontend test:diagnostics
 pnpm --dir airplay-frontend test:dom
 pnpm --dir airplay-frontend build
 

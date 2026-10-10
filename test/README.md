@@ -26,6 +26,10 @@ DOM 新增来源失败/重试、等待预览、冷启动保存失败、映射回
 | `core/checks/` | 已采集 WAV 与转换 PCM 的独立校验脚本 |
 | `.artifacts/` | 截图、模拟 PCM 和检查输出；不提交 Git |
 
+`frontend/diagnostics.test.mjs` 直接执行生产 `useDiagnostics.ts`，覆盖所有日志入口的数量/文本限制、结束摘要、报告大小、清空/重连、重复/部分/非法统计、设备淘汰及原型式键名。DOM 突发事件回归验证真实页面的 300/120 上限、截断、脱敏和清空范围。
+
+`core/unit/capture/{clock,state,diagnostics}.rs` 覆盖 QPC 换算、首包断续、观察与成功交付计数、可选进度、诊断暂停时间差、端点字段、sink 错误和最终 JSON 字段；无需声卡。`core/unit/log_store.rs` 用真实临时文件验证容量、目录保留、活动预留、未知文件/目录保护及 Windows 打开句柄。Source 临界轮转及超大报告首因回归在 `core/unit/live/`。完整保留规则见 [日志限制](../docs/log-retention.md)。
+
 ## 运行 / Run
 
 以下命令在项目根目录执行。前端测试只需 `pnpm --dir airplay-frontend install --frozen-lockfile` 与相应浏览器，无需原生后端或声卡。原生/Python 协议检查先按 [构建指南](../docs/building.md) 构建后端；Python 另需 `backend/requirements.txt` 中的依赖。
@@ -40,6 +44,7 @@ cargo test --manifest-path airplay-frontend/src-tauri/Cargo.toml --locked --offl
 # 前端协议及模拟页面 / Frontend protocol and mocked UI
 pnpm --dir airplay-frontend test:protocol
 pnpm --dir airplay-frontend test:session
+pnpm --dir airplay-frontend test:diagnostics
 pnpm --dir airplay-frontend test:dom
 pnpm --dir airplay-frontend test:ui
 pnpm --dir airplay-frontend test:ui:build

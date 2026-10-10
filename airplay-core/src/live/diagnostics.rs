@@ -1,7 +1,7 @@
 //! 有界诊断落盘及日志轮转；磁盘阻塞不能回传到音频线程。
 //! Bounded diagnostic writing and rotation; disk stalls must not block the audio thread.
 use std::{
-    fs::{self, File, OpenOptions},
+    fs,
     io::Write,
     path::Path,
     sync::{
@@ -44,7 +44,7 @@ impl<T> LogSender<T> {
 }
 impl DetailLog {
     pub(crate) fn start(path: &Path) -> std::io::Result<Self> {
-        Self::start_writer(path, 16, u64::MAX, false)
+        Self::start_writer(path, 16, crate::log_store::FILE_BYTES, true)
     }
     /// 逐包诊断保留当前段及前三段，每段 8 MiB；队列容纳 1024 条，溢出计数而不阻塞。
     /// Packet traces retain current plus three previous 8 MiB segments; a 1024-entry queue counts overflow.
@@ -60,19 +60,34 @@ impl DetailLog {
             if let Some(parent) = path.parent() {
                 fs::create_dir_all(parent)?;
             }
-            if fs::metadata(&path).is_ok_and(|m| m.len() > 2 * 1024 * 1024) {
+            if fs::metadata(&path).is_ok_and(|m| m.len() >= 2 * 1024 * 1024) {
                 let backup = path.with_extension("previous.jsonl");
                 if backup.exists() {
                     fs::remove_file(&backup)?;
                 }
                 fs::rename(&path, backup)?;
             }
-            let mut file = OpenOptions::new().create(true).append(true).open(path)?;
+            let limit = 2 * 1024 * 1024;
+            let mut file = crate::log_store::LogFile::append(&path, limit)?;
+            let mut bytes = fs::metadata(&path)?.len();
             for entry in rx {
                 if abandon.load(Ordering::Acquire) {
                     return Ok(());
                 }
-                writeln!(file, "{}", privacy.value(&entry))?;
+                let line = format!("{}\n", privacy.value(&entry));
+                if bytes + line.len() as u64 > limit {
+                    file.flush()?;
+                    drop(file);
+                    let backup = path.with_extension("previous.jsonl");
+                    if backup.exists() {
+                        fs::remove_file(&backup)?;
+                    }
+                    fs::rename(&path, backup)?;
+                    file = crate::log_store::LogFile::create_limited(&path, limit)?;
+                    bytes = 0;
+                }
+                file.write_all(line.as_bytes())?;
+                bytes += line.len() as u64;
                 pending.fetch_sub(1, Ordering::Relaxed);
             }
             file.flush()
@@ -83,13 +98,16 @@ impl DetailLog {
     pub(super) fn start_drift(path: Option<&Path>, console: bool) -> std::io::Result<Self> {
         let path = path.map(Path::to_owned);
         Self::spawn_worker(16, move |rx, pending, abandon| {
-            let mut file = path.map(File::create).transpose()?;
+            let mut file = path
+                .as_deref()
+                .map(crate::log_store::LogFile::create)
+                .transpose()?;
             for entry in rx {
                 if abandon.load(Ordering::Acquire) {
                     return Ok(());
                 }
                 if let Some(file) = &mut file {
-                    writeln!(file, "{entry}")?;
+                    file.write_all(format!("{entry}\n").as_bytes())?;
                 }
                 if console {
                     writeln!(
@@ -120,7 +138,7 @@ impl DetailLog {
         let path = path.to_owned();
         Self::spawn_worker(capacity, move |rx, pending, abandon| {
             let privacy = redactor(&path);
-            let mut file = File::create(&path)?;
+            let mut file = crate::log_store::LogFile::create_limited(&path, limit)?;
             let mut bytes = 0u64;
             let mut capped = false;
             let mut flushed = Instant::now();
@@ -138,7 +156,7 @@ impl DetailLog {
                         file.flush()?;
                         drop(file);
                         rotate_capture_logs(&path)?;
-                        file = File::create(&path)?;
+                        file = crate::log_store::LogFile::create_limited(&path, limit)?;
                         bytes = 0;
                     } else {
                         capped = true;

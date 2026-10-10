@@ -759,6 +759,47 @@ test('log switches persist independently for the next session and opening logs h
   await expect(capture).toBeEnabled();
 });
 
+test('diagnostic history remains bounded after event bursts and end records', async ({ page }) => {
+  await open(page);
+  await openLogView(page);
+  await page.getByRole('checkbox', { name: '保存详细日志', exact: true }).check();
+  await page.getByRole('checkbox', { name: '启用额外采集诊断', exact: true }).check();
+  await start(page).click();
+  await readyEvents(page, 101);
+  await page.evaluate(async (diagnostic) => {
+    for (let i = 0; i < 310; i++) {
+      await window.__airplayTest.send(101, {
+        kind: 'native',
+        line: 'private raw output',
+        safe_line: `safe-${i}` + (i === 309 ? 'x'.repeat(8000) : ''),
+      });
+    }
+    for (let i = 0; i < 125; i++) {
+      await window.__airplayTest.send(101, { ...diagnostic, capture_frames: i });
+    }
+    await window.__airplayTest.send(101, {
+      kind: 'diagnostic_end',
+      status: { error: 'end-marker' },
+    });
+  }, captureDiagnostic);
+  const logs = logPanel(page, '会话日志').locator('pre.logs');
+  const diagnostics = logPanel(page, '采集逐包诊断');
+  await expect(logs).toContainText('safe-10');
+  const lines = (await logs.textContent()).split('\n');
+  expect(lines).toHaveLength(300);
+  expect(lines[0]).toBe('safe-10');
+  expect(lines.at(-1)).toMatch(/^safe-309.*截断/);
+  expect(lines.every((line) => line.length <= 4096)).toBe(true);
+  expect(lines.join('\n')).not.toContain('private raw output');
+  const summaries = (await diagnostics.locator('pre.logs').textContent()).split('\n\n');
+  expect(summaries).toHaveLength(120);
+  expect(summaries[0]).toContain('采集 6 帧');
+  expect(summaries.at(-1)).toContain('end-marker');
+  await diagnostics.getByRole('button', { name: '清空显示', exact: true }).click();
+  await expect(diagnostics.locator('pre.logs')).toHaveText('等待采集诊断输出…');
+  await expect(logs).toContainText('safe-309');
+});
+
 test('clearing diagnostics preserves session logs, paths and expandable reports while new summaries continue', async ({
   page,
 }) => {

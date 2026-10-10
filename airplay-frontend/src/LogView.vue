@@ -2,8 +2,8 @@
 import { computed } from 'vue';
 import type { SessionReport } from './types';
 
-// 只展示日志/报告并发出操作事件；设置保存、会话快照和诊断清空由 App 管理。
-// Present logs/reports and emit actions; App owns persistence, session snapshots and clearing diagnostics.
+// 只展示日志/报告并发出操作事件；App 管理设置保存，useDiagnostics 管理快照和清空。
+// Present logs/reports and emit actions; App owns persistence; useDiagnostics owns snapshots and clearing.
 const props = defineProps<{
   detailedLogs: boolean;
   captureDiagnostics: boolean;
@@ -48,12 +48,12 @@ const captureDiagnostics = computed({
         @change="emit('persist')"
       />保存详细日志</label
     ><small
-      >下次连接生效。开启后保存完整协议日志和每秒采集、重采样、队列、发送进度；关闭时只保存关键故障。</small
+      >下次连接生效。开启后保存详细协议日志和每秒采集、重采样、队列、发送进度；关闭时只保存关键故障。</small
     ><small class="log-location">{{ logPath }}</small
     ><small v-if="pipelinePath" class="log-location">流水线：{{ pipelinePath }}</small
     ><small
       >显示最近 300 行{{
-        activeDetailedLogs ? '详细输出，完整内容持续保存到文件。' : '关键故障。'
+        activeDetailedLogs ? '详细输出。文件有大小与保留限制，旧日志会清理。' : '关键故障。'
       }}</small
     >
     <pre class="logs">{{

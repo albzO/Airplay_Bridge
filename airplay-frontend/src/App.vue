@@ -1,31 +1,24 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, shallowRef, nextTick, watch } from 'vue';
+import { computed, onMounted, onUnmounted, ref, nextTick, watch } from 'vue';
 import { getVersion } from '@tauri-apps/api/app';
 import { listen } from '@tauri-apps/api/event';
 import { invokeCommand } from './commands';
 import { useStreamSession } from './useStreamSession';
+import { useDiagnostics, nativeFields } from './useDiagnostics';
 import SourcePicker from './SourcePicker.vue';
 import DeviceCard from './DeviceCard.vue';
 import GeneralSettings from './GeneralSettings.vue';
 import RuntimeStats from './RuntimeStats.vue';
 import TechnicalDetails from './TechnicalDetails.vue';
 import LogView from './LogView.vue';
-import { num, level, formatAudioFormat } from './display';
+import { level, formatAudioFormat } from './display';
 import {
   decodeDevices,
   decodeInitialization,
   decodeSourceLevel,
   decodeStreamEvent,
 } from './protocol';
-import type {
-  Device,
-  DeviceCardData,
-  Input,
-  Settings,
-  SessionReport,
-  StreamEvent,
-  Telemetry,
-} from './types';
+import type { Device, DeviceCardData, Input, Settings, StreamEvent } from './types';
 
 /**
  * 阅读顺序：页面状态 → computed 设备/来源视图 → 用户操作 → event → onMounted。
@@ -41,11 +34,6 @@ const authNotice = ref('');
 const appVersion = ref('');
 const displayVersion = computed(() => appVersion.value.replace(/^(\d+\.\d+)\.0$/, '$1'));
 const settingsTab = ref('常规');
-const activeDetailedLogs = ref(false),
-  pipelinePath = ref('');
-const diagnosticPath = ref(''),
-  diagnosticLogs = ref<string[]>([]),
-  activeDiagnostics = ref(false);
 const previewPeaks = ref<number[]>([0, 0]),
   previewError = ref(''),
   sourceWarning = ref('');
@@ -69,6 +57,22 @@ function copySettings(value: Settings): Settings {
 let confirmedSettings = copySettings(settings.value);
 const settingsSaving = ref(false),
   sourceChanging = ref(false);
+const diagnostics = useDiagnostics(() => devices.value);
+const {
+  activeDetailedLogs,
+  activeDiagnostics,
+  pipelinePath,
+  diagnosticPath,
+  diagnosticLogs,
+  telemetry,
+  report,
+  stats,
+  statsNames,
+  technical,
+  logs,
+  logPath,
+  clearDiagnostics,
+} = diagnostics;
 const selection = ref<string[]>([]),
   expanded = ref(''),
   refreshing = ref(false),
@@ -106,17 +110,6 @@ const {
   },
   render: renderSessionEvent,
 });
-// 连接前没有遥测，保留空快照让界面显示“—”；报告只在串流收尾时到达。
-// Keep an empty snapshot before telemetry so the UI shows “—”; reports arrive during stream cleanup.
-const telemetry = ref<Partial<Telemetry>>({}),
-  // 报告按整份快照替换，不修改内部字段；无需把任意深度 JSON 转为响应式代理。
-  // Replace reports as complete snapshots; arbitrary-depth JSON does not need deep reactive proxies.
-  report = shallowRef<SessionReport>({}),
-  stats = ref<Record<string, Record<string, string>>>({}),
-  technical = ref<Record<string, string>>({}),
-  logs = ref<string[]>([]),
-  logPath = ref('');
-const logDirectory = ref('%APPDATA%/AirPlay Hub/logs');
 const volume = ref<number | null>(null),
   draft = ref(50),
   lastVolume = ref(50);
@@ -133,10 +126,6 @@ const settingsLocked = computed(
 const tone = computed(() => (playing.value ? 'green' : busy.value ? 'yellow' : 'red'));
 const deviceStates = ref<Record<string, string>>({}),
   attemptCard = ref('');
-// sessionStats 保存后端本次累计计数，stats 累加每次增量，避免重连后重复计入。
-// sessionStats tracks this session's counters; stats accumulates deltas without counting reconnects twice.
-const sessionStats = ref<Record<string, Record<string, string>>>({});
-const statsNames = ref<Record<string, string>>({});
 const sourceOpen = ref(false);
 const passwordDevice = computed(
   () => devices.value.find((d) => d.addresses.includes(pending.value))?.name || pending.value,
@@ -231,11 +220,6 @@ async function startInitialCapture() {
   initialCapturePending = false;
   if (captureEnabled.value) await call('monitor_source');
   else await setCaptureEnabled(true);
-}
-
-function logDisplayPath(path: unknown) {
-  if (!path) return '';
-  return logDirectory.value + '/' + String(path).split(/[\\/]/).pop();
 }
 
 async function focusPassword() {
@@ -360,20 +344,11 @@ async function refresh() {
 // 页面只清空本次展示快照；会话生命周期、密码和事件归属由 composable 管理。
 // Reset presentation snapshots here; the composable owns session lifetime, passwords and attribution.
 function resetSessionView() {
-  activeDiagnostics.value = settings.value.captureDiagnostics;
-  diagnosticLogs.value = [];
-  diagnosticPath.value = '';
+  diagnostics.beginSession(settings.value);
   previewPeaks.value = [0, 0];
   previewError.value = '';
-  activeDetailedLogs.value = settings.value.detailedLogs;
-  pipelinePath.value = '';
   attemptCard.value = chosen.value?.id || '';
   deviceStates.value[attemptCard.value] = 'yellow';
-  telemetry.value = {};
-  report.value = {};
-  sessionStats.value = {};
-  technical.value = {};
-  logs.value = [];
   volume.value = null;
 }
 
@@ -406,66 +381,13 @@ async function swap() {
  * Accept only events validated by protocol.ts; narrowing kind exposes only that variant's fields.
  */
 function renderSessionEvent(e: StreamEvent) {
-  if (e.kind === 'log_path') {
-    logPath.value = logDisplayPath(e.path);
-    activeDetailedLogs.value = !!e.detailed_logs;
-    pipelinePath.value = logDisplayPath(e.pipeline_path);
-  }
-  if (e.kind === 'telemetry') telemetry.value = e;
-  if (e.kind === 'report') report.value = e.report;
-  if (e.kind === 'diagnostic_path') {
-    diagnosticPath.value = logDisplayPath(e.path);
-    pipelinePath.value = logDisplayPath(e.pipeline_path);
-  }
-  if (e.kind === 'capture_diagnostic') {
-    const c = e.capture || {};
-    diagnosticLogs.value.push(
-      `${num(e.elapsed_seconds, 1)}s · 采集 ${e.capture_frames} 帧 · 待发送 ${num(e.pending_pcm_ms)} ms · 水位 ${num(e.water_ms)} ms · 校正 ${num(e.correction_ppm)} ppm\n设备位置 ${c.device_position} · 包 ${c.packets} · 时间戳 ${c.packet_qpc_100ns} · 不连续 ${c.discontinuities} · 时间戳错误 ${c.timestamp_errors}${e.error ? '\n错误：' + e.error : ''}`,
-    );
-    if (diagnosticLogs.value.length > 120) diagnosticLogs.value.shift();
-  }
-  if (e.kind === 'diagnostic_end')
-    diagnosticLogs.value.push('诊断结束：' + JSON.stringify(e.status));
-  if (e.kind === 'native') {
-    // 原始协议行用于识别标记；展示日志优先用桌面端脱敏后的 safe_line。
-    // 不对脱敏文本解析 host，否则多个设备别名会破坏计数归属。
-    // Parse markers from the raw protocol line; prefer the redacted safe_line for display.
-    // Parsing host from redacted text would break per-device counter attribution.
-    const line = String(e.line);
-    if (e.is_fault || activeDetailedLogs.value) {
-      logs.value.push(String(e.safe_line || line));
-      if (logs.value.length > 300) logs.value.shift();
-    }
-    const f = Object.fromEntries(
-      [...line.matchAll(/([a-zA-Z_]+)=([^\s]+)/g)].map((m) => [m[1], m[2]]),
-    );
-    if (line.includes('PACKET_STATS') && f.host) {
-      const previous = sessionStats.value[f.host] || {};
-      const total = stats.value[f.host] || {};
-      for (const key of [
-        'sent',
-        'send_dropped',
-        'sync_dropped',
-        'rtx_requested',
-        'rtx_resent',
-        'rtx_expired',
-      ]) {
-        // 后端发送累计计数；首次从 0 算增量，下降按 0 处理，避免出现负统计。
-        // Backend counters are cumulative; compute deltas from zero initially and clamp decreases to zero.
-        const value = Number(f[key]);
-        if (Number.isFinite(value)) {
-          total[key] = String(
-            Number(total[key] || 0) + Math.max(0, value - Number(previous[key] || 0)),
-          );
-        }
-      }
-      stats.value[f.host] = total;
-      sessionStats.value[f.host] = f;
-      const device = devices.value.find((d) => d.addresses.includes(f.host));
-      statsNames.value[f.host] = device?.name || f.host;
-    }
-    if (line.includes('AUTH_METHOD') || line.includes('TIMING'))
-      technical.value[line.includes('TIMING') ? '时钟协议' : '认证方式'] = f.value || line;
+  diagnostics.accept(e);
+  if (
+    e.kind === 'native' &&
+    (e.line.includes('VOLUME_CURRENT') || e.line.includes('VOLUME_APPLIED'))
+  ) {
+    const line = e.line;
+    const f = nativeFields(line);
     if (line.includes('VOLUME_CURRENT') || (line.includes('VOLUME_APPLIED') && f.http === '200')) {
       const value =
         f.percent !== undefined
@@ -482,12 +404,7 @@ function renderSessionEvent(e: StreamEvent) {
     }
   }
   if (e.kind === 'finished') {
-    telemetry.value.peaks = [0, 0];
     deviceStates.value[attemptCard.value] = e.error ? 'red' : '';
-    if (e.error) {
-      logs.value.push(String(e.safe_error || e.error));
-      if (logs.value.length > 300) logs.value.shift();
-    }
   }
 }
 
@@ -560,8 +477,7 @@ onMounted(async () => {
         if (e.error !== undefined) previewError.value = e.error || '';
         if (e.warning) {
           sourceWarning.value = e.warning;
-          logs.value.push('[WARN] ' + e.warning);
-          if (logs.value.length > 300) logs.value.shift();
+          diagnostics.recordSourceWarning(e.warning);
         }
       }
     });
@@ -573,9 +489,7 @@ onMounted(async () => {
     confirmedSettings = copySettings(s.settings);
     autostart.value = !!s.autostart;
     captureEnabled.value = s.captureEnabled;
-    logDirectory.value =
-      s.dataMode === 'portable' ? '[程序目录]/data/logs' : '%APPDATA%/AirPlay Hub/logs';
-    logPath.value = logDirectory.value;
+    diagnostics.setDataMode(s.dataMode);
     if (s.autostartError) error.value = '无法读取开机自启状态：' + s.autostartError;
     if (s.awakeError) {
       settings.value.keepAwake = !!s.awakeActive;
@@ -779,7 +693,7 @@ onMounted(async () => {
         :report="report"
         @persist="persist"
         @open-logs="call('open_logs')"
-        @clear-diagnostics="diagnosticLogs = []"
+        @clear-diagnostics="clearDiagnostics"
       />
     </main>
     <footer class="audio-dock">

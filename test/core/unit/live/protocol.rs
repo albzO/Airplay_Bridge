@@ -1,5 +1,8 @@
 use super::*;
-use std::io::{self, Cursor, Write};
+use std::{
+    fs::File,
+    io::{self, Cursor, Write},
+};
 
 #[derive(Clone, Default)]
 struct Buffer(Arc<Mutex<Vec<u8>>>);

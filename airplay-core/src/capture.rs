@@ -9,15 +9,20 @@
 //! float32 stereo. See convert/live for resampling and transport, source for preview lifetime.
 //! Drop pairs COM/system allocations with cleanup. Every acquired packet needs ReleaseBuffer,
 //! including error paths, or the device buffer remains occupied.
+mod clock;
 mod decode;
+mod diagnostics;
 mod health;
 mod metrics;
+mod state;
 mod timeline;
 use decode::{decode_stereo, raw_packet_summary, sample};
+use diagnostics::{PacketTrace, Trace};
 pub(crate) use health::LoopbackStalled;
-use health::{LoopbackHealth, PlaybackMonitor};
-use metrics::{DiagnosticClock, PacketMetrics};
+use health::{LoopbackHealth, PlaybackMonitor, check_loopback_health};
+use metrics::PacketMetrics;
 use serde::{Deserialize, Serialize};
+use state::{Counters, PacketInfo, Progress};
 use std::{
     error::Error,
     fs::{self, File},
@@ -38,7 +43,6 @@ use windows::{
             CoUninitialize, STGM_READ,
             StructuredStorage::{PROPVARIANT, PropVariantClear, PropVariantToStringAlloc},
         },
-        System::Performance::{QueryPerformanceCounter, QueryPerformanceFrequency},
         System::Threading::{CreateEventW, WaitForSingleObject},
     },
     core::{GUID, PWSTR},
@@ -458,32 +462,6 @@ pub struct CaptureProgress {
     pub repaired_gaps: u64,
     pub repaired_gap_frames: u64,
 }
-// 原始包已复制/检查后才能释放，再查询端点状态；任何查询失败都不能单独判定故障。
-// Inspect/copy the raw packet before releasing it, then query controls; query failures alone are not faults.
-fn check_loopback_health(
-    monitor: &mut Option<PlaybackMonitor>,
-    health: &mut LoopbackHealth,
-    progress: Option<&std::sync::Mutex<CaptureProgress>>,
-    raw_nonzero: bool,
-) -> Result<()> {
-    if let Some(monitor) = monitor {
-        let now = Instant::now();
-        let (reading, age_ms) = monitor.read(now);
-        let suspect = health.observe(now, reading, raw_nonzero);
-        if let Some(progress) = progress {
-            let mut p = progress.lock().unwrap();
-            p.windows_endpoint_peak = reading.peak;
-            p.windows_endpoint_peak_age_ms = Some(age_ms);
-            p.windows_endpoint_muted = reading.muted;
-            p.windows_endpoint_volume = reading.volume;
-            p.loopback_suspect = suspect;
-        }
-        if health.stalled(now) {
-            return Err(LoopbackStalled.into());
-        }
-    }
-    Ok(())
-}
 #[cfg(test)]
 #[path = "../../test/core/unit/capture_gap_recovery_tests.rs"]
 mod gap_recovery_tests;
@@ -507,7 +485,7 @@ pub fn live_selected_diagnosed(
     endpoint: Option<&str>,
     mapping: Option<&std::sync::Mutex<[usize; 2]>>,
     progress: Option<&std::sync::Mutex<CaptureProgress>>,
-    mut diagnostic: Option<&mut dyn FnMut(serde_json::Value)>,
+    diagnostic: Option<&mut dyn FnMut(serde_json::Value)>,
     diagnostic_enabled: Option<&std::sync::atomic::AtomicBool>,
     mut sink: impl FnMut(&[f32], u32) -> Result<()>,
 ) -> Result<serde_json::Value> {
@@ -526,49 +504,18 @@ pub fn live_selected_diagnosed(
     } else {
         seconds * format.rate as u64
     };
-    let mut frames = 0u64;
-    let mut packets = 0u64;
-    let mut discontinuities = 0u64;
-    let mut timestamp_errors = 0u64;
-    let mut signal_frames = 0u64;
-    let mut channel_peaks = [0f32; 2];
-    let mut silent_packets = 0u64;
+    let mut counters = Counters::default();
+    let progress_state = Progress(progress);
+    let mut trace = Trace::new(diagnostic, diagnostic_enabled);
     let mut buffer = Vec::<f32>::with_capacity(2048);
     let loopback = input.flow == "playback";
-    let mut frequency = 0i64;
-    let mut origin = 0i64;
-    if loopback {
-        unsafe {
-            QueryPerformanceFrequency(&mut frequency)?;
-            QueryPerformanceCounter(&mut origin)?;
-        }
-    }
-    let origin_100ns = if loopback {
-        origin as u128 * 10_000_000 / frequency as u128
-    } else {
-        0
-    };
-    let mut silent_frames = 0u64;
-    let mut timeline = Timeline::new(format.rate, target, loopback, origin_100ns);
+    let mut timeline = Timeline::new(format.rate, target, loopback, clock::origin(loopback)?);
     unsafe {
         client.Start()?;
     }
     let _running = Running(&client);
     let started = Instant::now();
-    if let Some(log) = diagnostic.as_mut() {
-        let mut diagnostic_frequency = 0i64;
-        unsafe {
-            QueryPerformanceFrequency(&mut diagnostic_frequency)?;
-        }
-        log(
-            serde_json::json!({"kind":"capture_start","input":input,"format":format,"qpc_frequency":diagnostic_frequency,
-                "capture_wait":if loopback {"wasapi_event"}else{"polling"},
-                "endpoint_buffer_frames":unsafe {client.GetBufferSize().ok()}}),
-        );
-    }
-    let mut diagnostic_clock = DiagnosticClock::default();
-    let diagnostics_active =
-        || diagnostic_enabled.is_none_or(|flag| flag.load(std::sync::atomic::Ordering::Relaxed));
+    trace.start(&input, &format, &client, loopback)?;
     let mut last_packet = Instant::now();
     let mut loopback_ready = false;
     if seconds == 0 {
@@ -576,7 +523,7 @@ pub fn live_selected_diagnosed(
     } else {
         println!("音频持续采集已开始，最多 {seconds} 秒；Ctrl+C 可正常停止。");
     }
-    while frames < target && !stop.load(std::sync::atomic::Ordering::Relaxed) {
+    while counters.frames < target && !stop.load(std::sync::atomic::Ordering::Relaxed) {
         if seconds != 0 && started.elapsed() > Duration::from_secs(seconds + 2) {
             return Err("持续采集未在期限内收到完整音频".into());
         }
@@ -589,7 +536,7 @@ pub fn live_selected_diagnosed(
             // Catch up idle silence without paying another wait per 10 ms block.
             // Still check the event first so resumed audio wins over silence.
             let timeout = if last_packet.elapsed() >= Duration::from_millis(40)
-                && frames < idle_target.min(target)
+                && counters.frames < idle_target.min(target)
             {
                 0
             } else {
@@ -600,14 +547,8 @@ pub fn live_selected_diagnosed(
         let next_packet = unsafe { capture.GetNextPacketSize()? };
         if loopback && !loopback_ready && next_packet > 0 {
             loopback_ready = true;
-            if let Some(progress) = progress {
-                progress.lock().unwrap().event_timeout_packets += 1;
-            }
-            if let Some(log) = diagnostic.as_mut() {
-                log(
-                    serde_json::json!({"kind":"capture_event_fallback","capture_elapsed_ms":started.elapsed().as_secs_f64()*1000.0,"available_frames":next_packet}),
-                );
-            }
+            progress_state.fallback();
+            trace.fallback(started.elapsed().as_secs_f64() * 1000.0, next_packet);
         }
         if next_packet == 0 {
             loopback_ready = false;
@@ -619,23 +560,23 @@ pub fn live_selected_diagnosed(
                 if last_packet.elapsed() < Duration::from_millis(40) {
                     continue;
                 }
-                let count = timeline.idle_frames(frames, started.elapsed(), last_packet.elapsed());
+                let count =
+                    timeline.idle_frames(counters.frames, started.elapsed(), last_packet.elapsed());
                 if count > 0 {
                     buffer.clear();
                     buffer.resize(count as usize * 2, 0.0);
-                    if let Some(progress) = progress {
-                        progress.lock().unwrap().synthesized_silent_frames += count;
-                    }
+                    progress_state.silence(count);
                     check_loopback_health(&mut monitor, &mut loopback_health, progress, false)?;
                     let delivered = sink(&buffer, format.rate);
-                    if let Some(log) = diagnostic.as_mut() {
-                        log(
-                            serde_json::json!({"kind":"synthetic_silence","capture_elapsed_ms":started.elapsed().as_secs_f64()*1000.0,"frames_before":frames,"frames":count,"idle_ms":last_packet.elapsed().as_secs_f64()*1000.0,"error":delivered.as_ref().err().map(ToString::to_string)}),
-                        );
-                    }
+                    trace.silence(
+                        started.elapsed().as_secs_f64() * 1000.0,
+                        counters.frames,
+                        count,
+                        last_packet.elapsed().as_secs_f64() * 1000.0,
+                        &delivered,
+                    );
                     delivered?;
-                    frames += count;
-                    silent_frames += count;
+                    counters.delivered_silence(count);
                     timeline.mark_silence();
                     continue;
                 }
@@ -668,24 +609,21 @@ pub fn live_selected_diagnosed(
             loopback_ready = false;
             continue;
         }
-        if flags
-            & (AUDCLNT_BUFFERFLAGS_TIMESTAMP_ERROR.0 as u32
-                | AUDCLNT_BUFFERFLAGS_DATA_DISCONTINUITY.0 as u32)
-            != 0
-        {
-            if let Some(log) = diagnostic.as_mut() {
-                log(
-                    serde_json::json!({"kind":"packet_flags","packet_index":packets,"capture_elapsed_ms":started.elapsed().as_secs_f64()*1000.0,"device_position":device_position,"packet_qpc_100ns":qpc,"available_frames":available,"flags":flags}),
-                );
-            }
-        }
+        let info = PacketInfo {
+            index: counters.packets,
+            device_position,
+            qpc,
+            available,
+            flags,
+        };
+        trace.flags(info, started.elapsed().as_secs_f64() * 1000.0);
         let packet = Packet {
             client: &capture,
             frames: available,
         };
         let previous_qpc = timeline.previous_qpc();
         let plan = match timeline.plan(
-            frames,
+            counters.frames,
             device_position,
             available,
             qpc,
@@ -695,12 +633,7 @@ pub fn live_selected_diagnosed(
         ) {
             Ok(plan) => plan,
             Err(error) => {
-                if let Some(log) = diagnostic.as_mut() {
-                    log(
-                        serde_json::json!({"kind":"timeline_fault","device_position":device_position,
-                        "packet_qpc_100ns":qpc,"previous_packet_qpc_100ns":previous_qpc,"flags":flags,"error":error.to_string()}),
-                    );
-                }
+                trace.fault(info, previous_qpc, error.as_ref());
                 return Err(error);
             }
         };
@@ -711,23 +644,14 @@ pub fn live_selected_diagnosed(
             repaired_gap,
         } = plan;
         if repaired_gap > 0 {
-            if let Some(progress) = progress {
-                let mut p = progress.lock().unwrap();
-                p.repaired_gaps += 1;
-                p.repaired_gap_frames += repaired_gap;
-            }
-            if let Some(log) = diagnostic.as_mut() {
-                log(
-                    serde_json::json!({"kind":"gap_repaired","gap_frames":repaired_gap,
-                    "gap_ms":repaired_gap as f64*1000.0/format.rate as f64,"device_position":device_position,"packet_qpc_100ns":qpc}),
-                );
-            }
+            progress_state.gap(repaired_gap);
+            trace.gap(info, repaired_gap, format.rate);
         }
         let mut raw_summary = serde_json::Value::Null;
         let mut raw_nonzero = false;
         buffer.clear();
         if flags & AUDCLNT_BUFFERFLAGS_SILENT.0 as u32 != 0 {
-            silent_packets += 1;
+            counters.silent_packets += 1;
             buffer.resize(used * 2, 0.0);
         } else {
             if pointer.is_null() {
@@ -747,7 +671,7 @@ pub fn live_selected_diagnosed(
                 raw_nonzero = bytes.iter().any(|byte| *byte != 0);
             }
             if used > 0 {
-                if diagnostic.is_some() && diagnostics_active() {
+                if trace.active() {
                     raw_summary = raw_packet_summary(bytes, &format);
                 }
                 decode_stereo(
@@ -762,89 +686,59 @@ pub fn live_selected_diagnosed(
         packet.release()?;
         check_loopback_health(&mut monitor, &mut loopback_health, progress, raw_nonzero)?;
         let received = Instant::now();
-        let trace_enabled = diagnostic.is_some() && diagnostics_active();
+        let trace_enabled = trace.active();
         let packet_metrics = PacketMetrics::measure(&buffer, trace_enabled);
         let mut diagnostic_entry = trace_enabled.then(|| {
-            let delta = diagnostic_clock.observe(received, device_position, qpc);
-            let mut read_qpc = 0i64;
-            unsafe { let _ = QueryPerformanceCounter(&mut read_qpc); }
-            let entry = serde_json::json!({"kind":"packet","packet_index":packets,
-                "capture_elapsed_ms":started.elapsed().as_secs_f64()*1000.0,
-                "read_qpc_ticks":read_qpc,"device_position":device_position,"packet_qpc_100ns":qpc,
-                "read_interval_ms":delta.read_interval_ms,
-                "device_delta_frames":delta.device_delta_frames,
-                "timestamp_delta_ms":delta.timestamp_delta_ms,
-                "available_frames":available,"used_frames":used,"skipped_frames":skip,
-                "prefix_silent_frames":prefix_silence,"flags":flags,"input_rate":format.rate,
-                "frames_before":frames,"peaks":packet_metrics.peaks,"sample_fingerprint":packet_metrics.fingerprint.map(|hash|format!("{hash:016x}")),
-                "raw_packet":raw_summary,"mapping":mapping.map(|m|*m.lock().unwrap()).unwrap_or([0,if format.channels>1 {1}else{0}])});
-            entry
+            trace.packet(
+                PacketTrace {
+                    packet: info,
+                    received,
+                    elapsed_ms: started.elapsed().as_secs_f64() * 1000.0,
+                    used,
+                    skipped: skip,
+                    prefix_silence,
+                    frames_before: counters.frames,
+                    raw: raw_summary,
+                    mapping: mapping
+                        .map(|m| *m.lock().unwrap())
+                        .unwrap_or([0, if format.channels > 1 { 1 } else { 0 }]),
+                },
+                format.rate,
+                &packet_metrics,
+            )
         });
-        if let Some(progress) = progress {
-            let mut p = progress.lock().unwrap();
-            p.packets += 1;
-            p.skipped_overlap_frames += skip as u64;
-            p.device_position = device_position;
-            p.packet_qpc_100ns = qpc;
-            p.packet_frames = available;
-            p.packet_flags = flags;
-            p.packet_peaks = packet_metrics.peaks;
-            p.signal_frames += packet_metrics.signal_frames;
-            if let Some(entry) = diagnostic_entry.as_mut() {
-                entry["windows_endpoint_peak"] = serde_json::json!(p.windows_endpoint_peak);
-                entry["windows_endpoint_peak_age_ms"] =
-                    serde_json::json!(p.windows_endpoint_peak_age_ms);
-                entry["windows_endpoint_muted"] = serde_json::json!(p.windows_endpoint_muted);
-                entry["windows_endpoint_volume"] = serde_json::json!(p.windows_endpoint_volume);
-                entry["loopback_suspect"] = serde_json::json!(p.loopback_suspect);
-            }
-            if flags & AUDCLNT_BUFFERFLAGS_DATA_DISCONTINUITY.0 as u32 != 0 {
-                p.discontinuities += 1;
-            }
-            if flags & AUDCLNT_BUFFERFLAGS_TIMESTAMP_ERROR.0 as u32 != 0 {
-                p.timestamp_errors += 1;
-            }
-        }
+        Trace::endpoint(
+            &mut diagnostic_entry,
+            progress_state.packet(info, skip, &packet_metrics),
+        );
         while prefix_silence > 0 && !stop.load(std::sync::atomic::Ordering::Relaxed) {
             let count = prefix_silence.min((format.rate / 100).max(1) as u64);
             let silence = vec![0.0; count as usize * 2];
-            if let Some(progress) = progress {
-                progress.lock().unwrap().synthesized_silent_frames += count;
-            }
+            progress_state.silence(count);
             sink(&silence, format.rate)?;
-            frames += count;
-            silent_frames += count;
+            counters.delivered_silence(count);
             prefix_silence -= count;
         }
-        if flags & AUDCLNT_BUFFERFLAGS_DATA_DISCONTINUITY.0 as u32 != 0 && packets > 0 {
-            discontinuities += 1;
-        }
-        if flags & AUDCLNT_BUFFERFLAGS_TIMESTAMP_ERROR.0 as u32 != 0 {
-            timestamp_errors += 1;
-        }
-        signal_frames += packet_metrics.signal_frames;
-        for (total, packet) in channel_peaks.iter_mut().zip(packet_metrics.peaks) {
-            *total = total.max(packet);
-        }
+        counters.observe(info, &packet_metrics);
         let sink_started = Instant::now();
         let delivered = sink(&buffer, format.rate);
-        if let (Some(log), Some(mut entry)) = (diagnostic.as_mut(), diagnostic_entry) {
-            entry["sink_ms"] = serde_json::json!(sink_started.elapsed().as_secs_f64() * 1000.0);
-            entry["processing_ms"] =
-                serde_json::json!(packet_read_started.elapsed().as_secs_f64() * 1000.0);
-            entry["error"] = serde_json::json!(delivered.as_ref().err().map(ToString::to_string));
-            log(entry);
-        }
+        trace.complete(
+            diagnostic_entry,
+            sink_started,
+            packet_read_started,
+            &delivered,
+        );
         delivered?;
-        frames += used as u64;
-        packets += 1;
+        counters.delivered_packet(used);
         last_packet = Instant::now();
     }
-    Ok(
-        serde_json::json!({"mode":"shared", "input":input, "format":format, "frames":frames,
-        "packets":packets,"signal_frames":signal_frames,"channel_peaks":channel_peaks,"silent_packets":silent_packets,"discontinuities":discontinuities,
-        "timestamp_errors":timestamp_errors,"loopback":loopback,"intentional_silent_frames":silent_frames,"stopped_by_user":stop.load(std::sync::atomic::Ordering::Relaxed)}),
-    )
+    Ok(diagnostics::report(
+        &counters,
+        &input,
+        &format,
+        loopback,
+        stop.load(std::sync::atomic::Ordering::Relaxed),
+    ))
 }
 
 pub fn record(root: &Path, seconds: u64, endpoint: Option<&str>) -> Result<PathBuf> {

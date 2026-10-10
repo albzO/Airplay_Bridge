@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import test from 'node:test';
+import { diagnosticsModule } from './load-diagnostics.mjs';
 
 const require = createRequire(new URL('../../airplay-frontend/package.json', import.meta.url));
 const ts = require('typescript');
@@ -60,6 +61,8 @@ function page(t, invokeCommand) {
     onMounted: () => {},
     onUnmounted: (callback) => unmounts.push(callback),
     invokeCommand,
+    useDiagnostics: diagnosticsModule.useDiagnostics,
+    nativeFields: diagnosticsModule.nativeFields,
     describeError: String,
     matchMedia: () => ({ matches: false, addEventListener() {}, removeEventListener() {} }),
     localStorage: { getItem: () => null, setItem() {} },

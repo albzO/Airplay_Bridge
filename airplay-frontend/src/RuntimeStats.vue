@@ -3,8 +3,8 @@ import { computed } from 'vue';
 import { num } from './display';
 import type { SessionReport, Telemetry } from './types';
 
-// 只读展示当前遥测/报告和跨会话累计计数；事件归属与增量计算仍由 App 管理。
-// Display current telemetry/reports and cumulative counters; App owns event attribution and deltas.
+// 只读展示当前遥测/报告和跨会话累计计数；App 校验事件归属，useDiagnostics 计算增量。
+// Display current telemetry/reports and cumulative counters; App validates attribution; useDiagnostics computes deltas.
 const props = defineProps<{
   telemetry: Partial<Telemetry>;
   report: SessionReport;
@@ -84,6 +84,6 @@ const statsRows = computed(() =>
         </tbody>
       </table>
     </div>
-    <small>约每 5 秒更新，累计本次软件运行中所有设备的统计，退出软件后清空。</small>
+    <small>约每 5 秒更新，累计本次运行中最近 128 个设备的统计，退出软件后清空。</small>
   </section>
 </template>

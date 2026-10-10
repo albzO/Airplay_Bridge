@@ -7,6 +7,7 @@ pub mod discovery;
 pub mod drift;
 pub mod failure;
 pub mod live;
+pub mod log_store;
 pub mod privacy;
 pub mod source;
 pub mod volume;

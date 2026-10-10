@@ -365,9 +365,10 @@ fn start_stream(
         let cancelled = control.stop.load(Ordering::Relaxed);
         if !cancelled {
             if let Err(error) = &result {
-                let _ = fs::write(
-                    e.root.join("logs").join(format!("ui-fault-{id}.log")),
+                let _ = homepod_test::log_store::write(
+                    &e.root.join("logs").join(format!("ui-fault-{id}.log")),
                     homepod_test::privacy::Redactor::from_root(&e.root).text(error),
+                    64 * 1024,
                 );
             }
         }

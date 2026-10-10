@@ -1,6 +1,20 @@
 use super::*;
 
 #[test]
+fn cli_summary_keeps_phase_markers_without_accumulating_repeated_statistics() {
+    let mut markers = Vec::new();
+    for _ in 0..1000 {
+        record_marker(&mut markers, "[PROBE] PACKET_STATS sent=100");
+        record_marker(&mut markers, "[PROBE] TCP_CONNECTED host=fixture");
+    }
+    record_marker(&mut markers, "[PROBE] SESSION_ACCEPTED");
+    record_marker(&mut markers, "[PROBE] TIMING value=ptp");
+    record_marker(&mut markers, "[PROBE] FAILED phase=setup");
+    assert_eq!(markers.len(), 4);
+    assert!(markers.iter().any(|line| line.contains("SESSION_ACCEPTED")));
+}
+
+#[test]
 fn executable_search_never_uses_user_data_or_working_directory() {
     let root = std::env::temp_dir().join(format!("airplay-loader-{}", std::process::id()));
     let installed = root.join("installed");

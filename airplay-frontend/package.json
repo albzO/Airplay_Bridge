@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite --host 127.0.0.1",
     "test:protocol": "node --test ../test/frontend/protocol.test.mjs",
+    "test:diagnostics": "node --test ../test/frontend/diagnostics.test.mjs",
     "test:session": "node --test ../test/frontend/session.test.mjs",
     "test:dom": "playwright test --config ../test/frontend/playwright.config.mjs",
     "test:ui": "vite --config ../test/frontend/vite.config.mjs",

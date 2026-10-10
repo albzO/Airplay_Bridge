@@ -13,10 +13,10 @@ interface SessionOptions {
 }
 
 /**
- * 管理一次串流的命令、事件归属与密码重试；页面负责设备视图和诊断快照。
+ * 管理一次串流的命令、事件归属与密码重试；页面负责设备视图，useDiagnostics 负责诊断快照。
  * busy 覆盖准备/认证/播放，connected 表示 PCM_READY，playing 表示收到遥测。
  * 命令返回前最多暂存 512 条事件；只信任命令返回的 session_id。
- * Own session commands, event attribution and password retries; the page owns views/snapshots.
+ * Own session commands, event attribution and password retries; the page owns views and useDiagnostics owns snapshots.
  * busy covers preparation/auth/playback; connected means PCM_READY; playing means telemetry.
  * Buffer at most 512 early events and trust only the command-returned session_id.
  */

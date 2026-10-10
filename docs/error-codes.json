@@ -7,6 +7,13 @@
     "patterns": []
   },
   {
+    "code": "LOG_LIMIT",
+    "exit": 1,
+    "message": "日志达到文件或目录保留上限。",
+    "action": "及时复制相关片段，结束占用日志的旧会话后重试；旧日志按保留规则清理。",
+    "patterns": []
+  },
+  {
     "code": "BACKEND_FAILED",
     "exit": 1,
     "message": "后端操作失败。",

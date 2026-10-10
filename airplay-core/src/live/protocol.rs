@@ -3,7 +3,6 @@
 use super::{GuiEmitter, Result, diagnostics::LogWorker, protocol_log, transport::Backend};
 use std::{
     collections::BTreeMap,
-    fs::File,
     io::{BufRead, BufReader, Read},
     sync::{
         Arc, Mutex,
@@ -143,7 +142,7 @@ pub(super) struct BackendReader {
 impl BackendReader {
     pub(super) fn start(
         stderr: impl Read + Send + 'static,
-        log: File,
+        log: impl std::io::Write + Send + 'static,
         privacy: crate::privacy::Redactor,
         detailed_logs: bool,
         emit: Option<GuiEmitter>,
@@ -177,7 +176,7 @@ impl BackendReader {
                     let _ = ready_tx.send(());
                     announced = true;
                 }
-                let safe_line = privacy.text(&line);
+                let safe_line = crate::log_store::bounded_text(privacy.text(&line));
                 let is_fault = key_fault(&line);
                 log_sender.record(protocol_log::Entry {
                     safe_line: safe_line.clone(),

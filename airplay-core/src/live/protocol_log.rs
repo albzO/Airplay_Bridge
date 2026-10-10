@@ -78,7 +78,9 @@ pub(super) fn start(
 }
 
 fn write_line(writer: &mut impl Write, destination: &str, line: &str) -> io::Result<()> {
-    writeln!(writer, "{line}").map_err(|e| output_error(destination, "写入", e))
+    writer
+        .write_all(format!("{line}\n").as_bytes())
+        .map_err(|e| output_error(destination, "写入", e))
 }
 fn output_error(destination: &str, operation: &str, error: io::Error) -> io::Error {
     // 保留底层错误文字（包括 OS 代码），补充输出目标和操作上下文。

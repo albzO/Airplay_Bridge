@@ -1,6 +1,31 @@
 use super::*;
 
 #[test]
+fn source_rotates_before_an_append_would_exceed_its_limit() {
+    let directory =
+        std::env::temp_dir().join(format!("airplay-source-near-cap-{}", std::process::id()));
+    fs::create_dir(&directory).unwrap();
+    let path = directory.join("source-startup.jsonl");
+    let previous = format!("{{\"padding\":\"{}\"}}\n", "x".repeat(2 * 1024 * 1024 - 20));
+    assert!(previous.len() < 2 * 1024 * 1024);
+    fs::write(&path, &previous).unwrap();
+    let log = DetailLog::start_source(&path).unwrap();
+    log.record(serde_json::json!({"kind":"source_requested"}));
+    let status = log.finish();
+    let current = fs::read_to_string(&path).unwrap();
+    let backup = fs::read_to_string(path.with_extension("previous.jsonl")).unwrap();
+    fs::remove_file(&path).unwrap();
+    fs::remove_file(path.with_extension("previous.jsonl")).unwrap();
+    fs::remove_dir(&directory).unwrap();
+    assert!(status["error"].is_null(), "{status}");
+    assert_eq!(backup, previous);
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(current.trim()).unwrap()["kind"],
+        "source_requested"
+    );
+}
+
+#[test]
 fn detailed_trace_flushes_samples_and_terminal_fault() {
     let path = std::env::temp_dir().join(format!("airplay-detail-{}.jsonl", std::process::id()));
     let trace = DetailLog::start(&path).unwrap();

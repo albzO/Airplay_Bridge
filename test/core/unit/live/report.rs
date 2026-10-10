@@ -1,10 +1,38 @@
 use super::*;
 use std::{
+    fs,
     path::PathBuf,
     sync::{Arc, Mutex},
 };
 
 struct Fixture(PathBuf);
+
+#[test]
+fn oversized_report_preserves_existing_file_primary_error_and_gui_notification() {
+    let fixture = Fixture::new("oversized");
+    let path = fixture.0.join("live-1.json");
+    fs::write(&path, b"existing report").unwrap();
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let collected = events.clone();
+    let emit: GuiEmitter = Arc::new(move |event| collected.lock().unwrap().push(event));
+    let error = finish(
+        &path,
+        serde_json::json!({"device":"fixture","padding":"x".repeat(1024 * 1024)}),
+        Err("fixture protocol failure".into()),
+        Some(&emit),
+    )
+    .unwrap_err();
+    assert_eq!(error.to_string(), "fixture protocol failure");
+    assert_eq!(fs::read(&path).unwrap(), b"existing report");
+    let events = events.lock().unwrap();
+    assert_eq!(events.len(), 1);
+    assert!(
+        events[0]["report"]["report_write_error"]
+            .as_str()
+            .unwrap()
+            .contains("LOG_LIMIT")
+    );
+}
 impl Fixture {
     fn new(name: &str) -> Self {
         let root =

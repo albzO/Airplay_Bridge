@@ -1,7 +1,7 @@
 use crate::discovery::Device;
 use std::{
-    fs::{self, File},
-    io::{BufRead, BufReader, Write},
+    fs,
+    io::{BufRead, BufReader},
     path::{Path, PathBuf},
     process::{Command, Stdio},
     sync::mpsc,
@@ -106,7 +106,7 @@ pub fn test(
     fs::create_dir_all(root.join("logs"))?;
     let stamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
     let log_path = root.join("logs").join(format!("backend-{stamp}.log"));
-    let mut log = File::create(&log_path)?;
+    let mut log = crate::log_store::LogFile::create(&log_path)?;
     println!(
         "连接 {}（{}:{}），timing={}。",
         device.name, host, device.port, timing
@@ -162,12 +162,12 @@ pub fn test(
         .stderr(Stdio::piped())
         .spawn()?;
     let stderr = child.stderr.take().ok_or("无法读取后端日志")?;
-    let (sender, receiver) = mpsc::channel();
+    let (sender, receiver) = mpsc::sync_channel(128);
     let reader = thread::spawn(move || {
         for line in BufReader::new(stderr).lines() {
             match line {
                 Ok(line) => {
-                    if sender.send(line).is_err() {
+                    if sender.send(crate::log_store::bounded_text(line)).is_err() {
                         break;
                     }
                 }
@@ -178,12 +178,10 @@ pub fn test(
     let mut markers = Vec::new();
     let deadline = Instant::now() + Duration::from_secs(180);
     let status = loop {
-        while let Ok(line) = receiver.try_recv() {
+        for line in receiver.try_iter().take(128) {
             println!("{}", privacy.text(&line));
-            writeln!(log, "{}", privacy.text(&line))?;
-            if line.contains("[PROBE]") {
-                markers.push(line);
-            }
+            log.record(format!("{}\n", privacy.text(&line)).as_bytes())?;
+            record_marker(&mut markers, &line);
         }
         if let Some(status) = child.try_wait()? {
             break status;
@@ -195,17 +193,17 @@ pub fn test(
         }
         thread::sleep(Duration::from_millis(50));
     };
-    let _ = reader.join();
-    for line in receiver.try_iter() {
+    // 先排空有界通道，避免 reader 等待发送而 join 等待 reader。
+    // Drain the bounded channel before joining a reader that may be waiting to send.
+    for line in receiver.iter() {
         println!("{}", privacy.text(&line));
         if line.contains("[PROBE] PASSWORD_NEEDED ") {
             println!("设备要求 AirPlay 密码，请在本窗口隐藏输入并按回车。");
         }
-        writeln!(log, "{}", privacy.text(&line))?;
-        if line.contains("[PROBE]") {
-            markers.push(line);
-        }
+        log.record(format!("{}\n", privacy.text(&line)).as_bytes())?;
+        record_marker(&mut markers, &line);
     }
+    let _ = reader.join();
     println!("\n测试结果：");
     let auth_error = markers
         .iter()
@@ -318,6 +316,42 @@ pub fn test(
         println!("控制会话测试通过；尚未测试音频播放。");
     }
     Ok(())
+}
+
+// 只保留结果摘要需要的首条标记，重复统计不能无限累积。
+// Retain only first markers needed by the result summary; repeated statistics cannot grow history.
+fn record_marker(markers: &mut Vec<String>, line: &str) {
+    if !line.contains("[PROBE]") {
+        return;
+    }
+    let key = [
+        "TCP_CONNECTED",
+        "GET_INFO_OK",
+        "PASSWORD_ACCEPTED",
+        "ENCRYPTED_RESPONSE_OK",
+        "SESSION_ACCEPTED",
+        "CONTROL_HOLD_OK",
+        "AUTH_METHOD",
+        "RECORD_OK",
+        "STREAM_SETUP_OK",
+        "AUDIO_TRANSPORT_OK",
+        "TIMING value=",
+        "[PROBE] FAILED phase=",
+    ]
+    .into_iter()
+    .find(|key| line.contains(key));
+    if let Some(key) = key {
+        if !markers.iter().any(|saved| saved.contains(key)) {
+            markers.push(crate::log_store::bounded_text(line.to_owned()));
+        }
+    }
+    if crate::failure::SessionError::parse(line).is_some()
+        && !markers
+            .iter()
+            .any(|saved| crate::failure::SessionError::parse(saved).is_some())
+    {
+        markers.push(crate::log_store::bounded_text(line.to_owned()));
+    }
 }
 
 #[cfg(test)]

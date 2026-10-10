@@ -2,6 +2,13 @@
 
 ## 未发布 / Unreleased
 
+- 提取前端诊断状态及设备累计统计，统一日志/摘要截断、设备历史与报告上限，保留会话过滤及清空范围；补充脚本与真实模板突发事件回归。
+  Extract diagnostic snapshots and cumulative device counters with bounded histories, text and reports; preserve session filtering and clearing scope.
+- 提取采集诊断 JSON、Windows 时钟读取和生命周期计数，健康进度归入端点模块；保留 WASAPI 包释放、音频交付及首包断续统计口径。
+  Extract capture JSON, Windows clocks and lifecycle counters; preserve packet release, audio delivery and first-packet discontinuity semantics.
+- 为自动日志增加单文件限制与目录保留，pipeline/逐包滚动保留，保护活动文件；Source 在追加超限前轮转，报告超限保留协议首因。
+  Bound automatic log files and directory retention, rotate traces and Source logs, protect open files, and preserve primary failures on oversized reports.
+
 - 修复互换/映射保存失败后运行状态已变化、来源保存失败仍启动预览及保持唤醒并发保存回退问题；统一保存锁、确认快照和失败传播，补充真实文件失败与界面回归。
   Persist routing before applying it, stop source follow-up after failed saves, and serialize settings with confirmed-state rollback; add filesystem and UI regressions.
 - 报告写入失败仍向界面发送内存报告并单独记录错误，保留协议/采集/管道首因；便携日志位置改为程序目录下的 `data/logs` 脱敏提示。
