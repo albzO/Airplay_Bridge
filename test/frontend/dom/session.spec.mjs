@@ -103,6 +103,57 @@ test('source picker closes with Escape and rejects unusable sources', async ({ p
   await expect(start(page)).toBeEnabled();
 });
 
+test('source groups keep natural ordering and outside clicks dismiss the picker', async ({
+  page,
+}) => {
+  const playback = ['Output 10', 'output 2', 'Alpha'].map((name, index) => ({
+    ...inputs[0],
+    id: `fixture-output-${index}`,
+    name,
+    flow: 'playback',
+  }));
+  await open(page, { inputs: [...inputs, ...playback] });
+  const saves = (await calls(page, 'save_settings')).length;
+  await source(page).click();
+  await expect(
+    page.getByRole('group', { name: '播放设备', exact: true }).locator('button > span:first-child'),
+  ).toHaveText(['Alpha', 'output 2', 'Output 10', 'Playback Device']);
+  await expect(page.getByRole('group', { name: '录音设备', exact: true })).toBeVisible();
+  await page.locator('.source-dismiss').click();
+  await expect(source(page)).toHaveAttribute('aria-expanded', 'false');
+  await expect(page.locator('.source-popup')).toHaveCount(0);
+  await source(page).click();
+  await expect(page.locator('.source-popup')).toBeVisible();
+  await source(page).press('Escape');
+  expect(await calls(page, 'save_settings')).toHaveLength(saves);
+});
+
+test('choosing mono resets channel mapping and saves before monitoring the new source', async ({
+  page,
+}) => {
+  const mono = {
+    ...inputs[0],
+    id: 'fixture-mono',
+    name: 'Mono Fixture',
+    channels: 1,
+    device_format: { ...inputs[0].device_format, channels: 1, block_align: 4, channel_mask: 4 },
+    mix_format: { ...inputs[0].mix_format, channels: 1, block_align: 4, channel_mask: 4 },
+  };
+  await open(page, { inputs: [...inputs, mono] });
+  const monitors = (await calls(page, 'monitor_source')).length;
+  await hold(page, 'save_settings');
+  await source(page).click();
+  await page.getByRole('button', { name: mono.name, exact: true }).click();
+  await expect(page.locator('#source-name')).toHaveText(mono.name);
+  await expect(page.locator('.source-popup')).toHaveCount(0);
+  await expect
+    .poll(async () => (await calls(page, 'save_settings')).at(-1).args.settings)
+    .toMatchObject({ endpoint: mono.id, mapping: [0, 0] });
+  expect(await calls(page, 'monitor_source')).toHaveLength(monitors);
+  await resolve(page, 'save_settings');
+  await expect.poll(async () => (await calls(page, 'monitor_source')).length).toBe(monitors + 1);
+});
+
 test('connecting and stopping lock controls and suppress late password/ready events', async ({
   page,
 }) => {

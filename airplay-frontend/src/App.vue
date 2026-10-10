@@ -4,6 +4,7 @@ import { getVersion } from '@tauri-apps/api/app';
 import { listen } from '@tauri-apps/api/event';
 import { invokeCommand } from './commands';
 import { useStreamSession } from './useStreamSession';
+import SourcePicker from './SourcePicker.vue';
 import {
   decodeDevices,
   decodeInitialization,
@@ -169,28 +170,6 @@ const chosen = computed(() =>
   cards.value.find((c) => c.members.map((d) => d.name).join('|') === selection.value.join('|')),
 );
 const peaks = computed(() => previewPeaks.value);
-const recordingInputs = computed(() =>
-  inputs.value.filter((i) => i.flow === 'recording').sort(sortSources),
-);
-const playbackInputs = computed(() =>
-  inputs.value.filter((i) => i.flow === 'playback').sort(sortSources),
-);
-const sourceGroups = computed(() => [
-  {
-    flow: 'playback',
-    title: '播放设备',
-    english: 'Playback',
-    description: '采集此设备正在播放的声音',
-    items: playbackInputs.value,
-  },
-  {
-    flow: 'recording',
-    title: '录音设备',
-    english: 'Recording',
-    description: '采集此设备的输入声音',
-    items: recordingInputs.value,
-  },
-]);
 const channels = computed(() => Array.from({ length: source.value?.channels || 0 }, (_, i) => i));
 
 // 操作方法：设置、设备选择、会话控制与事件处理。
@@ -289,19 +268,6 @@ function speakerFor(card: (typeof cards.value)[number], side: number) {
     card.members[card.members.length === 2 && settings.value.speakersSwapped ? 1 - side : side] ||
     card.members[0]
   );
-}
-
-function sortSources(a: Input, b: Input) {
-  return (
-    a.name.localeCompare(b.name, 'en', { sensitivity: 'base', numeric: true }) ||
-    a.id.localeCompare(b.id)
-  );
-}
-
-function sourceIcon(flow: string) {
-  return flow === 'playback'
-    ? 'M11 4 6 8H3v8h3l5 4V4Zm4 4a6 6 0 0 1 0 8m3-11a10 10 0 0 1 0 14'
-    : 'M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3ZM6 11v1a6 6 0 0 0 12 0v-1m-6 7v3m-3 0h6';
 }
 
 function enterPassword(e: KeyboardEvent) {
@@ -1099,62 +1065,14 @@ onMounted(async () => {
       </button>
       <div class="dock-source">
         <label id="source-label">音频来源</label>
-        <div class="source-picker" @keydown.esc="sourceOpen = false">
-          <div v-if="sourceOpen" class="source-popup" id="source-options" aria-label="音频来源选项">
-            <section
-              v-for="group in sourceGroups"
-              :key="group.flow"
-              :class="['source-section', group.flow]"
-              role="group"
-              :aria-label="group.title"
-            >
-              <div class="source-group">
-                <svg class="source-icon" viewBox="0 0 24 24" aria-hidden="true">
-                  <path :d="sourceIcon(group.flow)" />
-                </svg>
-                <div>
-                  <strong
-                    >{{ group.title }} <small>{{ group.english }}</small></strong
-                  ><small>{{ group.description }}</small>
-                </div>
-              </div>
-              <button
-                v-for="input in group.items"
-                :key="input.id"
-                :disabled="busy || captureChanging || !input.channels"
-                :aria-pressed="settings.endpoint === input.id"
-                @click="selectSource(input)"
-              >
-                <span>{{ input.name }}</span
-                ><span class="source-check" aria-hidden="true">{{
-                  settings.endpoint === input.id ? '✓' : ''
-                }}</span></button
-              ><small v-if="!group.items.length" class="source-empty">没有可用设备</small>
-            </section>
-          </div>
-          <button
-            class="source-trigger"
-            :disabled="busy || captureChanging"
-            :aria-expanded="sourceOpen"
-            aria-controls="source-options"
-            :aria-labelledby="
-              source ? 'source-label source-kind source-name' : 'source-label source-name'
-            "
-            @click="sourceOpen = !sourceOpen"
-          >
-            <span class="source-selection"
-              ><span v-if="source" id="source-kind" :class="['source-type', source.flow]"
-                ><svg class="source-icon" viewBox="0 0 24 24" aria-hidden="true">
-                  <path :d="sourceIcon(source.flow)" /></svg
-                >{{ source.flow === 'playback' ? '播放' : '录音' }}</span
-              ><span id="source-name">{{ source?.name || '请选择音频流来源' }}</span></span
-            ><svg viewBox="0 0 16 16">
-              <path :d="sourceOpen ? 'm4 6 4 4 4-4' : 'm4 10 4-4 4 4'" /></svg
-            ><span class="source-total-meter"
-              ><i :style="{ width: sourceLineWidth + '%' }"></i
-            ></span>
-          </button>
-        </div>
+        <SourcePicker
+          v-model:open="sourceOpen"
+          :inputs="inputs"
+          :endpoint="settings.endpoint"
+          :disabled="busy || captureChanging"
+          :meter-width="sourceLineWidth"
+          @select="selectSource"
+        />
         <div class="source-format">
           <small>{{ source ? format(source.device_format) : '未选择音频来源' }}</small
           ><small>{{ level(totalPeak) }}</small>

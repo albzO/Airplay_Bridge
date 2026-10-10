@@ -2,6 +2,8 @@
 
 ## 未发布 / Unreleased
 
+- 提取来源选择视图组件，保留设置/采集命令顺序及弹窗层级；新增分组排序、外部关闭和单声道保存后预览的 DOM 回归。
+  Extract the source picker view while preserving capture orchestration; add DOM coverage for ordering, dismissal and mono source selection.
 - 提取采集统计与诊断时序模块，预览、诊断及最终报告共用每包电平/信号结果；保留指纹、阈值和时序语义，新增 6 项无设备回归。
   Extract capture metrics and diagnostic timing, share packet statistics, and preserve fingerprint/threshold/timing behavior with six device-free regressions.
 - 提取纯采集包解码与声道映射模块，复用输出缓冲并补充 PCM 位宽、帧裁剪、声道边界及浮点特殊值回归；保留 WASAPI 资源释放顺序。
