@@ -1,3 +1,6 @@
 * text=auto eol=lf
+# 补丁中的空白上下文行是 unified diff 语法，源码空白仍由 git apply 检查。
+# Blank patch context lines are unified diff syntax; git apply still checks source whitespace.
+*.patch whitespace=-blank-at-eol
 *.png binary
 *.ico binary

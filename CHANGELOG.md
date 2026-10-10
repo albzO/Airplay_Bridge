@@ -8,8 +8,8 @@
   Bound each audio queue by 640 ms including in-flight work, reuse buffers and add an explicit synthetic release baseline.
 - 模拟接收端校验序号/时间戳模运算与独立 nonce，增加跨 RTP 回绕重传长测和失败清理守卫。
   Check wrapping RTP counters and independent nonces; add full-chain wrap/retransmission checks and fixture cleanup.
-- 上游生成增加输入哈希清单、替换次数断言和输出快照检查；固定依赖版本保持不变。CI 暂缓。
-  Guard pinned extraction inputs, patch counts and generated snapshots. CI is deferred.
+- 上游适配改为固定子模块版本、三组上下文补丁和本地 Windows 兼容层；移除 Python 源码字符串替换，保留输入/补丁哈希与输出快照检查。固定依赖版本保持不变，CI 暂缓。
+  Replace Python source substitutions with pinned submodules, reviewed context patches and local Windows adapters; retain hashes and output snapshots. CI is deferred.
 
 ## 1.0.2 — 2026-10-10
 

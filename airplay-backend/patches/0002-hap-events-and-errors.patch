@@ -1,0 +1,128 @@
+diff --git a/src/ap2_hap.c b/src/ap2_hap.c
+--- a/src/ap2_hap.c
++++ b/src/ap2_hap.c
+@@ -73,7 +73,7 @@
+ #define SRP_USERNAME         "Pair-Setup"
+ #define SRP_TRANSIENT_PIN    "3939" /* default secret for transient pairing */
+ #define HAP_TRANSIENT_FLAG   0x10   /* kTLVFlag transient in the M1 Flags TLV */
+-#define HAP_DIAG_BODY_MAX    512    /* body bytes dumped from a failed exchange */
++#define HAP_DIAG_BODY_MAX    0    /* body bytes dumped from a failed exchange */
+ 
+ /* RFC 5054 3072-bit group used by HAP pair-setup; generator g = 5 */
+ static const char srp_n_hex_3072[] =
+@@ -102,6 +102,7 @@
+ 
+     /* X25519 shared secret from pair-verify (kept for audio encryption) */
+     uint8_t shared_secret[32];
++    uint8_t event_read_key[32], event_write_key[32];
+ 
+     /* Session keys derived after pair-verify */
+     uint8_t write_key[32];           /* Control-Write-Encryption-Key */
+@@ -1015,7 +1016,11 @@
+                      ctx->write_key, 32) ||
+         !hkdf_sha512(shared_secret, 32,
+                      "Control-Salt", "Control-Read-Encryption-Key",
+-                     ctx->read_key, 32)) {
++                     ctx->read_key, 32) ||
++        !hkdf_sha512(shared_secret, 32, "Events-Salt", "Events-Write-Encryption-Key",
++                     ctx->event_read_key, 32) ||
++        !hkdf_sha512(shared_secret, 32, "Events-Salt", "Events-Read-Encryption-Key",
++                     ctx->event_write_key, 32)) {
+         LOG_ERROR("[HAP] Failed to derive session keys");
+         hap_set_error(err_out, AP2_HAP_ERR_PROTOCOL, 0, 0);
+         return false;
+@@ -1062,6 +1067,7 @@
+     tlv_add_uint8(&msg1, TLV_METHOD, 0x00);
+     tlv_add_uint8(&msg1, TLV_FLAGS, HAP_TRANSIENT_FLAG);
+ 
++    ap2_io_status_line("[PROBE] PAIR_M1_SENT");
+     int status = hap_post_pair_setup_path(sock_fd, "/pair-setup", 1, 4, msg1.data, msg1.len,
+                                      resp_buf, sizeof(resp_buf), &body, &body_len,
+                                      "pair-setup M1");
+@@ -1079,6 +1085,7 @@
+     int state_len, salt_len, err_len, b_len = 0;
+     const uint8_t *state_val = tlv_find(body, body_len, TLV_STATE, &state_len);
+     const uint8_t *err = tlv_find(body, body_len, TLV_ERROR, &err_len);
++    if (err_out && state_val && state_len == 1) err_out->pair_state = *state_val;
+     if (err && err_len > 0) {
+         LOG_ERROR("[HAP] Pair-setup M2 error tag: %d%s", *err,
+                   tlv_error_desc(*err));
+@@ -1117,6 +1124,8 @@
+         return false;
+     }
+ 
++    ap2_io_status_line("[PROBE] PAIR_M2_VALIDATED");
++    ap2_io_status_line("[PROBE] SRP_SALT_AND_SERVER_KEY_RECEIVED");
+     LOG_INFO("[HAP] SRP challenge computed, sending M3...");
+ 
+     /* M3: state=3, public key A, client proof M1 */
+@@ -1126,6 +1135,7 @@
+     tlv_add(&msg3, TLV_PUBLIC_KEY, a_pub, a_pub_len);
+     tlv_add(&msg3, TLV_PROOF, proof_m1, SRP_HASH_LEN);
+ 
++    ap2_io_status_line("[PROBE] PAIR_M3_SENT");
+     status = hap_post_pair_setup_path(sock_fd, "/pair-setup", 2, 4, msg3.data, msg3.len,
+                                  resp_buf, sizeof(resp_buf), &body, &body_len,
+                                  "pair-setup M3");
+@@ -1142,6 +1152,7 @@
+      * device and confirms both sides derived the same session key */
+     state_val = tlv_find(body, body_len, TLV_STATE, &state_len);
+     err = tlv_find(body, body_len, TLV_ERROR, &err_len);
++    if (err_out && state_val && state_len == 1) err_out->pair_state = *state_val;
+     if (err && err_len > 0) {
+         LOG_ERROR("[HAP] Pair-setup M4 error tag: %d%s", *err,
+                   tlv_error_desc(*err));
+@@ -1172,7 +1183,11 @@
+                      ctx->write_key, 32) ||
+         !hkdf_sha512(session_key, SRP_HASH_LEN,
+                      "Control-Salt", "Control-Read-Encryption-Key",
+-                     ctx->read_key, 32)) {
++                     ctx->read_key, 32) ||
++        !hkdf_sha512(session_key, SRP_HASH_LEN, "Events-Salt", "Events-Write-Encryption-Key",
++                     ctx->event_read_key, 32) ||
++        !hkdf_sha512(session_key, SRP_HASH_LEN, "Events-Salt", "Events-Read-Encryption-Key",
++                     ctx->event_write_key, 32)) {
+         LOG_ERROR("[HAP] Failed to derive session keys");
+         hap_set_error(err_out, AP2_HAP_ERR_PROTOCOL, 0, 0);
+         goto fail;
+@@ -1190,6 +1205,7 @@
+     OPENSSL_cleanse(proof_m1, sizeof(proof_m1));
+     OPENSSL_cleanse(proof_hamk, sizeof(proof_hamk));
+ 
++    ap2_io_status_line("[PROBE] SRP_VERIFIED");
+     LOG_INFO("[HAP] Transient pair-setup completed successfully");
+     return true;
+ 
+@@ -1566,3 +1582,14 @@
+     (*out)[out_offset] = '\0';
+     return out_offset;
+ }
++
++/* Local reverse-channel context: independent keys and nonce counters. */
++struct ap2_hap_ctx *probe_hap_events_create(struct ap2_hap_ctx *control) {
++    if (!control || !control->verified) return NULL;
++    struct ap2_hap_ctx *events = calloc(1, sizeof(*events));
++    if (!events) return NULL;
++    memcpy(events->read_key, control->event_read_key, 32);
++    memcpy(events->write_key, control->event_write_key, 32);
++    events->verified = true;
++    return events;
++}
+diff --git a/src/ap2_hap.h b/src/ap2_hap.h
+--- a/src/ap2_hap.h
++++ b/src/ap2_hap.h
+@@ -47,6 +47,7 @@
+     ap2_hap_result_t result;
+     int http_status;   /* HTTP failure status; 0 when none was read or the
+                         * reply was 200 and the rejection is TLV-level */
++    int pair_state; /* actual transient M2/M4 state */
+     int tlv_error;     /* TLV error tag from M2/M4 (0 = none) */
+ } ap2_hap_error_t;
+ 
+@@ -132,4 +133,6 @@
+ /* Get the X25519 shared secret (32 bytes) - used as audio encryption key. */
+ const uint8_t *ap2_hap_get_shared_secret(struct ap2_hap_ctx *ctx);
+ 
++struct ap2_hap_ctx *probe_hap_events_create(struct ap2_hap_ctx *control);
++
+ #endif /* __AP2_HAP_H_ */

@@ -1,0 +1,425 @@
+diff --git a/src/ap2_hap.c b/src/ap2_hap.c
+--- a/src/ap2_hap.c
++++ b/src/ap2_hap.c
+@@ -1,3 +1,4 @@
++#include "windows_port.h"
+ /*
+  * AirPlay 2 HAP - HomeKit Authentication Protocol
+  *
+@@ -35,8 +36,6 @@
+ #include <stdlib.h>
+ #include <string.h>
+ #include <stdbool.h>
+-#include <arpa/inet.h>
+-#include <unistd.h>
+ 
+ #include <openssl/evp.h>
+ #include <openssl/kdf.h>
+@@ -45,7 +44,6 @@
+ #include <openssl/bn.h>
+ #include <openssl/sha.h>
+ 
+-#include "../libraop/crosstools/src/platform.h"
+ #include "cross_log.h"
+ #include "ap2_hap.h"
+ #include "ap2_io.h"
+@@ -543,7 +541,7 @@
+  * *resp_body_len) at the body inside resp_buf. A non-200 reply is dumped
+  * under label before returning.
+  */
+-static int hap_post_pair_setup_path(int sock_fd, const char *path, int cseq, int hkp,
++static int hap_post_pair_setup_path(ap2_socket_t sock_fd, const char *path, int cseq, int hkp,
+                                const uint8_t *body, int body_len,
+                                uint8_t *resp_buf, int resp_buf_size,
+                                uint8_t **resp_body, int *resp_body_len,
+@@ -672,7 +670,7 @@
+     }
+ }
+ 
+-bool ap2_hap_pair_verify(struct ap2_hap_ctx *ctx, int sock_fd,
++bool ap2_hap_pair_verify(struct ap2_hap_ctx *ctx, ap2_socket_t sock_fd,
+                          ap2_hap_error_t *err_out)
+ {
+     if (!ctx) return false;
+@@ -1037,7 +1035,7 @@
+     return true;
+ }
+ 
+-bool ap2_hap_pair_setup_transient(struct ap2_hap_ctx *ctx, int sock_fd,
++bool ap2_hap_pair_setup_transient(struct ap2_hap_ctx *ctx, ap2_socket_t sock_fd,
+                                   const char *srp_secret, ap2_hap_error_t *err_out)
+ {
+     if (!ctx) return false;
+@@ -1202,7 +1200,7 @@
+     return false;
+ }
+ 
+-bool ap2_hap_pair_setup_pin(struct ap2_hap_ctx *ctx, int sock_fd,
++bool ap2_hap_pair_setup_pin(struct ap2_hap_ctx *ctx, ap2_socket_t sock_fd,
+                             ap2_hap_pin_cb pin_cb, void *pin_arg,
+                             char creds_hex_out[193])
+ {
+diff --git a/src/ap2_hap.h b/src/ap2_hap.h
+--- a/src/ap2_hap.h
++++ b/src/ap2_hap.h
+@@ -1,3 +1,4 @@
++#include "windows_port.h"
+ /*
+  * AirPlay 2 HAP - Header
+  *
+@@ -72,7 +73,7 @@
+  *
+  * On success, the context holds encryption keys for the session.
+  */
+-bool ap2_hap_pair_verify(struct ap2_hap_ctx *ctx, int sock_fd,
++bool ap2_hap_pair_verify(struct ap2_hap_ctx *ctx, ap2_socket_t sock_fd,
+                          ap2_hap_error_t *err);
+ 
+ /*
+@@ -92,7 +93,7 @@
+  * On success, the context holds encryption keys for the session and
+  * ap2_hap_get_shared_secret() returns the audio key.
+  */
+-bool ap2_hap_pair_setup_transient(struct ap2_hap_ctx *ctx, int sock_fd,
++bool ap2_hap_pair_setup_transient(struct ap2_hap_ctx *ctx, ap2_socket_t sock_fd,
+                                   const char *srp_secret,
+                                   ap2_hap_error_t *err);
+ 
+@@ -112,7 +113,7 @@
+  * :param pin_arg: opaque argument passed to pin_cb.
+  * :param creds_hex_out: receives the credentials (192 hex chars + NUL).
+  */
+-bool ap2_hap_pair_setup_pin(struct ap2_hap_ctx *ctx, int sock_fd,
++bool ap2_hap_pair_setup_pin(struct ap2_hap_ctx *ctx, ap2_socket_t sock_fd,
+                             ap2_hap_pin_cb pin_cb, void *pin_arg,
+                             char creds_hex_out[193]);
+ 
+diff --git a/src/ap2_io.c b/src/ap2_io.c
+--- a/src/ap2_io.c
++++ b/src/ap2_io.c
+@@ -1,3 +1,4 @@
++#include "windows_port.h"
+ /*
+  * Copyright (C) 2024-2026 Music Assistant Contributors
+  * SPDX-License-Identifier: Apache-2.0
+@@ -8,7 +9,6 @@
+ #include <errno.h>
+ #include <fcntl.h>
+ #include <limits.h>
+-#include <poll.h>
+ #include <stdio.h>
+ #include <stdlib.h>
+ #include <string.h>
+@@ -76,7 +76,7 @@
+     }
+ }
+ 
+-int ap2_io_poll_fd(int fd, short events, uint64_t deadline_ms)
++int ap2_io_poll_fd(ap2_socket_t fd, short events, uint64_t deadline_ms)
+ {
+     for (;;) {
+         uint64_t now = ap2_io_monotonic_ms();
+@@ -101,74 +101,10 @@
+     }
+ }
+ 
+-bool ap2_io_write_all_deadline(int fd, const uint8_t *data, size_t len,
+-                               uint64_t deadline_ms)
+-{
+-    int original_flags = fcntl(fd, F_GETFL);
+-    if (original_flags < 0) return false;
+-    bool restore_flags = !(original_flags & O_NONBLOCK);
+-    if (restore_flags && fcntl(fd, F_SETFL, original_flags | O_NONBLOCK) < 0)
+-        return false;
+-
+-    bool ok = false;
+-    size_t offset = 0;
+-    while (offset < len) {
+-        if (ap2_io_monotonic_ms() >= deadline_ms) {
+-            errno = ETIMEDOUT;
+-            break;
+-        }
+-        if (ap2_io_poll_fd(fd, POLLOUT, deadline_ms) <= 0) break;
+-#ifdef MSG_NOSIGNAL
+-        ssize_t written = send(fd, data + offset, len - offset,
+-                               MSG_DONTWAIT | MSG_NOSIGNAL);
+-#else
+-        ssize_t written = send(fd, data + offset, len - offset, MSG_DONTWAIT);
+-#endif
+-        if (written > 0) {
+-            offset += (size_t)written;
+-        } else if (written < 0 &&
+-                   (errno == EINTR || errno == EAGAIN ||
+-                    errno == EWOULDBLOCK || errno == ENOBUFS)) {
+-            continue;
+-        } else {
+-            if (written == 0) errno = EPIPE;
+-            break;
+-        }
+-    }
+-    if (offset == len) ok = true;
+-    int saved_errno = errno;
+-    if (restore_flags) fcntl(fd, F_SETFL, original_flags);
+-    errno = saved_errno;
+-    return ok;
+-}
+-
+-ssize_t ap2_io_read_deadline(int fd, uint8_t *buf, size_t len,
+-                             uint64_t deadline_ms)
+-{
+-    int original_flags = fcntl(fd, F_GETFL);
+-    if (original_flags < 0) return -1;
+-    bool restore_flags = !(original_flags & O_NONBLOCK);
+-    if (restore_flags && fcntl(fd, F_SETFL, original_flags | O_NONBLOCK) < 0)
+-        return -1;
+-
+-    ssize_t result = -1;
+-    for (;;) {
+-        if (ap2_io_poll_fd(fd, POLLIN, deadline_ms) <= 0) break;
+-        result = recv(fd, buf, len, MSG_DONTWAIT);
+-        if (result < 0 &&
+-            (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK))
+-            continue;
+-        if (result == 0) errno = ECONNRESET;
+-        break;
+-    }
+-    int saved_errno = errno;
+-    if (restore_flags) fcntl(fd, F_SETFL, original_flags);
+-    errno = saved_errno;
+-    return result;
+-}
++#include "windows_io.inc"
+ 
+ ap2_send_result_t ap2_io_send_datagram_deadline(
+-    int fd, const uint8_t *data, size_t len,
++    ap2_socket_t fd, const uint8_t *data, size_t len,
+     const struct sockaddr *addr, socklen_t addr_len, uint64_t deadline_ms)
+ {
+     bool backpressured = false;
+diff --git a/src/ap2_io.h b/src/ap2_io.h
+--- a/src/ap2_io.h
++++ b/src/ap2_io.h
+@@ -1,3 +1,4 @@
++#include "windows_port.h"
+ /*
+  * Copyright (C) 2024-2026 Music Assistant Contributors
+  * SPDX-License-Identifier: Apache-2.0
+@@ -11,7 +12,6 @@
+ #include <stddef.h>
+ #include <stdint.h>
+ #include <pthread.h>
+-#include <sys/socket.h>
+ #include <sys/types.h>
+ 
+ typedef enum {
+@@ -64,13 +64,13 @@
+ uint64_t ap2_io_monotonic_ms(void);
+ /* Returns 1 when acquired, 0 on deadline expiry, and -1 on mutex error. */
+ int ap2_io_mutex_lock_deadline(pthread_mutex_t *mutex, uint64_t deadline_ms);
+-int ap2_io_poll_fd(int fd, short events, uint64_t deadline_ms);
+-bool ap2_io_write_all_deadline(int fd, const uint8_t *data, size_t len,
++int ap2_io_poll_fd(ap2_socket_t fd, short events, uint64_t deadline_ms);
++bool ap2_io_write_all_deadline(ap2_socket_t fd, const uint8_t *data, size_t len,
+                                uint64_t deadline_ms);
+-ssize_t ap2_io_read_deadline(int fd, uint8_t *buf, size_t len,
++ssize_t ap2_io_read_deadline(ap2_socket_t fd, uint8_t *buf, size_t len,
+                              uint64_t deadline_ms);
+ ap2_send_result_t ap2_io_send_datagram_deadline(
+-    int fd, const uint8_t *data, size_t len,
++    ap2_socket_t fd, const uint8_t *data, size_t len,
+     const struct sockaddr *addr, socklen_t addr_len, uint64_t deadline_ms);
+ 
+ ap2_feedback_result_t ap2_io_feedback_result(int rtsp_status,
+diff --git a/src/ap2_ptp.c b/src/ap2_ptp.c
+--- a/src/ap2_ptp.c
++++ b/src/ap2_ptp.c
+@@ -1,3 +1,5 @@
++#include <stdatomic.h>
++#include "windows_port.h"
+ /*
+  * AirPlay 2 PTP - sender-side timing engine
+  *
+@@ -28,18 +30,10 @@
+ #include <stdlib.h>
+ #include <string.h>
+ #include <stdbool.h>
+-#include <unistd.h>
+ #include <errno.h>
+ #include <pthread.h>
+-#include <poll.h>
+-#include <sys/socket.h>
+-#include <netinet/in.h>
+-#include <arpa/inet.h>
+ #include <time.h>
+ 
+-#include "../libraop/crosstools/src/platform.h"
+-#include "../libraop/crosstools/src/cross_net.h"
+-#include "../libraop/src/raop_client.h"
+ #include "cross_log.h"
+ #include "ap2_ptp.h"
+ #include "ap2_ptp_shm.h"
+@@ -175,18 +169,18 @@
+     int64_t offset_ns;
+ 
+     /* NTP timing responder */
+-    int timing_sock;
++    ap2_socket_t timing_sock;
+     pthread_t timing_thread;
+-    bool running;
++    atomic_bool running;
+     char *device_ip;
+ 
+     /* PTP grandmaster engine */
+     uint64_t clock_id;
+     bool clock_id_set;
+-    int event_sock;              /* UDP 319 */
+-    int general_sock;            /* UDP 320 */
++    ap2_socket_t event_sock;              /* UDP 319 */
++    ap2_socket_t general_sock;            /* UDP 320 */
+     pthread_t ptp_thread;
+-    bool ptp_running;
++    atomic_bool ptp_running;
+     bool engine_active;
+     struct in_addr bind_addr;    /* multicast join interface (INADDR_ANY = default) */
+     struct in_addr mcast_addr;
+@@ -368,7 +362,7 @@
+ 
+ /* Send a PTP message unicast to every timing peer, as iOS senders do (never an
+  * open multicast election). Without timing peers nothing is sent. */
+-static void ptp_send(struct ap2_ptp_ctx *ctx, int sock, uint16_t port,
++static void ptp_send(struct ap2_ptp_ctx *ctx, ap2_socket_t sock, uint16_t port,
+                      const uint8_t *buf, int len)
+ {
+     /* Snapshot the peer list under the lock: SETPEERS mutates it from the
+@@ -627,9 +621,9 @@
+     }
+ }
+ 
+-static int ptp_open_socket(struct ap2_ptp_ctx *ctx, uint16_t port)
+-{
+-    int s = socket(AF_INET, SOCK_DGRAM, 0);
++static ap2_socket_t ptp_open_socket(struct ap2_ptp_ctx *ctx, uint16_t port)
++{
++    ap2_socket_t s = socket(AF_INET, SOCK_DGRAM, 0);
+     if (s < 0) return -1;
+ 
+     /* SO_REUSEADDR is the usual requirement for binding a multicast port; we do
+@@ -1294,6 +1288,7 @@
+     if (ctx->running) {
+         ctx->running = false;
+         if (ctx->timing_sock >= 0) {
++            shutdown(ctx->timing_sock, SHUT_RDWR);
+             close(ctx->timing_sock);
+             ctx->timing_sock = -1;
+         }
+diff --git a/src/ap2_ptp.h b/src/ap2_ptp.h
+--- a/src/ap2_ptp.h
++++ b/src/ap2_ptp.h
+@@ -1,3 +1,4 @@
++#include "windows_port.h"
+ /*
+  * AirPlay 2 PTP - Header
+  *
+@@ -10,7 +11,6 @@
+ 
+ #include <stdbool.h>
+ #include <stdint.h>
+-#include <netinet/in.h>
+ 
+ struct ap2_ptp_ctx;
+ 
+diff --git a/src/ap2_ptp_shm.h b/src/ap2_ptp_shm.h
+--- a/src/ap2_ptp_shm.h
++++ b/src/ap2_ptp_shm.h
+@@ -1,3 +1,4 @@
++#include "windows_port.h"
+ /*
+  * AirPlay 2 PTP - shared clock (daemon <-> streaming processes)
+  *
+diff --git a/src/ap2_plist.c b/src/ap2_plist.c
+--- a/src/ap2_plist.c
++++ b/src/ap2_plist.c
+@@ -1,3 +1,4 @@
++#include "windows_port.h"
+ /*
+  * Minimal binary plist (bplist00) builder for AirPlay 2 SETUP messages.
+  *
+@@ -24,7 +25,6 @@
+ #include <stdlib.h>
+ #include <string.h>
+ #include <stdbool.h>
+-#include <arpa/inet.h>
+ #include "ap2_plist.h"
+ 
+ /* Dynamic buffer */
+diff --git a/src/ap2_plist.h b/src/ap2_plist.h
+--- a/src/ap2_plist.h
++++ b/src/ap2_plist.h
+@@ -1,3 +1,4 @@
++#include "windows_port.h"
+ /*
+  * Minimal binary plist builder for AirPlay 2 SETUP messages.
+  *
+diff --git a/src/ap2_bplist.cpp b/src/ap2_bplist.cpp
+--- a/src/ap2_bplist.cpp
++++ b/src/ap2_bplist.cpp
+@@ -1,3 +1,4 @@
++#include "windows_port.h"
+ /*
+  * C wrapper for bplist (binary plist) reader/writer
+  *
+@@ -16,7 +17,7 @@
+  * so include it explicitly before pulling in bplist.h. */
+ /* Access private members of bplist for integer reading */
+ #define private public
+-#include "../libraop/src/bplist.h"
++#include "bplist.h"
+ #undef private
+ 
+ #include "ap2_bplist.h"
+diff --git a/src/ap2_bplist.h b/src/ap2_bplist.h
+--- a/src/ap2_bplist.h
++++ b/src/ap2_bplist.h
+@@ -1,3 +1,4 @@
++#include "windows_port.h"
+ /*
+  * C wrapper for bplist (binary plist) reader/writer
+  *
+diff --git a/libraop/src/bplist.cpp b/libraop/src/bplist.cpp
+--- a/libraop/src/bplist.cpp
++++ b/libraop/src/bplist.cpp
+@@ -1,3 +1,4 @@
++#include <cstdint>
+ /*
+  *  bplist - 1-level (no recurse) simplified bplist reader & writer
+  *
+@@ -22,8 +23,8 @@
+ // for htnox and ntohx
+ #ifdef _WIN32
+ #include <WinSock2.h>
+-#define be64toh ntohll
+-#define htobe64 htonll
++#define be64toh __builtin_bswap64
++#define htobe64 __builtin_bswap64
+ #else
+ #include <arpa/inet.h>
+ #if defined(sun)
+@@ -37,8 +38,8 @@
+ #elif defined(__FreeBSD__)
+ #include <sys/endian.h>
+ #elif defined(__APPLE__)
+-#define be64toh ntohll
+-#define htobe64 htonll
++#define be64toh __builtin_bswap64
++#define htobe64 __builtin_bswap64
+ #else
+ #define _BSD_SOURCE
+ #include <endian.h>
+diff --git a/libraop/src/bplist.h b/libraop/src/bplist.h
+--- a/libraop/src/bplist.h
++++ b/libraop/src/bplist.h
+@@ -1,3 +1,4 @@
++#include <cstdint>
+ /*
+  *  bplist - 1-level (no recurse) simplified bplist reader & writer
+  *

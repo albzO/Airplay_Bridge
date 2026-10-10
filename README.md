@@ -25,7 +25,7 @@ AirPlay 协议基础及部分组件来自第三方开源项目，其归属和许
 
 使用便携包：将完整目录解压到可写目录，启动 `airplay-bridge.exe`。便携版与安装版的数据目录不同，不自动迁移彼此的配置。需要 Windows x64 和 Microsoft Edge WebView2 Runtime；保留 `runtime/` 中的后端和 DLL。
 
-从源码构建需要 Rust MSVC、Visual Studio C++ Build Tools / Windows SDK、MSYS2 UCRT64、Python、Node.js 和 pnpm。具体依赖见 [构建指南](docs/building.md)。
+从源码构建需要 Git、Rust MSVC、Visual Studio C++ Build Tools / Windows SDK、MSYS2 UCRT64、Python、Node.js 和 pnpm。原生后端在固定子模块源码的临时副本应用已审查补丁，再选择所需代码编译。具体依赖与适配维护步骤见 [构建指南](docs/building.md)。
 
 生产代码分为 `airplay-frontend/`、`airplay-backend/` 和 `airplay-core/`。测试源码集中在根目录 `test/frontend/`、`test/backend/`、`test/core/`，随 Git 提交；目录和运行入口见 [测试说明](test/README.md)。源码构建需保留完整的 `test/`，截图、日志、录音与本机配置仍不提交或打包。
 

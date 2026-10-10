@@ -1,0 +1,447 @@
+diff --git a/src/ap2_client.c b/src/ap2_client.c
+--- a/src/ap2_client.c
++++ b/src/ap2_client.c
+@@ -155,7 +155,7 @@
+ /* Raw bytes kept from a failed exchange for the auth diagnostics dump: enough
+  * for a full header block plus the start of a TLV/plist body. */
+ #define AP2_DIAG_RESPONSE_MAX        1536
+-#define AP2_DIAG_BODY_MAX            512
++#define AP2_DIAG_BODY_MAX 0
+ /* Retransmit history. Receivers ask for lost audio on the RTP control port
+  * (type 0x55 request / 0x56 response, marker bit set). A request is only worth
+  * answering while the packet is still ahead of the receiver's play point, so
+@@ -721,7 +721,12 @@
+ static int ap2_rtsp_timeout_ms(struct ap2cl_s *p, const char *method,
+                                const char *uri, const char *content_type)
+ {
+-    if (!p->rtsp_established) return AP2_RTSP_SETUP_TIMEOUT_MS;
++    /* 音频 SETUP 仍使用 8 秒启动预算，避免误用普通控制请求的 2 秒超时。
++     * Audio SETUP retains the 8-second startup budget instead of the 2-second control timeout.
++     * 响应到达立即继续；不增加播放延迟，也不重复认证或重发 SETUP。
++     * Continue as soon as the reply arrives; no playback delay, reauthentication or repeated SETUP. */
++    if (!p->rtsp_established || !strcmp(method, "SETUP"))
++        return AP2_RTSP_SETUP_TIMEOUT_MS;
+     if (!strcmp(uri, "/feedback")) return AP2_RTSP_FEEDBACK_TIMEOUT_MS;
+     if (content_type && !strncasecmp(content_type, "image/", 6))
+         return AP2_RTSP_ARTWORK_TIMEOUT_MS;
+@@ -1753,6 +1758,7 @@
+     LOG_INFO("[AP2] Performing HAP transient pair-setup...");
+     if (ap2_hap_pair_setup_transient(p->hap, p->sock_fd, secret, err))
+         return true;
++    p->last_pair_error = *err;
+     LOG_ERROR("[AP2] HAP transient pair-setup failed");
+     ap2_hap_destroy(p->hap);
+     p->hap = NULL;
+@@ -1786,6 +1792,7 @@
+ 
+     LOG_INFO("[AP2] Performing HAP pair-verify...");
+     if (ap2_hap_pair_verify(p->hap, p->sock_fd, err)) return true;
++    p->last_pair_error = *err;
+     LOG_ERROR("[AP2] HAP pair-verify failed");
+     ap2_hap_destroy(p->hap);
+     p->hap = NULL;
+@@ -1807,7 +1814,7 @@
+  * connection; the reported status is the password leg's, which is the one
+  * that describes the device's password handling.
+  */
+-static bool ap2_native_pair(struct ap2cl_s *p)
++static bool probe_pair_once(struct ap2cl_s *p)
+ {
+     ap2_hap_error_t err = {0};
+     const bool have_password = p->password && *p->password;
+@@ -1816,7 +1823,7 @@
+         /* A TLV-level rejection arrives with HTTP 200, so the auth-shaped test
+          * must consider the HAP result kind as well as the HTTP status. */
+         if (p->auth_credentials) {
+-            if (ap2_native_pair_verify(p, &err)) return true;
++            if (ap2_native_pair_verify(p, &err)) { p->auth_method = "credentials"; return true; }
+             ap2_set_connect_error(p,
+                                   (err.result == AP2_HAP_ERR_AUTH ||
+                                    ap2_status_is_auth(err.http_status))
+@@ -1825,7 +1832,7 @@
+                                   err.http_status, "HAP pair-verify failed");
+             return false;
+         }
+-        if (ap2_native_transient(p, NULL, &err)) return true;
++        if (ap2_native_transient(p, NULL, &err)) { p->auth_method = "fixed-pin"; return true; }
+         ap2_set_connect_error(p,
+                               (err.result == AP2_HAP_ERR_AUTH ||
+                                ap2_status_is_auth(err.http_status))
+@@ -1837,8 +1844,22 @@
+ 
+     LOG_INFO("[AP2] Pairing leg 1/2: transient pair-setup with the device password");
+     if (ap2_native_transient(p, p->password, &err)) {
++        p->auth_method = "password";
++        ap2_io_status_line("[PROBE] PASSWORD_ACCEPTED");
+         LOG_INFO("[AP2] Device accepted the password as the transient secret");
+         return true;
++    }
++    if (err.tlv_error == 3 || err.tlv_error == 5) {
++        p->probe_error = 12;
++        ap2_set_connect_error(p, AP2_CONNECT_ERROR_AUTH_FAILED, err.http_status,
++                              "pairing temporarily rate-limited by receiver");
++        return false;
++    }
++    if (err.result == AP2_HAP_ERR_AUTH) {
++        if (err.pair_state == 4 && err.tlv_error == 2) p->probe_error = 10;
++        ap2_set_connect_error(p, AP2_CONNECT_ERROR_AUTH_FAILED, err.http_status,
++                              "device rejected the supplied password");
++        return false;
+     }
+     int password_status = err.http_status;
+     LOG_WARN("[AP2] Password pair-setup rejected (cause=%d http=%d tlv=%d)",
+@@ -1859,6 +1880,7 @@
+         }
+         ap2_hap_error_t verify_err = {0};
+         if (ap2_native_pair_verify(p, &verify_err)) {
++            p->auth_method = "credentials";
+             LOG_INFO("[AP2] Stored credentials accepted after the password leg "
+                      "was rejected");
+             return true;
+@@ -1883,6 +1905,7 @@
+     }
+     ap2_hap_error_t pin_err = {0};
+     if (ap2_native_transient(p, NULL, &pin_err)) {
++        p->auth_method = "fixed-pin";
+         LOG_WARN("[AP2] Device paired with the fixed transient PIN; the "
+                  "configured password was not used");
+         return true;
+@@ -1892,6 +1915,8 @@
+                           "device rejected the supplied password");
+     return false;
+ }
++
++#include "auth_auto.inc"
+ 
+ static bool ap2_native_connect(struct ap2cl_s *p)
+ {
+@@ -1912,6 +1937,7 @@
+     }
+ 
+     if (!ap2_native_open_socket(p)) return false;
++    ap2_io_status_line("[PROBE] TCP_CONNECTED");
+ 
+     /* Get local address for session URL */
+     struct sockaddr_in local;
+@@ -1942,14 +1968,19 @@
+              uuid_bytes[4], uuid_bytes[5], uuid_bytes[6], uuid_bytes[7],
+              uuid_bytes[8], uuid_bytes[9], uuid_bytes[10], uuid_bytes[11],
+              uuid_bytes[12], uuid_bytes[13], uuid_bytes[14], uuid_bytes[15]);
+-    ap2_gen_uuid(p->group_uuid);
++    if (!p->group_uuid[0]) ap2_gen_uuid(p->group_uuid);
+ 
+     /* 1. GET /info */
++    p->phase = "info";
++    ap2_io_status_line("[PROBE] GET_INFO_SENT");
+     if (!ap2_native_get_info(p)) return false;
++    ap2_io_status_line("[PROBE] GET_INFO_OK");
+ 
+     /* 2. HAP pairing (see ap2_native_pair for the leg order). */
++    p->phase = "pairing";
+     if (!ap2_native_pair(p)) return false;
+     LOG_INFO("[AP2] Channel encrypted");
++    ap2_io_status_line("[PROBE] ENCRYPTION_KEYS_DERIVED");
+ 
+     /* Diagnostic: post-pairing /info — the encrypted-channel reply is the
+      * full form (e.g. audioLatencies). Dump-only; env-gated. */
+@@ -1981,9 +2012,14 @@
+      * wanted but 319/320 can't be bound (privilege), fall back to NTP. */
+     bool want_ptp = p->ptp_forced ? p->ptp_enabled
+                                   : ap2_features_has_ptp(p->device.txt_records);
+-    p->ptp = ap2_ptp_create();
++    p->phase = "timing";
++    if (!p->ptp) p->ptp = ap2_ptp_create();
++    if (!p->ptp) return false;
+     int timing_port = 0;
+-    if (want_ptp) {
++    if (p->ptp_borrowed) {
++        if (!want_ptp) return false;
++        p->use_ptp = true;
++    } else if (want_ptp) {
+         ap2_ptp_set_clock_id(p->ptp, clock_id);
+         /* Multi-room: when a shared PTP daemon owns 319/320 on this host, attach
+          * its elected clock read-only and register our receiver with it, rather
+@@ -2018,6 +2054,12 @@
+         timing_port = ap2_ptp_get_timing_port(p->ptp);
+     }
+ 
++    if (!p->use_ptp && timing_port <= 0) {
++        ap2_set_connect_error(p, AP2_CONNECT_ERROR_GENERIC, 0, "Timing responder failed to start");
++        return false;
++    }
++    ap2_io_status_line("[PROBE] TIMING value=%s", p->use_ptp ? "ptp" : "ntp");
++
+     /* Buffered (type 103) schedules playback entirely by SETRATEANCHORTIME
+      * against the PTP timeline, so it is only viable with an active
+      * grandmaster; fall back to realtime otherwise — and give that realtime
+@@ -2076,6 +2118,8 @@
+     }
+ 
+     uint8_t *resp = NULL; int resp_len = 0;
++    p->phase = "session-setup";
++    ap2_io_status_line("[PROBE] RTSP_SETUP_SENT");
+     int status = ap2_rtsp_send(p, "SETUP", p->session_url, plist_data, plist_len,
+                             "application/x-apple-binary-plist", &resp, &resp_len);
+     free(plist_data);
+@@ -2085,6 +2129,8 @@
+         free(resp);
+         return false;
+     }
++    ap2_io_status_line("[PROBE] ENCRYPTED_RESPONSE_OK");
++    ap2_io_status_line("[PROBE] RTSP_SETUP_200_OK");
+     LOG_INFO("[AP2] Session SETUP OK (%s timing)", p->use_ptp ? "PTP" : "NTP");
+ 
+     /* Extract eventPort from the session response (by key, real traversal) */
+@@ -2096,11 +2142,12 @@
+             event_port = (int)v;
+     }
+     free(resp);
++    p->event_required = event_port > 0;
+ 
+     /* Open events connection (reverse TCP to device's eventPort) */
+     if (event_port > 0) {
+         LOG_INFO("[AP2] Opening events connection to %s:%d", p->device.address, event_port);
+-        int events_sock = socket(AF_INET, SOCK_STREAM, 0);
++        ap2_socket_t events_sock = socket(AF_INET, SOCK_STREAM, 0);
+         if (events_sock >= 0) {
+             struct sockaddr_in ev_addr = {
+                 .sin_family = AF_INET,
+@@ -2112,6 +2159,7 @@
+             setsockopt(events_sock, SOL_SOCKET, SO_SNDTIMEO, &etv, sizeof(etv));
+             if (connect(events_sock, (struct sockaddr *)&ev_addr, sizeof(ev_addr)) == 0) {
+                 LOG_INFO("[AP2] Events connection OK");
++                ap2_io_status_line("[PROBE] EVENTS_CONNECTED");
+                 int one = 1;
+                 setsockopt(events_sock, IPPROTO_TCP, TCP_NODELAY,
+                            &one, sizeof(one));
+@@ -2123,6 +2171,20 @@
+         }
+     }
+ 
++
++    p->rtsp_established = true;
++    ap2_io_status_line("[PROBE] SESSION_ACCEPTED timing=%s", p->use_ptp ? "ptp" : "ntp");
++    return true;
++}
++
++static bool probe_audio_setup(struct ap2cl_s *p) {
++    int len, plist_len = 0; uint8_t *plist_data = NULL;
++    uint8_t *resp = NULL; int resp_len = 0, status = 0;
++    p->phase = "stream-setup";
++    struct sockaddr_in local; len = sizeof(local);
++    if (getsockname(p->sock_fd, (struct sockaddr *)&local, &len) != 0) return false;
++    char our_addr[INET_ADDRSTRLEN];
++    inet_ntop(AF_INET, &local.sin_addr, our_addr, sizeof(our_addr));
+     /* 5. RECORD (on the session URL, below), then stream SETUP with the
+      * streams array. RECORD before the stream SETUP matches the order used
+      * by Apple senders and owntone, and is REQUIRED by Samsung AirPlay 2
+@@ -2209,18 +2271,22 @@
+      * above): required for Samsung AirPlay 2 receivers to actually render
+      * audio. */
+     resp = NULL; resp_len = 0;
++    p->phase = "record";
+     status = ap2_rtsp_send(p, "RECORD", p->session_url, NULL, 0, NULL, &resp, &resp_len);
+     free(resp);
+-    if (status <= 0) {
++    if (status != 200) {
++        ap2_report_failed_exchange(p, "RECORD", status);
+         free(plist_data);
+         return false;
+     } else if (status != 200) {
+         LOG_WARN("[AP2] RECORD returned %d", status);
+     } else {
+         LOG_INFO("[AP2] RECORD OK");
++        ap2_io_status_line("[PROBE] RECORD_OK");
+     }
+ 
+     resp = NULL; resp_len = 0;
++    p->phase = "stream-setup";
+     status = ap2_rtsp_send(p, "SETUP", p->session_url, plist_data, plist_len,
+                             "application/x-apple-binary-plist", &resp, &resp_len);
+     free(plist_data);
+@@ -2312,55 +2378,14 @@
+             LOG_WARN("[AP2] Could not parse remote data port from response");
+         }
+     }
++    if (!p->data_addr.sin_port || !p->ctrl_addr.sin_port) {
++        free(resp);
++        ap2_set_connect_error(p, AP2_CONNECT_ERROR_GENERIC, 200, "Stream response has missing/invalid remote ports");
++        return false;
++    }
++    ap2_io_status_line("[PROBE] STREAM_SETUP_OK");
+     LOG_INFO("[AP2] Stream SETUP OK");
+     free(resp);
+-
+-    /* Buffered audio: open the TCP data connection to the receiver's
+-     * dataPort. The socket stays blocking with a short send deadline; a
+-     * receiver that throttles its reads (they pull ahead of render on their
+-     * own schedule) parks the unwritten tail in buffered_pending instead of
+-     * failing the session. */
+-    if (p->use_buffered) {
+-        if (p->data_addr.sin_port == 0) {
+-            LOG_ERROR("[AP2] Buffered stream SETUP returned no dataPort");
+-            return false;
+-        }
+-        p->buffered_sock = socket(AF_INET, SOCK_STREAM, 0);
+-        if (p->buffered_sock >= 0 && p->bind_addr.s_addr != INADDR_ANY) {
+-            struct sockaddr_in la = {.sin_family = AF_INET, .sin_addr = p->bind_addr};
+-            if (bind(p->buffered_sock, (struct sockaddr *)&la, sizeof(la)) != 0)
+-                LOG_WARN("[AP2] Cannot bind buffered TCP socket: %s",
+-                         strerror(errno));
+-        }
+-        if (p->buffered_sock >= 0) {
+-            struct timeval stv = {.tv_sec = AP2_BUFFERED_WRITE_TIMEOUT_MS / 1000,
+-                                  .tv_usec = (AP2_BUFFERED_WRITE_TIMEOUT_MS % 1000) * 1000};
+-            setsockopt(p->buffered_sock, SOL_SOCKET, SO_SNDTIMEO, &stv, sizeof(stv));
+-            setsockopt(p->buffered_sock, SOL_SOCKET, SO_RCVTIMEO, &stv, sizeof(stv));
+-            /* Keep the kernel send queue SMALL: bytes there are the only old
+-             * audio a flush verb cannot recall (they drain out after the
+-             * receiver processed the FLUSHBUFFERED, and lazy receivers render
+-             * them over the new content). 64 KB still holds ~0.5 s of ALAC —
+-             * far more than LAN throughput needs — and bounds the
+-             * quiesce-before-flush drain wait; the pending stash absorbs the
+-             * extra EAGAIN cycles this causes. */
+-            int sndbuf = 64 << 10;
+-            setsockopt(p->buffered_sock, SOL_SOCKET, SO_SNDBUF, &sndbuf, sizeof(sndbuf));
+-        }
+-        if (p->buffered_sock < 0 ||
+-            connect(p->buffered_sock, (struct sockaddr *)&p->data_addr,
+-                    sizeof(p->data_addr)) != 0) {
+-            LOG_ERROR("[AP2] Buffered data TCP connect to %s:%d failed: %s",
+-                      p->device.address, ntohs(p->data_addr.sin_port),
+-                      strerror(errno));
+-            if (p->buffered_sock >= 0) { close(p->buffered_sock); p->buffered_sock = -1; }
+-            return false;
+-        }
+-        int one = 1;
+-        setsockopt(p->buffered_sock, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
+-        LOG_INFO("[AP2] Buffered data TCP connected to %s:%d",
+-                 p->device.address, ntohs(p->data_addr.sin_port));
+-    }
+ 
+     /* 6. SETPEERS (PTP only): a bare binary-plist array of IP strings
+      * [receiver, us] so the receiver knows the timing group members. */
+@@ -2378,7 +2403,11 @@
+         free(sp_data);
+         free(resp);
+         LOG_INFO("[AP2] SETPEERS [%s, %s] -> %d", p->device.address, our_addr, sp_status);
+-        if (sp_status <= 0) return false;
++        if (sp_status != 200) {
++            ap2_report_failed_exchange(p, "SETPEERS", sp_status);
++            return false;
++        }
++        ap2_io_status_line("[PROBE] SETPEERS_OK");
+ 
+         const char *peers[2] = { p->device.address, our_addr };
+         ap2_ptp_set_peers(p->ptp, peers, 2);
+@@ -2388,52 +2417,13 @@
+         ap2_ptp_shared_kick(p->ptp);
+     }
+ 
+-    /* 6b. MRP now-playing. Ground-truth capture (DESIGN.md §8) shows a real
+-     * sender delivers now-playing over POST /command, NOT the type-130 channel
+-     * (its type-130 SETUPs never completed a data connection), and pushing state
+-     * over type-130 competes with /command. So the type-130 channel is OFF by
+-     * default; now-playing rides /command (ap2cl_mrp_register + ap2cl_mrp_push).
+-     * Set CLIAIRPLAY_MRP_TYPE130=1 to re-enable the channel (future remote-
+-     * control RX). Best-effort; audio is up regardless. */
+-    if (ap2_mrp_type130_enabled())
+-        ap2_native_setup_mrp(p);
+-
+-    /* Create ALAC encoder */
+-    p->alac = alac_create_encoder(AP2_FRAMES_PER_CHUNK,
+-                                   p->format.sample_rate,
+-                                   p->format.bit_depth,
+-                                   p->format.channels);
+ 
+     p->first_packet = true;
+-    if (atomic_load(&p->rtsp_dead)) return false;
+-    p->rtsp_established = true;
+-    p->state = AP2_CONNECTED;
+-    /* Readiness is measurable from here: a cold receiver starts probing our
+-     * clock about a second after connect, on its own schedule and with no
+-     * anchor announced (measured on a Samsung Music Frame, 187 probes over
+-     * 24 s with no START ever sent). Keep the shared-daemon snapshot fresh
+-     * from now on so ap2cl_clock_readiness can report it without blocking,
+-     * and stamp the instant its stall window runs from. The streak mark starts
+-     * clear: one left by an earlier session on this client describes a receiver
+-     * that is no longer the one being measured. */
+-    pthread_mutex_lock(&p->clock_verify_lock);
+-    p->clock_connected_unix_ms = ap2_ntp_to_unix_ms(raopcl_get_ntp(NULL));
+-    p->clock_last_streak_unix_ms = 0;
+-    pthread_mutex_unlock(&p->clock_verify_lock);
+-    ap2_clock_poller_ensure(p);
+-    if (!ap2_feedback_start(p)) {
+-        atomic_store(&p->rtsp_dead, true);
+-        return false;
+-    }
+-    /* Non-fatal: without the responder the stream still plays, it just cannot
+-     * repair receiver-side loss. Buffered audio rides TCP, which needs (and
+-     * gets) no retransmit path. */
+-    if (!p->use_buffered)
+-        ap2_rtx_start(p);
+-    ap2_set_connect_error(p, AP2_CONNECT_ERROR_NONE, 0, "%s", "");
+-    LOG_INFO("[AP2] Native AP2 session ready");
++    p->alac = alac_create_encoder(352, 44100, 16, 2);
++    if (!p->alac || !ap2_rtx_start(p)) return false;
+     return true;
+ }
++
+ 
+ /* ---- Native AP2 audio send ---- */
+ 
+@@ -2955,7 +2945,7 @@
+ static ap2_send_result_t ap2_native_send_chunk(
+     struct ap2cl_s *p, uint8_t *sample, int frames)
+ {
+-    if (p->use_buffered) return ap2_buffered_send_chunk(p, sample, frames);
++
+     if (p->data_sock < 0 || !p->alac || !p->hap) {
+         LOG_ERROR("[AP2] Realtime audio session is incomplete");
+         return AP2_SEND_FATAL;
+@@ -2997,7 +2987,7 @@
+     /* Encrypt the ALAC payload with ChaCha20-Poly1305 (AP2 realtime audio).
+      * Key:   the 32-byte pairing audio key (shk) — the raw X25519 secret for
+      *        pair-verify, SHA512(S)[:32] for transient pairing.
+-     * Nonce: 12 bytes, all zero except the 2-byte sequence number at [4..5].
++     * Nonce: four zero bytes followed by an independent 64-bit counter.
+      * AAD:   RTP header bytes 4..11 (timestamp + SSRC).
+      * Wire:  [12B RTP hdr][ciphertext][16B tag][8B nonce]; the trailing 8 bytes
+      *        are the low 8 nonce bytes so the receiver can reconstruct it. */
+@@ -3010,10 +3000,11 @@
+ 
+     uint8_t nonce[12];
+     memset(nonce, 0, 12);
+-    /* seqnum at offset 4 in native (little-endian) byte order, matching owntone
+-     * (memcpy(nonce+4, &seqnum, 2)). The same bytes are appended to the wire. */
+-    uint16_t seq16 = (uint16_t)p->seq_number;
+-    memcpy(nonce + 4, &seq16, 2);
++    /* Independent little-endian counter survives 16-bit RTP wrap. */
++    if (!probe_audio_nonce(&p->audio_nonce_counter, nonce)) {
++        free(encoded);
++        return AP2_SEND_FATAL;
++    }
+ 
+     int pkt_size = 12 + enc_size + AP2_CHACHA_TAG_SIZE + 8;
+     uint8_t *pkt = malloc(pkt_size);
+diff --git a/src/alac_ext.cpp b/src/alac_ext.cpp
+--- a/src/alac_ext.cpp
++++ b/src/alac_ext.cpp
+@@ -43,13 +43,15 @@
+     return !codec->encoder->Encode(codec->inputFormat, codec->outputFormat, in, *out, size);
+ }
+ 
+-extern "C" bool pcm_to_alac_raw(uint8_t *sample, int frames, uint8_t **out, int *size, int bsize) {
++bool pcm_to_alac_raw(uint8_t *sample, int frames, uint8_t **out, int *size, int bsize) {
++    if (!sample || !out || !size || frames <= 0 || frames > bsize || bsize > 352) return false;
+     /* Raw ALAC framing for 16-bit stereo - copied from original */
+     uint8_t *p;
+     uint32_t *in = (uint32_t *)sample;
+     int count;
+-    frames = std::min(frames, bsize);
++    frames = (frames < bsize ? frames : bsize);
+     *out = (uint8_t *)malloc(bsize * 4 + 16);
++    if (!*out) return false;
+     p = *out;
+     *p++ = (1 << 5);
+     *p++ = 0;

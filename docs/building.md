@@ -8,6 +8,7 @@
 | Visual Studio C++ Build Tools 与 Windows SDK | Rust MSVC 链接及 Windows 开发环境 |
 | MSYS2 UCRT64 | 原生 C/C++ 后端，需 GCC/G++、CMake、Ninja、OpenSSL、winpthreads 和 binutils |
 | Python 3 | 固定上游源码的编译视图生成 |
+| Git | 获取固定子模块、校验提交并应用上下文补丁；构建期间也需要可执行文件 |
 | Node.js 20.19+ 或 22.12+，以及 pnpm | Vue/Vite 前端构建 |
 | Microsoft Edge WebView2 Runtime | 运行桌面界面 |
 
@@ -28,16 +29,23 @@ git -C upstream/airplay-cli/libraop submodule update --init -- crosstools
 
 ### 上游适配变更
 
-`airplay-backend/upstream-manifest.json` 核对生成脚本读取的 15 个上游文件，SHA-256 按 UTF-8 文本及 LF 规范化，允许 Git 的 CRLF 检出差异。60 个替换位置使用稳定的 `R001` 等编号，每次调用的匹配次数必须符合清单；循环中合法的零匹配也显式记录。CMake 监视清单、校验模块、适配文件和清单中的上游输入，变化后重新配置并校验。
+构建使用“固定子模块版本 → 临时源码副本 → 按顺序应用补丁 → 选择编译范围”的流程。源码差异在 [`airplay-backend/patches/`](../airplay-backend/patches/README.md) 中维护，Windows 接口在 `windows_port.c/.h`、`windows_io.inc`、`windows_audio.inc` 中维护；Python 只校验、应用补丁、提取函数/常量和组合本地 C 文件，不通过字符串或正则替换修改源码。
 
-更新上游或适配规则时，先审查原函数和每个替换的语义，再更新相应输入哈希/匹配次数；新增替换分配新编号，不重排已有编号。运行生成脚本，审查生成源码差异后更新 `outputs` 快照哈希。不得仅为了通过构建批量接受新哈希或自动重写匹配次数。清单是维护断言，不是上游可信度认证。
+`upstream-manifest.json` 保存三层子模块提交、15 个输入文件的规范化 SHA-256、补丁顺序及哈希、15 个输出快照。输入和补丁按 UTF-8/LF 规范化，允许 CRLF 检出。`git apply --check` 及实际应用均须成功，不启用忽略空白、三方合并或部分接受；补丁失败即丢弃临时副本，已有生成输出保留。子模块源码和 Git 索引不受修改。
+
+维护时按以下顺序操作：
+
+1. 先生成并保留旧输出用于对比。平台实现修改放在本地 Windows 兼容文件；上游函数的修改放在对应补丁；仅增减编译范围时修改 `select_upstream.py`。
+2. 在忽略的临时副本中编辑源码并重新生成有上下文的 unified diff，保持 `a/src/...`、`b/src/...` 等相对路径，勿直接在子模块或生成目录长期维护修改。每个补丁以之前补丁已应用的状态为基准，清单中的顺序即应用顺序。
+3. 升级依赖时单独更新子模块固定提交，逐项核对原函数、补丁上下文和本地结构声明；更新 `revisions`、相关 `inputs`、补丁哈希及 `THIRD_PARTY.md`。补丁能应用不等于上游 API/协议语义兼容。
+4. 运行生成脚本，审查新旧输出差异，再更新受影响的 `outputs` 快照。运行提取测试、原生构建和协议模拟。不得为通过构建自动接受新哈希。清单是维护断言，不是上游可信度认证。
 
 ```powershell
 python airplay-backend/select_upstream.py upstream/airplay-cli test/.artifacts/upstream-review
 python test/backend/test_upstream.py
 ```
 
-生成目录的 `selection-report.json` 提供输入、实际匹配次数和输出哈希，供审查对照。同步更新子模块固定提交及 `THIRD_PARTY.md`，重新构建后端并运行协议模拟；具体命令见 [测试说明](../test/README.md)。
+生成目录的 `selection-report.json` 提供提交、输入哈希、按应用顺序排列的补丁及输出哈希，供审查对照。CMake 监视清单、补丁、本地适配、上游输入和子模块 HEAD，变化后重新配置；构建中使用 CMake 找到的 Git。具体测试命令见 [测试说明](../test/README.md)。
 
 保留根目录 `test/`：生产模块通过挂接复用其中的测试及诊断检查实现，完整源码检出已包含这些文件。测试源码和合成样例随 Git 提交，测试生成内容位于忽略的 `test/.artifacts/`；运行方式见 [测试说明](../test/README.md)。
 
@@ -76,9 +84,9 @@ python test/backend/test_upstream.py
 
 `-SkipBackend` 要求 `dist/` 中已有可用的后端及 DLL。
 
-原生协议适配在 `airplay-backend/select_upstream.py` 中维护，修改后需要重新构建后端；不要直接编辑 `build/airplay-backend/generated/` 或固定上游源码。控制会话与音频流分步建立，音频 `SETUP` 即使发生在控制会话已接受之后，也使用 8 秒启动预算。普通控制请求仍使用 2 秒预算；预算是响应等待上限，不是固定播放延迟。
+原生协议修改在 `airplay-backend/patches/` 和本地 C 适配中维护，`select_upstream.py` 只选择与组合编译内容。修改后需要重新构建后端；不要直接编辑 `build/airplay-backend/generated/` 或固定上游源码。控制会话与音频流分步建立，音频 `SETUP` 即使发生在控制会话已接受之后，也使用 8 秒启动预算。普通控制请求仍使用 2 秒预算；预算是响应等待上限，不是固定播放延迟。
 
-Maintain native protocol adaptations in `airplay-backend/select_upstream.py` and rebuild the backend after changes. Do not edit generated files or pinned upstream sources. Audio `SETUP` retains an 8-second startup budget even after control session acceptance; regular control requests retain their 2-second budget. These are response deadlines, not fixed playback delays.
+Maintain native changes in `airplay-backend/patches/` and local C adapters; Python selects and assembles the patched build. Rebuild after changes. Do not edit generated files or pinned upstream sources. Audio `SETUP` retains an 8-second startup budget even after control session acceptance; regular control requests retain their 2-second budget. These are response deadlines, not fixed playback delays.
 
 ## 发行目录
 

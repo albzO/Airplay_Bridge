@@ -7,7 +7,7 @@
 - `airplay-frontend/` 管理界面和桌面生命周期；`airplay-core/` 包含共用音频库与诊断 CLI；`airplay-backend/` 管理原生协议适配。
 - 测试源码统一放在根目录 `test/`，按 `frontend/`、`backend/`、`core/` 分组并随 Git 提交。生产目录仅保留模块挂接及诊断入口，生成内容放在忽略的 `test/.artifacts/`。
 - `upstream/` 是固定版本第三方子模块。修改适配优先在 `airplay-backend/` 完成，不直接编辑 `build/` 中的生成文件。更新依赖提交应单独提交，并更新第三方记录；不要把第三方源码作为普通文件提交到本仓库。
-- 上游输入或替换规则变更须审查 `upstream-manifest.json` 的哈希与逐次匹配次数，保留替换编号，审查生成差异后更新输出快照；运行 `python test/backend/test_upstream.py`。步骤见 [上游适配变更](docs/building.md#上游适配变更)，不要自动接受新清单。
+- 上游源码修改维护为 `airplay-backend/patches/` 中有上下文的补丁，Windows 实现维护在本地 C 兼容层；Python 只校验、应用补丁和选择编译内容，不添加源码字符串替换。变更须审查 `upstream-manifest.json` 的固定提交、输入/补丁哈希及应用顺序，审查生成差异后更新输出快照；运行 `python test/backend/test_upstream.py`。步骤见 [上游适配变更](docs/building.md#上游适配变更)，不要自动接受新清单。
 - 保留 Rust 和 pnpm 锁文件。依赖升级与功能修改尽量分开。
 - 不提交设备清单、密码、录音、日志、构建产物或个人工具路径。
 - 沿用现有命名和排版，代码注释使用中英双语，中文在前、英文在后，在同一注释块内对应说明。关键入口说明输入来源、参数单位、状态条件、资源生命周期和设计原因；复杂流程先说明整体步骤，再补充局部原因，避免只写职责标签或逐行重复代码。

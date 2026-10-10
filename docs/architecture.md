@@ -60,9 +60,9 @@ GUI 配置与日志存放在 `%APPDATA%\AirPlay Hub`，CLI 诊断产物位于 `%
 
 ## 生成文件与第三方子模块
 
-`airplay-backend/select_upstream.py` 从固定版本子模块生成 Windows 编译视图，输出到 `build/airplay-backend/generated/`。修改生成规则或本地适配文件，不手改生成目录。第三方来源和版本见 [第三方记录](../THIRD_PARTY.md)。
+构建从固定版本子模块复制所需源码到临时目录，按清单顺序应用 `airplay-backend/patches/` 的上下文补丁，再由 `select_upstream.py` 选择函数/常量并组合本地 C 适配，输出到 `build/airplay-backend/generated/`。上游函数修改维护在补丁，Winsock/I/O 实现维护在本地兼容层，声明集中于 `probe_context.inc`；Python 不做源码字符串替换。子模块只读，不手改生成目录。第三方来源和版本见 [第三方记录](../THIRD_PARTY.md)。
 
-`upstream-manifest.json` 保存 15 个生成输入的规范化 SHA-256、60 个替换位置逐次调用的匹配次数及生成源码快照哈希。`upstream_guard.py` 在生成前检查输入，执行中检查匹配次数，结束时核对调用清单并输出 `selection-report.json`。生成快照由 `test/backend/test_upstream.py` 检查；生产构建不自动接受新的清单。升级步骤见 [构建指南](building.md#上游适配变更)。
+`upstream-manifest.json` 保存三层子模块提交、15 个生成输入的规范化 SHA-256、补丁顺序/哈希和输出快照。`upstream_guard.py` 验证提交及内容，对临时副本逐组执行 `git apply --check` 和实际应用，失败即丢弃副本；报告保存实际使用的清单与输出哈希。生成快照由 `test/backend/test_upstream.py` 检查；生产构建不自动接受新清单。仍只选择所需 realtime 协议代码，排除 buffered TCP、MRP 和共享 PTP daemon；这不是上游完整 CLI 的 Windows 移植。升级步骤见 [构建指南](building.md#上游适配变更)。
 
 ## 当前已知问题
 

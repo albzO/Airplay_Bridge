@@ -16,6 +16,7 @@
 | 6 | `airplay-core/src/live.rs` | 采集、转换、管道、协议日志和最终报告怎样连接？ |
 | 7 | `capture.rs`、`convert.rs`、`drift.rs` | 音频格式、资源释放、重采样状态和时钟校正为什么这样实现？ |
 | 8 | 桌面的 `auth.rs`、`settings.rs`、`window.rs`，核心的 `privacy.rs` | 密码、配置、退出和日志的边界在哪里？ |
+| 9 | `airplay-backend/patches/README.md`、`upstream_guard.py`、`select_upstream.py` | 固定源码怎样校验、在临时副本应用补丁并选择编译？平台实现与协议修改分别在哪里？ |
 
 ## 从点击播放到实际串流
 
@@ -95,6 +96,8 @@
 | 修改来源预览 | `source.rs`、桌面 `ensure_source`、页面 `source-level` 监听 | 端点过滤、静音就绪、取消、线程复用 |
 | 修改采样或水位控制 | `capture.rs`、`convert.rs`、`drift.rs`、`live/pipeline.rs` | 帧与采样区别、包边界、尾帧、缓冲积压及实机听感 |
 | 修改日志 | `privacy.rs` 和各落盘入口 | 保留内部控制原值，只展示/保存脱敏副本 |
+| 修改原生协议 | `airplay-backend/patches/`、本地入口 `.inc` | 补丁上下文与顺序、固定提交、输入/补丁哈希、生成差异及接收端模拟 |
+| 修改 Windows 兼容 | `windows_port.c/.h`、`windows_io.inc`、`windows_audio.inc`、`probe_context.inc` | socket 宽度、错误来源、超时与关闭；不要把源码替换放回 Python |
 
 `protocol.ts` 接收 `unknown`，验证有限数值、整数计数、左右两个声道、设置范围和事件所需字段。报告可保留扩展 JSON，页面消费的字段继续检查；未知事件忽略，已知事件格式错误会显示字段路径，避免打印输入内容。此处负责格式，不替代 Rust 的设备和权限校验。
 
