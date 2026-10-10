@@ -462,9 +462,7 @@ pub struct CaptureProgress {
     pub repaired_gaps: u64,
     pub repaired_gap_frames: u64,
 }
-#[cfg(test)]
-#[path = "../../test/core/unit/capture_gap_recovery_tests.rs"]
-mod gap_recovery_tests;
+
 pub fn live_selected_traced(
     root: &Path,
     seconds: u64,
@@ -895,5 +893,8 @@ pub fn record(root: &Path, seconds: u64, endpoint: Option<&str>) -> Result<PathB
 }
 
 #[cfg(test)]
-#[path = "../../test/core/unit/capture_loopback_checks.rs"]
+#[path = "../../test/core/unit/capture/gap_recovery.rs"]
+mod gap_recovery_tests;
+#[cfg(test)]
+#[path = "../../test/core/unit/capture/loopback.rs"]
 mod loopback_checks;

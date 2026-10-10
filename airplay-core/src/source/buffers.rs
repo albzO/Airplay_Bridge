@@ -69,5 +69,5 @@ pub(super) fn recycle(tx: &mpsc::SyncSender<Vec<f32>>, mut buffer: Vec<f32>) {
 }
 
 #[cfg(test)]
-#[path = "../../../test/core/unit/source_buffers.rs"]
+#[path = "../../../test/core/unit/source/buffers.rs"]
 mod tests;

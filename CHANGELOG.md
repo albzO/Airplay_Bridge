@@ -2,6 +2,8 @@
 
 ## 未发布 / Unreleased
 
+- 复查仓库结构，删除页面未使用绑定及后端定位未用参数，启用前端未使用检查；按模块归位核心测试并统一尾部挂接，修正熄屏说明及文档导航，清理旧迁移生成残留。
+  Remove unused bindings/arguments, enforce frontend unused checks, organize core tests, and refresh repository documentation while retaining active tools and evidence.
 - 增加 Source 复制/入队 Release 基线及每次订阅独立的有界 Vec 回收池，最多保留 32 × 64 KiB 空闲存储；保持完整包、样本位值和帧顺序，补充失败/断开/变长及变采样率回归，记录会话状态与锁边界。
   Measure Source copy/enqueue costs and reuse bounded per-subscription buffers while preserving packet contents and order; cover cleanup and variable packets/rates, and document session state and lock boundaries.
 - 保持唤醒同时请求系统和显示器，避免自动熄屏触发采集异常；补充失败撤销、句柄释放及设置回归。默认保存终止性时间线故障的包/时钟数值，沿用日志上限，保留时间戳校验。

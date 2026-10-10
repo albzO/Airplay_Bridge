@@ -131,10 +131,6 @@ impl fmt::Display for LoopbackStalled {
 }
 impl std::error::Error for LoopbackStalled {}
 
-#[cfg(test)]
-#[path = "../../../test/core/unit/capture/health.rs"]
-mod tests;
-
 // 原始包已复制/检查后才能释放，再查询端点状态；任何查询失败都不能单独判定故障。
 // Inspect/copy the raw packet before releasing it, then query controls; query failures alone are not faults.
 pub(super) fn check_loopback_health(
@@ -167,3 +163,7 @@ pub(super) fn check_loopback_health(
 pub(super) fn buffer_frames(client: &windows::Win32::Media::Audio::IAudioClient) -> Option<u32> {
     unsafe { client.GetBufferSize().ok() }
 }
+
+#[cfg(test)]
+#[path = "../../../test/core/unit/capture/health.rs"]
+mod tests;

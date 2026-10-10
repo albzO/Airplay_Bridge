@@ -5,4 +5,7 @@
 .pnpm-store/
 build/
 upstream/
+releases/
+test/.artifacts/
+airplay-frontend/src-tauri/gen/
 **/*lock*

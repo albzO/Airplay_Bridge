@@ -51,7 +51,7 @@ git -C upstream/airplay-cli/libraop submodule update --init -- crosstools
 
 选择音频来源、刷新并选择设备，点击开始串流。需要密码时在底部音频来源区上方的密码浮层中输入。立体声对需先在 Apple 家庭 App 中组成。
 
-底部固定音频来源与串流操作；右上角齿轮打开设置。默认关闭窗口收起到托盘，托盘右键“退出”关闭应用。保持系统唤醒默认开启，允许屏幕熄灭。
+底部固定音频来源与串流操作；右上角齿轮打开设置。默认关闭窗口收起到托盘，托盘右键“退出”关闭应用。保持唤醒默认开启，在应用运行期间同时阻止自动睡眠和自动熄屏；关闭开关或退出应用后释放请求。
 
 构建入口位于 `scripts/`，后端、依赖获取和自定义工具路径见 [构建指南](docs/building.md)。
 
@@ -75,19 +75,20 @@ GUI 直接链接 `airplay-core/` 中的 Rust 库，协议后端为独立的 `air
 
 ```text
 ├── airplay-frontend/  Vue 界面与 Tauri 桌面应用
-├── airplay-core/       共用 Rust 音频库及诊断 CLI
-├── airplay-backend/  C/C++ AirPlay 后端与 Windows 适配
-├── upstream/        第三方子模块（仅提交地址与固定版本引用）
-├── scripts/         构建脚本
-├── docs/            使用、构建、架构与历史记录
-├── .github/         问题与 PR 模板
-├── CONTRIBUTING.md  开发与贡献约定
-├── LICENSE          Apache-2.0 完整许可文本
-├── NOTICE           项目版权及第三方归属说明
-└── THIRD_PARTY.md   第三方来源和许可证记录
+├── airplay-core/      共用 Rust 音频库及诊断 CLI
+├── airplay-backend/   C/C++ AirPlay 后端与 Windows 适配
+├── test/             按 frontend/backend/core 分类的测试源码和合成素材
+├── upstream/         第三方子模块（仅提交地址与固定版本引用）
+├── scripts/          构建与打包脚本
+├── docs/             使用、构建、架构与历史记录
+├── .github/          问题与 PR 模板
+├── CONTRIBUTING.md   开发与贡献约定
+├── LICENSE           Apache-2.0 完整许可文本
+├── NOTICE            项目版权及第三方归属说明
+└── THIRD_PARTY.md    第三方来源和许可证记录
 ```
 
-`build/`、`dist/`、`target/`、`node_modules/` 和 `.local/` 是本地生成或个人资料目录，不提交 Git。旧环境练习和备份保存在 `.local/`。
+`build/`、`dist/`、`releases/`、`target/`、`node_modules/`、`test/.artifacts/` 和 `.local/` 是本地生成或个人资料目录，不提交 Git。旧环境练习和备份保存在 `.local/`；不能把其中的配置备份、工具或发行包都当成临时缓存删除。仓库维护范围见[结构复查](docs/repository-review.md)。
 
 第三方源码由原作者仓库提供，本仓库通过 `.gitmodules` 和固定提交引用依赖。首次获取所需子模块的命令见 [构建指南](docs/building.md)。GitHub 自动生成的源码 ZIP 不包含子模块内容。
 

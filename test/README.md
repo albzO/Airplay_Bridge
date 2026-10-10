@@ -4,7 +4,9 @@
 
 Test sources are committed under root `test/`. Production modules retain attachment/diagnostic entry points; existing private-module access and ignored hardware checks are preserved.
 
-Source 缓冲池阶段：核心 97 通过 / 9 默认忽略（7 项设备/本机环境检查及 2 项显式基线）、桌面 9、前端脚本 23 通过。新增 `core/unit/source_buffers.rs` 的位值/所有权/扩容和保留上限回归，`source.rs` 的非法/超预算/大包及跨线程变长包/采样率回归；原失败、停止、重连清理测试继续通过。`source_baseline.rs` 使用真实 send_audio 路径，显式 Release 执行；产物忽略、默认覆盖固定文件且每份小于 64 KiB。方法、命令和前后结果见 [Source 性能记录](../docs/source-performance.md)。本阶段没有改变前端状态机或重跑 DOM/设备播放。
+结构整理后，核心子模块测试归入 `core/unit/capture/`、`live/`、`source/`；后端定位测试为 `core/unit/backend.rs`。原模块名、Cargo 过滤器和默认忽略规则不变，测试挂接统一位于生产模块尾部。前端脚本直接观察生产会话模块的内部编号，不依赖 App 模板未使用的绑定。完整改动与清理范围见[仓库复查](../docs/repository-review.md)。
+
+Source 缓冲池阶段：核心 97 通过 / 9 默认忽略（7 项设备/本机环境检查及 2 项显式基线）、桌面 9、前端脚本 23 通过。新增 `core/unit/source/buffers.rs` 的位值/所有权/扩容和保留上限回归，`source.rs` 的非法/超预算/大包及跨线程变长包/采样率回归；原失败、停止、重连清理测试继续通过。`source/baseline.rs` 使用真实 send_audio 路径，显式 Release 执行；产物忽略、默认覆盖固定文件且每份小于 64 KiB。方法、命令和前后结果见 [Source 性能记录](../docs/source-performance.md)。本阶段没有改变前端状态机或重跑 DOM/设备播放。
 
 自动熄屏缓解验证：核心 93 通过 / 8 默认忽略、桌面 9 通过、前端脚本 23 通过、DOM 28 通过。`frontend/desktop/awake.rs` 验证系统/显示器两项请求顺序、失败撤销与错误保留，并实际创建请求、检查重复开关及关闭/析构后的 Windows 句柄；没有等待真实显示器超时。核心检查未启用逐包诊断时的故障字段及倒退数值，DOM 检查开关说明、失败类别、回退与重试。证据与实机复测见[排查记录](../docs/display-off-capture.md)。
 

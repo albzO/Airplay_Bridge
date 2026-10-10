@@ -38,6 +38,8 @@
 
 Rust 单元测试通过原模块的 `#[cfg(test)]` 和 `#[path]` 挂接，保留访问私有实现的能力，原 Cargo 测试入口不变。桌面窗口/单实例模拟检查及后端 nonce 自检实现分别位于 `test/frontend/desktop/`、`test/backend/native/`，原入口仅负责调用。测试目录需随完整源码检出；测试源码不会作为独立文件加入安装包。
 
+核心子模块测试按 `test/core/unit/capture/`、`live/`、`source/` 归组；测试挂接位于生产模块尾部。目录用途、未使用代码清理依据与本地生成目录边界见[仓库结构复查](repository-review.md)。
+
 ## 数据路径
 
 ```text

@@ -84,7 +84,6 @@ const {
   connected,
   phase,
   error,
-  session,
   pending,
   password,
   sending,

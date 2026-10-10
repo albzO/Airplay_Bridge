@@ -70,14 +70,21 @@ function page(t, invokeCommand) {
   };
   const sessionExports = {};
   new Function('exports', ...Object.keys(deps), sessionJs)(sessionExports, ...Object.values(deps));
-  deps.useStreamSession = sessionExports.useStreamSession;
+  // 测试直接观察生产会话模块，不要求 App 绑定模板未使用的内部编号。
+  // Observe the production session module without requiring an unused App binding for its internal id.
+  let streamState;
+  deps.useStreamSession = (options) => {
+    streamState = sessionExports.useStreamSession(options);
+    return streamState;
+  };
   const names = Object.keys(deps);
   const create = new Function(
     ...names,
     outputText +
-      '\nreturn { start, stop, submit, event, session, busy, playing, stopping, connected, pending, password, sending, retry, retrySending, phase, error, settings, inputs, persist, selectSource, settingsSaving };',
+      '\nreturn { start, stop, submit, event, busy, playing, stopping, connected, pending, password, sending, retry, retrySending, phase, error, settings, inputs, persist, selectSource, settingsSaving };',
   );
   const state = scope.run(() => create(...names.map((name) => deps[name])));
+  state.session = streamState.session;
   state.unmount = () => {
     unmounts.forEach((callback) => callback());
     scope.stop();

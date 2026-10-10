@@ -20,7 +20,7 @@
 
 ## 测量方法
 
-入口为 `test/core/unit/source_baseline.rs::synthetic_source_performance_baseline`，显式 Release 执行，默认忽略。每种采样率 1 轮预热、3 轮测量，每轮 5000 个 10 ms 双声道包，即 50 秒音频量；不按现实时间等待。每 8 包确认消费完成以限制积压，消费者逐样本核对位值、包长度、采样率及合成进度标记。
+入口为 `test/core/unit/source/baseline.rs::synthetic_source_performance_baseline`，显式 Release 执行，默认忽略。每种采样率 1 轮预热、3 轮测量，每轮 5000 个 10 ms 双声道包，即 50 秒音频量；不按现实时间等待。每 8 包确认消费完成以限制积压，消费者逐样本核对位值、包长度、采样率及合成进度标记。
 
 实际调用生产 send_audio，计时包含订阅锁、复制、时长预算及入队。消费者运行在另一个线程，wall 包含确认等待与内容验证。没有 WASAPI、Source 电平/健康检查、重采样、协议、网络、GUI 或磁盘日志；不是整个采集回调耗时、CPU 使用率或实际播放延迟。
 

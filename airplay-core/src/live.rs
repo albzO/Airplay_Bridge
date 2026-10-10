@@ -244,7 +244,7 @@ fn run_targets(
     let mut backend = Backend::spawn(BackendOptions {
         executable: gui
             .as_ref()
-            .map_or_else(|| crate::backend::executable(root), |g| g.backend.clone()),
+            .map_or_else(crate::backend::executable, |g| g.backend.clone()),
         gui: gui.as_ref(),
         host: &host,
         port: device.port,

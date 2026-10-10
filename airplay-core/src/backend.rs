@@ -11,7 +11,7 @@ use std::{
 
 /// 运行程序与 CLI 的用户数据分开存放。
 /// Runtime files are separate from per-user CLI data.
-pub fn executable(_root: &Path) -> PathBuf {
+pub fn executable() -> PathBuf {
     let directory = std::env::current_exe()
         .ok()
         .and_then(|exe| exe.parent().map(Path::to_path_buf))
@@ -130,7 +130,7 @@ pub fn test(
     if let Some(path) = pcm_file {
         println!("回放已转换的录音：{}；这次是录音回放测试。", path.display());
     }
-    let mut command = Command::new(executable(root));
+    let mut command = Command::new(executable());
     command.args([
         "--host",
         &host,
@@ -355,5 +355,5 @@ fn record_marker(markers: &mut Vec<String>, line: &str) {
 }
 
 #[cfg(test)]
-#[path = "../../test/core/unit/backend_executable_tests.rs"]
+#[path = "../../test/core/unit/backend.rs"]
 mod executable_tests;

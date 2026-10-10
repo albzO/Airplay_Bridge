@@ -156,4 +156,4 @@ pnpm --dir airplay-frontend format:check
 
 ## Source 缓冲与状态阅读入口
 
-`source.rs/Subscription::send_audio` 在时长预算接受后调用 `source/buffers.rs/Pool::copy`，仍复制完整输入。`Source::consume` 在 sink 借用结束后归还当前 Vec，解除订阅释放池和剩余块。先读 [Source 测量与限制](source-performance.md)，再看 `test/core/unit/source_buffers.rs` 和 `source.rs` 的跨线程回归；新建/复用/扩容计数不等于全进程分配次数。多个会话布尔值和各层锁的语义见[状态说明](session-state.md)，本轮没有改变生产状态机。
+`source.rs/Subscription::send_audio` 在时长预算接受后调用 `source/buffers.rs/Pool::copy`，仍复制完整输入。`Source::consume` 在 sink 借用结束后归还当前 Vec，解除订阅释放池和剩余块。先读 [Source 测量与限制](source-performance.md)，再看 `test/core/unit/source/buffers.rs` 和 `source.rs` 的跨线程回归；新建/复用/扩容计数不等于全进程分配次数。多个会话布尔值和各层锁的语义见[状态说明](session-state.md)，本轮没有改变生产状态机。

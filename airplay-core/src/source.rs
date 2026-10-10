@@ -77,12 +77,7 @@ impl Warmup {
             && self.packets >= 3
     }
 }
-#[cfg(test)]
-#[path = "../../test/core/unit/source_baseline.rs"]
-mod baseline;
-#[cfg(test)]
-#[path = "../../test/core/unit/source.rs"]
-mod tests;
+
 struct Subscription {
     tx: AudioSender<Event>,
     buffers: buffers::Pool,
@@ -491,3 +486,10 @@ impl Source {
         )
     }
 }
+
+#[cfg(test)]
+#[path = "../../test/core/unit/source/baseline.rs"]
+mod baseline;
+#[cfg(test)]
+#[path = "../../test/core/unit/source.rs"]
+mod tests;
