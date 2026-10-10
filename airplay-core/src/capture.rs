@@ -11,10 +11,12 @@
 //! including error paths, or the device buffer remains occupied.
 mod decode;
 mod health;
+mod metrics;
 mod timeline;
 use decode::{decode_stereo, raw_packet_summary, sample};
 pub(crate) use health::LoopbackStalled;
 use health::{LoopbackHealth, PlaybackMonitor};
+use metrics::{DiagnosticClock, PacketMetrics};
 use serde::{Deserialize, Serialize};
 use std::{
     error::Error,
@@ -564,7 +566,7 @@ pub fn live_selected_diagnosed(
                 "endpoint_buffer_frames":unsafe {client.GetBufferSize().ok()}}),
         );
     }
-    let mut previous_packet: Option<(Instant, u64, u64)> = None;
+    let mut diagnostic_clock = DiagnosticClock::default();
     let diagnostics_active =
         || diagnostic_enabled.is_none_or(|flag| flag.load(std::sync::atomic::Ordering::Relaxed));
     let mut last_packet = Instant::now();
@@ -760,29 +762,22 @@ pub fn live_selected_diagnosed(
         packet.release()?;
         check_loopback_health(&mut monitor, &mut loopback_health, progress, raw_nonzero)?;
         let received = Instant::now();
-        let mut diagnostic_entry = diagnostic.as_ref().filter(|_|diagnostics_active()).map(|_| {
-            let mut hash = 0xcbf29ce484222325u64;
-            let mut peaks = [0f32;2];
-            for sample in &buffer {
-                hash ^= sample.to_bits() as u64;
-                hash = hash.wrapping_mul(0x100000001b3);
-            }
-            for frame in buffer.chunks_exact(2) {
-                for ch in 0..2 { if frame[ch].is_finite() { peaks[ch] = peaks[ch].max(frame[ch].abs()); } }
-            }
+        let trace_enabled = diagnostic.is_some() && diagnostics_active();
+        let packet_metrics = PacketMetrics::measure(&buffer, trace_enabled);
+        let mut diagnostic_entry = trace_enabled.then(|| {
+            let delta = diagnostic_clock.observe(received, device_position, qpc);
             let mut read_qpc = 0i64;
             unsafe { let _ = QueryPerformanceCounter(&mut read_qpc); }
             let entry = serde_json::json!({"kind":"packet","packet_index":packets,
                 "capture_elapsed_ms":started.elapsed().as_secs_f64()*1000.0,
                 "read_qpc_ticks":read_qpc,"device_position":device_position,"packet_qpc_100ns":qpc,
-                "read_interval_ms":previous_packet.map(|p|received.duration_since(p.0).as_secs_f64()*1000.0),
-                "device_delta_frames":previous_packet.map(|p|device_position as i128-p.1 as i128),
-                "timestamp_delta_ms":previous_packet.map(|p|(qpc as i128-p.2 as i128) as f64/10000.0),
+                "read_interval_ms":delta.read_interval_ms,
+                "device_delta_frames":delta.device_delta_frames,
+                "timestamp_delta_ms":delta.timestamp_delta_ms,
                 "available_frames":available,"used_frames":used,"skipped_frames":skip,
                 "prefix_silent_frames":prefix_silence,"flags":flags,"input_rate":format.rate,
-                "frames_before":frames,"peaks":peaks,"sample_fingerprint":format!("{hash:016x}"),
+                "frames_before":frames,"peaks":packet_metrics.peaks,"sample_fingerprint":packet_metrics.fingerprint.map(|hash|format!("{hash:016x}")),
                 "raw_packet":raw_summary,"mapping":mapping.map(|m|*m.lock().unwrap()).unwrap_or([0,if format.channels>1 {1}else{0}])});
-            previous_packet = Some((received, device_position, qpc));
             entry
         });
         if let Some(progress) = progress {
@@ -793,17 +788,8 @@ pub fn live_selected_diagnosed(
             p.packet_qpc_100ns = qpc;
             p.packet_frames = available;
             p.packet_flags = flags;
-            p.packet_peaks = [0.0; 2];
-            for frame in buffer.chunks_exact(2) {
-                if frame.iter().any(|s| s.is_finite() && s.abs() > 1e-6) {
-                    p.signal_frames += 1;
-                }
-                for ch in 0..2 {
-                    if frame[ch].is_finite() {
-                        p.packet_peaks[ch] = p.packet_peaks[ch].max(frame[ch].abs());
-                    }
-                }
-            }
+            p.packet_peaks = packet_metrics.peaks;
+            p.signal_frames += packet_metrics.signal_frames;
             if let Some(entry) = diagnostic_entry.as_mut() {
                 entry["windows_endpoint_peak"] = serde_json::json!(p.windows_endpoint_peak);
                 entry["windows_endpoint_peak_age_ms"] =
@@ -836,16 +822,9 @@ pub fn live_selected_diagnosed(
         if flags & AUDCLNT_BUFFERFLAGS_TIMESTAMP_ERROR.0 as u32 != 0 {
             timestamp_errors += 1;
         }
-        signal_frames += buffer
-            .chunks_exact(2)
-            .filter(|f| f.iter().any(|s| s.is_finite() && s.abs() > 1e-6))
-            .count() as u64;
-        for frame in buffer.chunks_exact(2) {
-            for ch in 0..2 {
-                if frame[ch].is_finite() {
-                    channel_peaks[ch] = channel_peaks[ch].max(frame[ch].abs());
-                }
-            }
+        signal_frames += packet_metrics.signal_frames;
+        for (total, packet) in channel_peaks.iter_mut().zip(packet_metrics.peaks) {
+            *total = total.max(packet);
         }
         let sink_started = Instant::now();
         let delivered = sink(&buffer, format.rate);

@@ -8,11 +8,13 @@ Test sources are committed under root `test/`. Production modules retain attachm
 
 `core/unit/capture/decode.rs` 的 8 项测试直接调用生产解码模块，用固定字节验证 PCM 8/16/24/32 位、24-in-32、float32 特殊值、默认/重复/多声道映射、帧裁剪与非法输入，检查跨包输出缓冲复用及完整原始包摘要。无需声卡或模拟接收端；不验证 WASAPI 驱动或实际播放。可单独运行 `cargo test --manifest-path airplay-core/Cargo.toml --locked --offline --lib capture::decode::`。
 
+`core/unit/capture/metrics.rs` 的 6 项测试调用纯统计/时序模块，覆盖电平与信号帧阈值、NaN/Infinity、固定指纹与负零/NaN 位差、可选指纹、空/不完整帧、首条及跨日志暂停的诊断间隔、有符号回退及 100 ns 单位换算。无需设备、不改写音频；运行过滤器为 `capture::metrics::`。Windows 时钟读取及实际驱动时序不在此纯逻辑测试范围内。
+
 | 目录 | 内容 |
 |---|---|
 | `frontend/` | JSON 协议、会话脚本、真实模板 DOM、模拟 UI、合成设备样例和桌面 Rust 测试 |
 | `backend/` | 本机模拟接收端、认证、密码管道、立体声、延迟 SETUP 和原生 nonce 检查 |
-| `core/unit/` | 采集解码/时间线/健康状态、转换、漂移、来源生命周期、串流管线与脱敏单元测试 |
+| `core/unit/` | 采集解码/统计/时间线/健康状态、转换、漂移、来源生命周期、串流管线与脱敏单元测试 |
 | `core/checks/` | 已采集 WAV 与转换 PCM 的独立校验脚本 |
 | `.artifacts/` | 截图、模拟 PCM 和检查输出；不提交 Git |
 

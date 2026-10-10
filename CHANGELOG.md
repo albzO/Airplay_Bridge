@@ -2,6 +2,8 @@
 
 ## 未发布 / Unreleased
 
+- 提取采集统计与诊断时序模块，预览、诊断及最终报告共用每包电平/信号结果；保留指纹、阈值和时序语义，新增 6 项无设备回归。
+  Extract capture metrics and diagnostic timing, share packet statistics, and preserve fingerprint/threshold/timing behavior with six device-free regressions.
 - 提取纯采集包解码与声道映射模块，复用输出缓冲并补充 PCM 位宽、帧裁剪、声道边界及浮点特殊值回归；保留 WASAPI 资源释放顺序。
   Extract pure capture decoding and channel mapping with reusable output and format/window regressions, preserving WASAPI buffer ownership.
 - 增加真实模板 DOM 自动测试，覆盖按钮禁用、来源选择、密码键盘重试、停止与旧会话隔离；Windows 使用无头 Edge，生成产物继续忽略，CI 暂缓。
