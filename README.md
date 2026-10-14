@@ -2,7 +2,7 @@
 
 Windows 上的 AirPlay 2 音频发送工具。通过桌面界面选择录音或播放设备，将音频发送到 HomePod 等 AirPlay 接收端。
 
-当前维护版本为 **1.0.2**，包含暂停播放误触发重建及设备接管超时的修复，相关串流行为仍需实机回归确认。主要验证 HomePod mini 单设备及立体声对，其他接收端的兼容性尚未完整验证。版本说明见 [更新日志](CHANGELOG.md)，项目授权状态见 [许可证说明](docs/licensing.md)。
+当前维护版本为 **1.0.3**，包含通知线程隔离、认证策略后台保存、可取消启动和统一停止期限；保留暂停播放误触发重建等既有修复，相关串流行为仍需实机回归确认。主要验证 HomePod mini 单设备及立体声对，其他接收端的兼容性尚未完整验证。版本说明见 [更新日志](CHANGELOG.md)，项目授权状态见 [许可证说明](docs/licensing.md)。
 
 ## AI 辅助开发声明
 
@@ -80,7 +80,7 @@ GUI 直接链接 `airplay-core/` 中的 Rust 库，协议后端为独立的 `air
 ├── test/             按 frontend/backend/core 分类的测试源码和合成素材
 ├── upstream/         第三方子模块（仅提交地址与固定版本引用）
 ├── scripts/          构建与打包脚本
-├── docs/             使用、构建、架构与历史记录
+├── docs/             当前版本的使用、构建、架构与排查文档
 ├── .github/          问题与 PR 模板
 ├── CONTRIBUTING.md   开发与贡献约定
 ├── LICENSE           Apache-2.0 完整许可文本
@@ -88,18 +88,18 @@ GUI 直接链接 `airplay-core/` 中的 Rust 库，协议后端为独立的 `air
 └── THIRD_PARTY.md    第三方来源和许可证记录
 ```
 
-`build/`、`dist/`、`releases/`、`target/`、`node_modules/`、`test/.artifacts/` 和 `.local/` 是本地生成或个人资料目录，不提交 Git。旧环境练习和备份保存在 `.local/`；不能把其中的配置备份、工具或发行包都当成临时缓存删除。仓库维护范围见[结构复查](docs/repository-review.md)。
+`build/`、`dist/`、`releases/`、`target/`、`node_modules/`、`test/.artifacts/` 和 `.local/` 是本地生成或个人资料目录，不提交 Git。旧环境练习和备份保存在 `.local/`；不能把其中的配置备份、工具或发行包都当成临时缓存删除。目录用途见[架构](docs/architecture.md)。
 
 第三方源码由原作者仓库提供，本仓库通过 `.gitmodules` 和固定提交引用依赖。首次获取所需子模块的命令见 [构建指南](docs/building.md)。GitHub 自动生成的源码 ZIP 不包含子模块内容。
 
 ## 文档
 
-- [1.0 更新日志](CHANGELOG.md)
+- [更新日志](CHANGELOG.md)
 - [构建指南](docs/building.md)
 - [界面与设置](docs/ui.md)
 - [CLI 诊断](docs/cli.md)
 - [架构](docs/architecture.md)
-- [文档导航与历史记录](docs/README.md)
+- [当前文档导航](docs/README.md)
 - [贡献指南](CONTRIBUTING.md)
 - [第三方依赖与来源](THIRD_PARTY.md)
 - [许可证状态](docs/licensing.md)
@@ -110,9 +110,9 @@ GUI 配置与日志位于 `%APPDATA%\AirPlay Hub`；CLI 设备清单、日志和
 
 日志默认隐藏设备名称、IP、用户目录、公钥、MAC 和 UUID，并过滤密码、令牌及凭据字段，保留格式、时序与统计数据。设备使用本次清单内的编号关联，不使用永久 UUID。历史日志不会自动改写，分享旧日志前仍需检查。额外逐包诊断不保存原始音频；四段滚动限制只适用于该诊断文件，不适用于所有日志。
 
-维护分支的安全审查、历史数据边界和验证记录见 [维护审查记录](docs/security-review-20261008.md)。
+日志文件与展示历史的保留范围见[日志限制](docs/log-retention.md)。
 
-本轮代码审查后的会话、日志、协议回绕、上游校验与队列维护见 [维护进度](docs/maintenance-progress.md)；合成测量方法见 [性能基线](docs/performance-baseline.md)。CI 暂缓。
+当前实现与资源边界见[架构](docs/architecture.md)，本版更改见[更新日志](CHANGELOG.md)，合成测量见[性能基线](docs/performance-baseline.md)。已完成的优化、审查过程保存在 Git 历史；CI 暂缓。
 
 ## 当前限制
 

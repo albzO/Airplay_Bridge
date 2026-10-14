@@ -6,22 +6,22 @@
 
 ## 建议阅读顺序
 
-| 顺序 | 文件 | 阅读时要解决的问题 |
-|---|---|---|
-| 1 | `airplay-frontend/src/types.ts` | 页面接收什么数据？哪些数值是帧、毫秒、Hz 或 ppm？ |
-| 2 | `airplay-frontend/src/protocol.ts` | 桌面 JSON 怎样从 `unknown` 变成可读取的数据？缺失或错误字段如何处理？ |
-| 3 | `airplay-frontend/src/useStreamSession.ts`、`useDiagnostics.ts`、`App.vue` | 会话控制怎样独立于设备视图？事件怎样改变页面状态？ |
-| 4 | 桌面 `main.rs`、`session.rs`、`stream_start.rs`、`configuration.rs` | 怎样预留会话、后台准备、取消与发布？配置如何互斥？ |
-| 5 | `airplay-core/src/source.rs` | 谁持有持续采集线程？预览与串流如何共用它？ |
-| 6 | `airplay-core/src/live.rs` | 采集、转换、管道、协议日志和最终报告怎样连接？ |
-| 7 | `capture.rs`、`convert.rs`、`drift.rs` | 音频格式、资源释放、重采样状态和时钟校正为什么这样实现？ |
-| 8 | 桌面的 `auth.rs`、`settings.rs`、`routing.rs`、`window.rs`，核心的 `privacy.rs` | 密码、配置、运行路由、退出和日志的边界在哪里？ |
-| 9 | `airplay-backend/patches/README.md`、`upstream_guard.py`、`select_upstream.py` | 固定源码怎样校验、在临时副本应用补丁并选择编译？平台实现与协议修改分别在哪里？ |
+| 顺序 | 文件                                                                            | 阅读时要解决的问题                                                             |
+| ---- | ------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| 1    | `airplay-frontend/src/types.ts`                                                 | 页面接收什么数据？哪些数值是帧、毫秒、Hz 或 ppm？                              |
+| 2    | `airplay-frontend/src/protocol.ts`                                              | 桌面 JSON 怎样从 `unknown` 变成可读取的数据？缺失或错误字段如何处理？          |
+| 3    | `airplay-frontend/src/useStreamSession.ts`、`useDiagnostics.ts`、`App.vue`      | 会话控制怎样独立于设备视图？事件怎样改变页面状态？                             |
+| 4    | 桌面 `main.rs`、`session.rs`、`stream_start.rs`、`configuration.rs`             | 怎样预留会话、后台准备、取消与发布？配置如何互斥？                             |
+| 5    | `airplay-core/src/source.rs`                                                    | 谁持有持续采集线程？预览与串流如何共用它？                                     |
+| 6    | `airplay-core/src/live.rs`                                                      | 采集、转换、管道、协议日志和最终报告怎样连接？                                 |
+| 7    | `capture.rs`、`convert.rs`、`drift.rs`                                          | 音频格式、资源释放、重采样状态和时钟校正为什么这样实现？                       |
+| 8    | 桌面的 `auth.rs`、`settings.rs`、`routing.rs`、`window.rs`，核心的 `privacy.rs` | 密码、配置、运行路由、退出和日志的边界在哪里？                                 |
+| 9    | `airplay-backend/patches/README.md`、`upstream_guard.py`、`select_upstream.py`  | 固定源码怎样校验、在临时副本应用补丁并选择编译？平台实现与协议修改分别在哪里？ |
 
 ## 从点击播放到实际串流
 
 1. `useStreamSession/start` 调用页面快照重置，设置 `busy`，发送 `start_stream`。设置中的 `latency` 是播放提前量，`buffer` 是后端预缓冲时长；两者单位都是 ms。`mapping` 是来源声道下标，从 0 开始。
-2. 桌面 `start_stream` 在短锁内预留会话编号并返回；后台检查设备名称、立体声关系、端点及声道，再保存偏好、创建密码服务。Preparing 使用 15 秒预算；慢步骤前后核对取消，超时保留占用，见[启动准备](stream-startup.md)。
+2. 桌面 `start_stream` 在短锁内预留会话编号并返回；后台检查设备名称、立体声关系、端点及声道，再保存偏好、创建密码服务。Preparing 使用 15 秒预算；慢步骤前后核对取消，超时保留占用，见[启动取消与提交](architecture.md#启动取消与设置提交)。
 3. 工作线程先发 `preparing_source`。`ensure_source` 复用同端点的健康采集线程；来源改变时先结束旧线程。新建 Source 先由本次准备持有，调用 `wait_ready` 后核对取消，再发布 Source/密码通道和 Active 阶段。连续采集至少稳定 500 ms、至少收到 3 包、最近一包不超过 250 ms 才算就绪；故障或长间隔会重置窗口，最长等待 8 秒。静音也可就绪。
 4. `live::run_gui` 启动原生后端进行协议连接。`PCM_READY` 表示握手完成，页面进入启动采集阶段；遥测到达后才置 `playing` 并显示串流中。
 5. `Source::consume` 挂接一个订阅者，交付交错 float32 立体声。`Converter` 跨音频包保存滤波器历史，转换为 44.1 kHz 的 i16。写管道线程将 PCM 发送给后端。
@@ -52,23 +52,23 @@
 
 `airplay-core/src/live.rs` 现在只编排会话。GUI / CLI 仍从 `live::run_gui`、`live::run`、`live::run_stereo` 进入，公开的 `GuiContext`、`GuiControl` 和 `GuiEmitter` 通过原位置导出。内部模块只对串流实现可见，二次开发不需要修改调用方的导入路径。
 
-| 文件 | 持有的状态与职责 | 修改时关注 |
-|---|---|---|
-| `live.rs` | 设备校验、连接参数、启动顺序、采集入口、收尾与最终报告 | 先认证再订阅；错误优先级；报告字段与脱敏 |
-| `live/control.rs` | GUI 会话控制、来源引用、CLI Ctrl+C 守卫 | GUI 停止不销毁持续 Source；CLI 处理器随守卫注销 |
-| `live/transport.rs` | 原生子进程、唯一 PCM 发送端、写线程、计数与单位常量 | 640 ms 时长预算（含写入中块）及 256 块硬上限；满时立即报错；缓冲回收；EOF 收尾 |
-| `live/protocol.rs` | stderr 读线程、就绪通知、QPC 播放计划、成员统计、首个故障 | 原文用于控制，脱敏副本用于展示/落盘；`PCM_READY` 只通知一次 |
-| `live/protocol_log.rs` | 协议控制台/文件输出、故障上下文 | 128 条非阻塞队列；丢日志不丢控制状态，日志错误单独报告 |
-| `live/report.rs` | 最终错误优先级、脱敏报告落盘及 GUI 快照 | 写盘失败仍发内存报告；`report_write_error` 不覆盖协议/采集/管道首因；没有更早故障才返回 `REPORT_WRITE_FAILED` |
-| `live/pipeline.rs` | 本次会话的重采样器、水位控制器、左右路由、遥测与管线诊断 | 滤波器跨包连续；帧/字节/ms 单位；遥测与控制更新时机 |
-| `audio_queue.rs` | 两级队列共用的时长策略、预留与 RAII 归还 | 每级各 640 ms；时长按帧数/采样率计算；不能当作实际延迟 |
-| `capture/timeline.rs` | 空闲静音、缺口修复与恢复重叠 | 纯时间线计划，不读取或释放 WASAPI；60 秒修复预算可确定性测试 |
-| `capture/decode.rs` | PCM/float32 解码、帧裁剪、声道映射与原始包摘要 | 借用原始字节、复用输出；完整包检查不受映射影响；格式验证及 WASAPI 释放仍在 `capture.rs` |
-| `capture/clock.rs`、`capture/health.rs` | Windows QPC、端点读取、健康检查和快照 | 原始字节检查在释放前，健康读取在释放后；查询失败不单独判故障 |
-| `capture/state.rs`、`capture/diagnostics.rs` | 观察/交付计数，诊断及最终报告 JSON | 首包断续口径保留；sink 成功才提交交付数；日志暂停不推进诊断时间差 |
-| `log_store.rs` | 日志文件上限、活动预留和目录回收 | 只删除识别的普通文件；规则见 [日志限制](log-retention.md) |
-| `capture/metrics.rs` | 每包电平、信号帧、可选指纹与诊断时间差 | 只读样本；统计结果共用；非有限值/阈值/位指纹规则；时钟由调用者提供 |
-| `live/diagnostics.rs` | 有界诊断队列、落盘线程、轮转与丢记录统计 | 容量不决定轮转策略；逐包日志保留 4 段，每段 8 MiB |
+| 文件                                         | 持有的状态与职责                                          | 修改时关注                                                                                                    |
+| -------------------------------------------- | --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `live.rs`                                    | 设备校验、连接参数、启动顺序、采集入口、收尾与最终报告    | 先认证再订阅；错误优先级；报告字段与脱敏                                                                      |
+| `live/control.rs`                            | GUI 会话控制、来源引用、CLI Ctrl+C 守卫                   | GUI 停止不销毁持续 Source；CLI 处理器随守卫注销                                                               |
+| `live/transport.rs`                          | 原生子进程、唯一 PCM 发送端、写线程、计数与单位常量       | 640 ms 时长预算（含写入中块）及 256 块硬上限；满时立即报错；缓冲回收；EOF 收尾                                |
+| `live/protocol.rs`                           | stderr 读线程、就绪通知、QPC 播放计划、成员统计、首个故障 | 原文用于控制，脱敏副本用于展示/落盘；`PCM_READY` 只通知一次                                                   |
+| `live/protocol_log.rs`                       | 协议控制台/文件输出、故障上下文                           | 128 条非阻塞队列；丢日志不丢控制状态，日志错误单独报告                                                        |
+| `live/report.rs`                             | 最终错误优先级、脱敏报告落盘及 GUI 快照                   | 写盘失败仍发内存报告；`report_write_error` 不覆盖协议/采集/管道首因；没有更早故障才返回 `REPORT_WRITE_FAILED` |
+| `live/pipeline.rs`                           | 本次会话的重采样器、水位控制器、左右路由、遥测与管线诊断  | 滤波器跨包连续；帧/字节/ms 单位；遥测与控制更新时机                                                           |
+| `audio_queue.rs`                             | 两级队列共用的时长策略、预留与 RAII 归还                  | 每级各 640 ms；时长按帧数/采样率计算；不能当作实际延迟                                                        |
+| `capture/timeline.rs`                        | 空闲静音、缺口修复与恢复重叠                              | 纯时间线计划，不读取或释放 WASAPI；60 秒修复预算可确定性测试                                                  |
+| `capture/decode.rs`                          | PCM/float32 解码、帧裁剪、声道映射与原始包摘要            | 借用原始字节、复用输出；完整包检查不受映射影响；格式验证及 WASAPI 释放仍在 `capture.rs`                       |
+| `capture/clock.rs`、`capture/health.rs`      | Windows QPC、端点读取、健康检查和快照                     | 原始字节检查在释放前，健康读取在释放后；查询失败不单独判故障                                                  |
+| `capture/state.rs`、`capture/diagnostics.rs` | 观察/交付计数，诊断及最终报告 JSON                        | 首包断续口径保留；sink 成功才提交交付数；日志暂停不推进诊断时间差                                             |
+| `log_store.rs`                               | 日志文件上限、活动预留和目录回收                          | 只删除识别的普通文件；规则见 [日志限制](log-retention.md)                                                     |
+| `capture/metrics.rs`                         | 每包电平、信号帧、可选指纹与诊断时间差                    | 只读样本；统计结果共用；非有限值/阈值/位指纹规则；时钟由调用者提供                                            |
+| `live/diagnostics.rs`                        | 有界诊断队列、落盘线程、轮转与丢记录统计                  | 容量不决定轮转策略；逐包日志保留 4 段，每段 8 MiB                                                             |
 
 阅读顺序是 `live.rs` 的启动 → `pipeline.rs/process` 的音频处理 → `live.rs` 的停止和报告。遇到具体问题再进入协议、发送或诊断模块；不必先通读所有线程实现。
 
@@ -76,7 +76,7 @@
 
 启动日志、漂移日志和管线诊断都通过有界队列交给独立日志线程，打开文件、脱敏、序列化和轮转也不在采集回调执行。漂移写盘错误不再传播为音频错误；CLI 摘要由日志线程输出，GUI 不重复写控制台。协议文件在启动时打开，读线程先解析原始状态和通知就绪，再向独立日志线程提交脱敏副本，文件/控制台写入不在读线程执行；GUI 原始控制事件保持独立投递。
 
-`diagnostics.rs` 的 `LogWorker<T>` 共用非阻塞入队、丢失计数和收尾机制；`DetailLog` 继续表示 JSON 诊断，协议日志使用专门记录类型。Source 日志收尾最多等待 250 ms；会话在回收后端及读写线程后，给协议及各诊断日志共用 250 ms 截止时间。完整串流报告增加 `protocol_log_status`，各日志状态包含 `dropped_records`、`pending_records`、`timed_out` 和 `error`；pending 是尚未完成处理记录的快照，不代表磁盘持久化保证。协议日志溢出/写入失败可能丢展示文本及故障上下文，原始控制状态继续处理。超时不会取消底层 I/O，工作线程可能继续驻留；若恢复则不再处理积压。首次停止请求建立共享 15 秒预算，涵盖后端、读写线程、诊断/报告和桌面密码管道收尾；应用退出另有进程级兜底。它不保证任意驱动或系统 I/O 在期限内退出，详情见[停止期限](stream-shutdown.md)。
+`diagnostics.rs` 的 `LogWorker<T>` 共用非阻塞入队、丢失计数和收尾机制；`DetailLog` 表示 JSON 诊断，协议日志使用专门记录类型。Source 日志最多等待 250 ms；会话各日志共用 250 ms 且受总停止期限约束。`protocol_log_status` 等状态保留 `dropped_records`、`pending_records`、`timed_out` 和 `error`；pending 不代表磁盘持久化保证。日志溢出可能丢展示文本，原始协议状态继续处理；超时不能取消底层 I/O。统一预算、通知/认证策略线程和超时占用见[停止错误与日志](architecture.md#停止错误与日志)。
 
 `test/core/unit/live/` 中的单元测试覆盖队列满/断开时的计数回滚、已入队 PCM 在 EOF 前排空、断管报错、不同音频包大小下的声道与重采样总时长，以及协议状态与日志脱敏。执行 `cargo test --manifest-path airplay-core/Cargo.toml --locked --offline --lib`；需要声卡或真实接收设备的测试仍单独忽略，编译和这些单元测试不能代替实机听感验证。
 
@@ -96,13 +96,13 @@
 
 日志视图从 `LogView.vue` 阅读：开关先发 `update:*` 更新页面设置，再发送保存事件，配置下次连接；当前会话的详细日志/诊断状态由独立快照决定。打开目录事件交给 `App/call('open_logs')`，“清空显示”事件只将 `diagnosticLogs` 置空；日志、路径及报告保留，后续诊断继续接收。完整报告在 `report.device` 存在时显示可展开 JSON。组件不拥有日志数组、IPC 或会话生命周期；页面和 `useStreamSession` 过滤事件及会话归属；`useDiagnostics` 统一截断、汇总和重连快照重置。
 
-| 状态 | 设置条件 | 清除条件 |
-|---|---|---|
-| `busy` | 用户请求开始连接 | 启动命令失败或 `finished` |
-| `connected` | 原生行出现 `PCM_READY` | 新会话开始或 `finished` |
-| `playing` | 本次会话收到遥测 | `finished` |
-| `stopping` | 用户请求停止 | `finished`；期间忽略遥测 |
-| `pending` | `password_required` 提供待认证主机 | 提交完成、停止或收尾；密码失败时可恢复重试目标 |
+| 状态        | 设置条件                           | 清除条件                                       |
+| ----------- | ---------------------------------- | ---------------------------------------------- |
+| `busy`      | 用户请求开始连接                   | 启动命令失败或 `finished`                      |
+| `connected` | 原生行出现 `PCM_READY`             | 新会话开始或 `finished`                        |
+| `playing`   | 本次会话收到遥测                   | `finished`                                     |
+| `stopping`  | 用户请求停止                       | `finished`；期间忽略遥测                       |
+| `pending`   | `password_required` 提供待认证主机 | 提交完成、停止或收尾；密码失败时可恢复重试目标 |
 
 密码提交后立即清空响应式输入。认证失败后旧会话已经结束，重试必须先创建新会话，等待它再次发出 `password_required`，然后发送密码。桌面管道只接受本次设备地址，`Reply` 销毁时清理其持有的密码字节；这不能保证清除 WebView、IPC 或系统内全部副本。
 
@@ -119,16 +119,16 @@
 
 ## 修改入口与同步要求
 
-| 修改目标 | 主要入口 | 需要同步检查 |
-|---|---|---|
-| 新增设置 | `types.ts`、`protocol.ts`、桌面 `settings.rs`、页面控件 | 默认值、单位、范围、旧文件缺字段时的行为 |
-| 新增桌面事件 | Rust 事件发送点、`types.ts/StreamEvent`、`protocol.ts`、`useStreamSession/event`、`App.vue/renderSessionEvent` | 会话编号、必填字段、已知事件损坏时的报错、协议测试 |
-| 新增报告字段 | `live.rs`、`privacy.rs`；页面显示字段补充类型及校验 | 日志脱敏、扩展 JSON 保留、数值单位 |
-| 修改来源预览 | `source.rs`、桌面 `ensure_source`、页面 `source-level` 监听 | 端点过滤、静音就绪、取消、线程复用 |
-| 修改采样或水位控制 | `capture.rs`、`convert.rs`、`drift.rs`、`live/pipeline.rs` | 帧与采样区别、包边界、尾帧、缓冲积压及实机听感 |
-| 修改日志 | `privacy.rs` 和各落盘入口 | 保留内部控制原值，只展示/保存脱敏副本 |
-| 修改原生协议 | `airplay-backend/patches/`、本地入口 `.inc` | 补丁上下文与顺序、固定提交、输入/补丁哈希、生成差异及接收端模拟 |
-| 修改 Windows 兼容 | `windows_port.c/.h`、`windows_io.inc`、`windows_audio.inc`、`probe_context.inc` | socket 宽度、错误来源、超时与关闭；不要把源码替换放回 Python |
+| 修改目标           | 主要入口                                                                                                       | 需要同步检查                                                    |
+| ------------------ | -------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
+| 新增设置           | `types.ts`、`protocol.ts`、桌面 `settings.rs`、页面控件                                                        | 默认值、单位、范围、旧文件缺字段时的行为                        |
+| 新增桌面事件       | Rust 事件发送点、`types.ts/StreamEvent`、`protocol.ts`、`useStreamSession/event`、`App.vue/renderSessionEvent` | 会话编号、必填字段、已知事件损坏时的报错、协议测试              |
+| 新增报告字段       | `live.rs`、`privacy.rs`；页面显示字段补充类型及校验                                                            | 日志脱敏、扩展 JSON 保留、数值单位                              |
+| 修改来源预览       | `source.rs`、桌面 `ensure_source`、页面 `source-level` 监听                                                    | 端点过滤、静音就绪、取消、线程复用                              |
+| 修改采样或水位控制 | `capture.rs`、`convert.rs`、`drift.rs`、`live/pipeline.rs`                                                     | 帧与采样区别、包边界、尾帧、缓冲积压及实机听感                  |
+| 修改日志           | `privacy.rs` 和各落盘入口                                                                                      | 保留内部控制原值，只展示/保存脱敏副本                           |
+| 修改原生协议       | `airplay-backend/patches/`、本地入口 `.inc`                                                                    | 补丁上下文与顺序、固定提交、输入/补丁哈希、生成差异及接收端模拟 |
+| 修改 Windows 兼容  | `windows_port.c/.h`、`windows_io.inc`、`windows_audio.inc`、`probe_context.inc`                                | socket 宽度、错误来源、超时与关闭；不要把源码替换放回 Python    |
 
 `protocol.ts` 接收 `unknown`，验证有限数值、整数计数、左右两个声道、设置范围和事件所需字段。报告可保留扩展 JSON，页面消费的字段继续检查；未知事件忽略，已知事件格式错误会显示字段路径，避免打印输入内容。此处负责格式，不替代 Rust 的设备和权限校验。
 
@@ -156,4 +156,4 @@ pnpm --dir airplay-frontend format:check
 
 ## Source 缓冲与状态阅读入口
 
-`source.rs/Subscription::send_audio` 在时长预算接受后调用 `source/buffers.rs/Pool::copy`，仍复制完整输入。`Source::consume` 在 sink 借用结束后归还当前 Vec，解除订阅释放池和剩余块。先读 [Source 测量与限制](source-performance.md)，再看 `test/core/unit/source/buffers.rs` 和 `source.rs` 的跨线程回归；新建/复用/扩容计数不等于全进程分配次数。多个会话布尔值和各层锁的语义见[状态说明](session-state.md)，后续针对启动长时间持锁加入 Preparing 专用阶段及配置占用；前端观察状态继续保留，详见[启动准备](stream-startup.md)。
+`source.rs/Subscription::send_audio` 在时长预算接受后调用 `source/buffers.rs/Pool::copy`，仍复制完整输入。`Source::consume` 在 sink 借用结束后归还当前 Vec，解除订阅释放池和剩余块。先读[性能基线](performance-baseline.md)与[音频完整性限制](architecture.md#音频完整性与缓冲)，再看缓冲池及 Source 跨线程测试；新建/复用/扩容计数不等于全进程分配次数。各层状态和锁的语义见[状态与所有权](architecture.md#状态与所有权)，准备/配置互斥见[启动取消与提交](architecture.md#启动取消与设置提交)。

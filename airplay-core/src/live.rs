@@ -14,6 +14,7 @@
 //! live.rs orchestrates startup, capture and cleanup; private submodules own the implementation.
 mod control;
 pub(crate) mod diagnostics;
+mod notifications;
 mod pipeline;
 mod protocol;
 mod protocol_log;
@@ -79,9 +80,21 @@ pub fn run_gui(
     peer: Option<&str>,
     latency_ms: u32,
     buffer_ms: u32,
-    gui: GuiContext,
+    mut gui: GuiContext,
 ) -> Result<()> {
-    run_targets(root, name, peer, 0, latency_ms, buffer_ms, Some(gui), None)
+    let control = gui.control.clone();
+    let mut notifications = notifications::Worker::start(gui.emit.clone(), control.clone())?;
+    gui.emit = notifications.emitter();
+    let result = run_targets(root, name, peer, 0, latency_ms, buffer_ms, Some(gui), None);
+    // Flush accepted notifications before the desktop emits finished. Use the same deadline,
+    // retaining time for the desktop password server and final notification.
+    let delivered =
+        notifications.finish_until(control.shutdown.begin() - Duration::from_millis(100));
+    match (result, delivered) {
+        (Err(primary), Err(notification)) => Err(format!("{primary}；{notification}").into()),
+        (Err(primary), Ok(())) => Err(primary),
+        (Ok(()), delivered) => delivered.map_err(Into::into),
+    }
 }
 fn run_targets(
     root: &Path,

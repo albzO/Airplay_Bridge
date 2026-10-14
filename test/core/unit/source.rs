@@ -17,6 +17,7 @@ fn test_source() -> Source {
         subscriber: Mutex::new(None),
         progress: Mutex::new(CaptureProgress::default()),
         worker: Mutex::new(None),
+        notifications: Mutex::new(None),
         shutdown: crate::shutdown::Budget::default(),
         error: Mutex::new(None),
         info: Mutex::new(Value::Null),
@@ -500,4 +501,62 @@ fn source_stop_timeout_retains_worker_until_it_really_finishes() {
         .stop_until(Instant::now() + Duration::from_secs(2))
         .unwrap();
     assert!(source.worker.lock().unwrap().is_none());
+}
+
+#[test]
+fn notification_overflow_stops_source_and_slow_gui_retains_worker_on_timeout() {
+    let source = test_source();
+    let (seen, events) = mpsc::channel();
+    let (release, gate) = mpsc::sync_channel(1);
+    let gate = Mutex::new(gate);
+    let worker = notifications::Worker::start(Arc::new(move |event| {
+        if event == json!("blocked") {
+            seen.send(()).unwrap();
+            gate.lock()
+                .unwrap()
+                .recv_timeout(Duration::from_secs(3))
+                .unwrap();
+        }
+    }));
+    let notify = worker.sender();
+    notify.level(json!("blocked"));
+    events.recv_timeout(Duration::from_secs(2)).unwrap();
+    for i in 0..65 {
+        source.notify_control(&notify, json!(i));
+    }
+    assert!(source.is_stopping());
+    assert!(
+        source
+            .error
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .contains("SOURCE_NOTIFY_FAILED")
+    );
+    notify.finish(json!({"error":source.error.lock().unwrap().clone()}));
+    *source.notifications.lock().unwrap() = Some(worker);
+    let deadline = Instant::now() + Duration::from_millis(30);
+    assert!(
+        source
+            .stop_until(deadline)
+            .unwrap_err()
+            .contains("STOP_TIMEOUT")
+    );
+    assert!(source.notifications.lock().unwrap().is_some());
+    release.send(()).unwrap();
+    // An expired deadline can collect a completed worker, but cannot be renewed.
+    source
+        .notifications
+        .lock()
+        .unwrap()
+        .as_mut()
+        .unwrap()
+        .join_until(Instant::now() + Duration::from_secs(2))
+        .unwrap();
+    source
+        .stop_until(Instant::now() + Duration::from_secs(2))
+        .unwrap();
+    assert_eq!(source.shutdown.current(), Some(deadline));
+    assert!(source.notifications.lock().unwrap().is_none());
 }

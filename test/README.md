@@ -4,17 +4,17 @@
 
 Test sources are committed under root `test/`. Production modules retain attachment/diagnostic entry points; existing private-module access and ignored hardware checks are preserved.
 
-结构整理后，核心子模块测试归入 `core/unit/capture/`、`live/`、`source/`；后端定位测试为 `core/unit/backend.rs`。原模块名、Cargo 过滤器和默认忽略规则不变，测试挂接统一位于生产模块尾部。前端脚本直接观察生产会话模块的内部编号，不依赖 App 模板未使用的绑定。完整改动与清理范围见[仓库复查](../docs/repository-review.md)。
+核心子模块测试归入 `core/unit/capture/`、`live/`、`source/`；后端定位测试为 `core/unit/backend.rs`。挂接统一位于生产模块尾部，前端脚本观察生产会话模块，不依赖 App 模板未使用的绑定。当前实现及资源边界见[架构](../docs/architecture.md)。
 
-启动准备阶段：桌面 **17**、前端脚本 **28**、DOM **29**、核心 **112 通过 / 9 默认忽略**。新增 `frontend/desktop/session.rs` 的 6 项回归，覆盖生产步骤边界的阻塞取消、准备/停止期限、迟到编号、互斥占用及真实暂存写入后取消；脚本/DOM 检查编号返回前停止、卸载迟到编号取消和准备超时。旧唤醒句柄释放检查在独立子进程执行，避免并行测试复用句柄数值。测试替身及未覆盖范围见[启动准备](../docs/stream-startup.md)。
+会话测试覆盖阻塞准备时取消、迟到编号、配置互斥及真实设置写入的取消/失败；脚本与 DOM 检查编号确认前停止、卸载和旧事件隔离。停止测试覆盖 stderr 原始 Win32 错误、统一期限、本地进程/管道、资源保留和停止后的真实错误。
 
-stderr/停止预算阶段：核心 **112 通过 / 9 默认忽略**、桌面 **11**、前端脚本 **25**、DOM **28**。新增 `core/unit/shutdown.rs` 及 `frontend/desktop/shutdown.rs`；协议/传输/Source/报告/密码管道回归覆盖独立读取失败、共享期限、阻塞等待、真实 Windows 子进程和管道、超时资源保留及用户停止后的真实错误。均无需音频设备，边界见 [stderr 与停止期限](../docs/stream-shutdown.md)。
+Source/会话通知测试使用阻塞回调，检查最新快照、设备统计、控制和终态顺序，以及容量/字节限制、异常和超时保留。认证策略测试覆盖去重、慢写入、保存失败后重试和超时禁止新会话。
 
-Source 缓冲池阶段：核心 97 通过 / 9 默认忽略（7 项设备/本机环境检查及 2 项显式基线）、桌面 9、前端脚本 23 通过。新增 `core/unit/source/buffers.rs` 的位值/所有权/扩容和保留上限回归，`source.rs` 的非法/超预算/大包及跨线程变长包/采样率回归；原失败、停止、重连清理测试继续通过。`source/baseline.rs` 使用真实 send_audio 路径，显式 Release 执行；产物忽略、默认覆盖固定文件且每份小于 64 KiB。方法、命令和前后结果见 [Source 性能记录](../docs/source-performance.md)。本阶段没有改变前端状态机或重跑 DOM/设备播放。
+Source 缓冲测试检查位值、所有权、扩容/回收上限、非法或超预算包及跨线程变长包/采样率。显式 Release 合成基线使用真实 send_audio 路径；方法与产物限制见[性能基线](../docs/performance-baseline.md)。
 
-自动熄屏缓解验证：核心 93 通过 / 8 默认忽略、桌面 9 通过、前端脚本 23 通过、DOM 28 通过。`frontend/desktop/awake.rs` 验证系统/显示器两项请求顺序、失败撤销与错误保留，并实际创建请求、检查重复开关及关闭/析构后的 Windows 句柄；没有等待真实显示器超时。核心检查未启用逐包诊断时的故障字段及倒退数值，DOM 检查开关说明、失败类别、回退与重试。证据与实机复测见[排查记录](../docs/display-off-capture.md)。
+保持唤醒测试检查系统/显示器请求顺序、失败撤销和实际句柄释放；它不等待真实熄屏。采集时间戳与设置交互分别有核心/DOM 回归，适用边界见[熄屏排查](../docs/display-off-capture.md)。
 
-F1–F5 修复后的快速验证为核心 80 通过 / 8 默认忽略、桌面 7 通过、前端协议 7 + 会话/页面脚本 12 通过、真实模板 DOM 27 通过。范围与剩余边界见 [自证记录](../docs/review-self-check.md#f1f5-修复与正式回归)。
+本版实际执行结果见[交付简报](../docs/release-v1.0.3.md)。本页维护测试范围和运行方法，逐轮执行记录从 Git 历史查阅。
 
 `frontend/desktop/routing.rs` 的 2 项回归调用生产路由模块，在暂存设置文件路径创建目录触发真实写入失败，检查磁盘、内存和活动 Mutex/AtomicBool 不变，解除故障后可重试。它们没有创建 WASAPI Source 或完整 Tauri 会话。
 
@@ -28,13 +28,13 @@ DOM 新增来源失败/重试、等待预览、冷启动保存失败、映射回
 
 `core/unit/capture/metrics.rs` 的 6 项测试调用纯统计/时序模块，覆盖电平与信号帧阈值、NaN/Infinity、固定指纹与负零/NaN 位差、可选指纹、空/不完整帧、首条及跨日志暂停的诊断间隔、有符号回退及 100 ns 单位换算。无需设备、不改写音频；运行过滤器为 `capture::metrics::`。Windows 时钟读取及实际驱动时序不在此纯逻辑测试范围内。
 
-| 目录 | 内容 |
-|---|---|
-| `frontend/` | JSON 协议、会话脚本、真实模板 DOM、模拟 UI、合成设备样例和桌面 Rust 测试 |
-| `backend/` | 本机模拟接收端、认证、密码管道、立体声、延迟 SETUP 和原生 nonce 检查 |
-| `core/unit/` | 采集解码/统计/时间线/健康状态、转换、漂移、来源生命周期、串流管线与脱敏单元测试 |
-| `core/checks/` | 已采集 WAV 与转换 PCM 的独立校验脚本 |
-| `.artifacts/` | 截图、模拟 PCM 和检查输出；不提交 Git |
+| 目录           | 内容                                                                            |
+| -------------- | ------------------------------------------------------------------------------- |
+| `frontend/`    | JSON 协议、会话脚本、真实模板 DOM、模拟 UI、合成设备样例和桌面 Rust 测试        |
+| `backend/`     | 本机模拟接收端、认证、密码管道、立体声、延迟 SETUP 和原生 nonce 检查            |
+| `core/unit/`   | 采集解码/统计/时间线/健康状态、转换、漂移、来源生命周期、串流管线与脱敏单元测试 |
+| `core/checks/` | 已采集 WAV 与转换 PCM 的独立校验脚本                                            |
+| `.artifacts/`  | 截图、模拟 PCM 和检查输出；不提交 Git                                           |
 
 `frontend/diagnostics.test.mjs` 直接执行生产 `useDiagnostics.ts`，覆盖所有日志入口的数量/文本限制、结束摘要、报告大小、清空/重连、重复/部分/非法统计、设备淘汰及原型式键名。DOM 突发事件回归验证真实页面的 300/120 上限、截断、脱敏和清空范围。
 

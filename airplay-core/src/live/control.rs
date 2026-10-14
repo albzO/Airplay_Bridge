@@ -19,6 +19,8 @@ pub struct GuiControl {
     pub shutdown: crate::shutdown::Budget,
     /// False means detached cleanup still owns resources; the desktop must reserve this session.
     pub cleanup_complete: AtomicBool,
+    // A timed-out GUI callback keeps this session reserved, like unfinished transport workers.
+    pub(super) notification_worker: Mutex<Option<std::thread::JoinHandle<()>>>,
     pub mapping: Mutex<[usize; 2]>,
     pub speakers_swapped: AtomicBool,
     pub volume: Mutex<Vec<mpsc::SyncSender<String>>>,
@@ -29,6 +31,7 @@ impl GuiControl {
             stop: Arc::new(AtomicBool::new(false)),
             shutdown: crate::shutdown::Budget::default(),
             cleanup_complete: AtomicBool::new(true),
+            notification_worker: Mutex::new(None),
             mapping: Mutex::new(mapping),
             speakers_swapped: AtomicBool::new(false),
             volume: Mutex::new(Vec::new()),
@@ -54,6 +57,7 @@ pub struct GuiContext {
     pub detailed_logs: bool,
     pub capture_diagnostics: bool,
     pub control: Arc<GuiControl>,
+    /// run_gui wraps this callback in the bounded dispatcher; producers only enqueue.
     pub emit: GuiEmitter,
 }
 

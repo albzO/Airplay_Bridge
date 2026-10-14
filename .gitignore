@@ -24,6 +24,7 @@ __pycache__/
 *.ilk
 *.exp
 *.tsbuildinfo
+/docs/code-complexity-audit.md
 
 # Local editor configuration and operating-system files
 .vscode/
@@ -67,6 +68,9 @@ auth-policy.pending.json
 !.env.example
 !.env.sample
 !.env.template
+
+# Local review material
+/docs/code-complexity-audit.md
 
 # Temporary files
 *.tmp

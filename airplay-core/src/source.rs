@@ -1,6 +1,7 @@
 //! 持续采集来源：一个 Source 独占一条 WASAPI 采集线程。
 //! 同一来源同时提供页面预览和一个串流订阅；连接/断开订阅不重启采集。
-//! 采集线程不能等待网络或磁盘。音频通过有界队列交付，积压时报告故障，
+//! 采集线程不能等待网络、磁盘或 GUI 回调。通知独立发送，电平只保留最新快照。
+//! 音频通过有界队列交付，积压时报告故障，
 //! 防止内存无限增长；诊断队列允许丢记录，并在收尾报告丢弃数量。
 //!
 //! Each Source owns one WASAPI capture thread, serving preview and one stream subscriber.
@@ -26,6 +27,7 @@ use std::{
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 const LOOPBACK_REOPEN_LIMIT: u32 = 3;
 mod buffers;
+mod notifications;
 enum Event {
     Audio(Vec<f32>, u32, CaptureProgress, Instant),
 }
@@ -111,6 +113,7 @@ pub struct Source {
     subscriber: Mutex<Option<Subscription>>,
     progress: Mutex<CaptureProgress>,
     worker: Mutex<Option<thread::JoinHandle<()>>>,
+    notifications: Mutex<Option<notifications::Worker>>,
     shutdown: crate::shutdown::Budget,
     error: Mutex<Option<String>>,
     info: Mutex<Value>,
@@ -124,6 +127,8 @@ impl Source {
         mapping: [usize; 2],
         emit: Arc<dyn Fn(Value) + Send + Sync>,
     ) -> Arc<Self> {
+        let notifications = notifications::Worker::start(emit);
+        let notify = notifications.sender();
         let source = Arc::new(Self {
             endpoint,
             mapping: Mutex::new(mapping),
@@ -132,6 +137,7 @@ impl Source {
             subscriber: Mutex::new(None),
             progress: Mutex::new(CaptureProgress::default()),
             worker: Mutex::new(None),
+            notifications: Mutex::new(Some(notifications)),
             shutdown: crate::shutdown::Budget::default(),
             error: Mutex::new(None),
             info: Mutex::new(Value::Null),
@@ -173,7 +179,7 @@ impl Source {
                     write_startup(entry.clone());
                 }
                 if entry["kind"] == "gap_repaired" {
-                    emit(
+                    s.notify_control(&notify,
                         json!({"endpoint":s.endpoint,"warning":format!("采集缺口 {:.1} ms，已补静音继续",entry["gap_ms"].as_f64().unwrap_or(0.))}),
                     );
                 }
@@ -219,7 +225,7 @@ impl Source {
                             summary_updated = Instant::now();
                         }
                         if updated.elapsed() >= Duration::from_millis(100) {
-                            emit(json!({"endpoint":s.endpoint,"peaks":peaks}));
+                            notify.level(json!({"endpoint":s.endpoint,"peaks":peaks}));
                             peaks = [0.; 2];
                             updated = Instant::now();
                         }
@@ -248,11 +254,13 @@ impl Source {
             };
             let result = s.capture_with_recovery(capture, |attempt, previous| {
                 write_startup(json!({"kind":"loopback_reopen","attempt":attempt,"limit":LOOPBACK_REOPEN_LIMIT,"reason":"active_output_zero_raw_pcm","capture":previous}));
-                emit(json!({"endpoint":s.endpoint,"peaks":[0.,0.],"warning":format!("播放回环未取得音频，正在重新初始化采集（{attempt}/{LOOPBACK_REOPEN_LIMIT}）")}));
+                s.notify_control(&notify, json!({"endpoint":s.endpoint,"peaks":[0.,0.],"warning":format!("播放回环未取得音频，正在重新初始化采集（{attempt}/{LOOPBACK_REOPEN_LIMIT}）")}));
             });
-            let error = result
-                .err()
-                .map(|e| crate::failure::describe(&e.to_string(), "CAPTURE_INIT_FAILED"));
+            let error = s.error.lock().unwrap().clone().or_else(|| {
+                result
+                    .err()
+                    .map(|e| crate::failure::describe(&e.to_string(), "CAPTURE_INIT_FAILED"))
+            });
             write_startup(
                 json!({"kind":"source_finished","error":error,"capture":*s.progress.lock().unwrap()}),
             );
@@ -265,14 +273,25 @@ impl Source {
                 .map(DetailLog::finish)
                 .unwrap_or_else(|| json!({"error":log_error,"dropped_records":0}));
             if !log_status["error"].is_null() || log_status["dropped_records"] != 0 {
-                emit(
+                s.notify_control(&notify,
                     json!({"endpoint":s.endpoint,"warning":"采集启动日志未完整保存，音频采集结果不受影响","startup_log_status":log_status}),
                 );
             }
-            emit(json!({"endpoint":s.endpoint,"peaks":[0.,0.],"error":error}));
+            // The log warning can also overflow; preserve that fault in the final event.
+            let error = s.error.lock().unwrap().clone();
+            notify.finish(json!({"endpoint":s.endpoint,"peaks":[0.,0.],"error":error}));
         });
         *source.worker.lock().unwrap() = Some(worker);
         source
+    }
+    fn notify_control(&self, notify: &notifications::Sender, event: Value) {
+        if let Err(error) = notify.control(event) {
+            let mut fault = self.error.lock().unwrap();
+            if fault.is_none() {
+                *fault = Some(crate::failure::describe(&error, "SOURCE_NOTIFY_FAILED"));
+            }
+            self.stop.store(true, Ordering::Release);
+        }
     }
     /// 复用 Source 对象但释放整套 WASAPI 客户端后重开，等价于采集开关的资源重置。
     /// 只在尚未订阅串流时恢复，最多三次；已订阅时保留故障，避免重置时钟造成撕裂。
@@ -368,7 +387,14 @@ impl Source {
         let deadline = self.shutdown.begin_until(deadline);
         self.stop.store(true, Ordering::Relaxed);
         let mut worker = self.worker.lock().unwrap();
-        crate::shutdown::join_until(&mut worker, deadline, false).map(|_| ())
+        crate::shutdown::join_until(&mut worker, deadline, false)?;
+        drop(worker);
+        let mut notifications = self.notifications.lock().unwrap();
+        if let Some(worker) = notifications.as_mut() {
+            worker.join_until(deadline)?;
+        }
+        *notifications = None;
+        Ok(())
     }
     /// 订阅后续采集数据，sink 接收交错排列的 float32 左右声道及来源采样率。
     /// 仅允许一个订阅者；音频时长最多 640 ms（含处理中块），诊断最多 1024 条。

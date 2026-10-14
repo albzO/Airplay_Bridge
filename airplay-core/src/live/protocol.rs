@@ -163,6 +163,7 @@ impl ProtocolState {
 
 /// stderr 读线程先解析状态/通知就绪，再投递日志及 GUI 事件；不等待日志写入。
 /// Parse state/announce readiness before submitting logs and GUI events; never wait for log writes.
+/// run_gui supplies a bounded dispatcher emitter, so application callbacks run on its worker.
 pub(super) struct BackendReader {
     pub(super) state: ProtocolState,
     ready: mpsc::Receiver<()>,
@@ -253,7 +254,7 @@ impl BackendReader {
     pub(super) fn wait_ready(&mut self, backend: &mut Backend, stop: &AtomicBool) -> Result<()> {
         self.wait_ready_with(stop, || Ok(backend.try_wait()?.is_some()))
     }
-    fn wait_ready_with(
+    pub(super) fn wait_ready_with(
         &mut self,
         stop: &AtomicBool,
         mut backend_exited: impl FnMut() -> Result<bool>,

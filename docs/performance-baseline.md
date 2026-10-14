@@ -1,44 +1,43 @@
-# 合成性能基线（2026-10-10）
+# 合成性能基线
 
-本记录测量单机 Release 构建的合成处理路径，用于维护前后对照，不是跑分、CPU 使用率或实机播放延迟认证。CI 未纳入本轮。
+合成 Release 测量用于同一环境下的维护前后对照。历史测量值从 Git 查阅，这里只维护当前入口、方法及解释边界；CI 暂缓。
 
-2026-10-11 已补充独立的 [Source 复制/入队测量与有界回收池](source-performance.md)。下文为较早的转换/PCM 基线，两组夹具和耗时边界不同，不能交叉比较。
+## 转换和 PCM 发送
 
-本轮工具链为 Windows x64 MSVC、`rustc 1.99.0 (b940084d7 2026-09-28)`，使用现有 Cargo 锁定依赖；比较在同一主机和当前电源环境下连续执行，没有固定 CPU 亲和性或隔离系统负载。
+入口为 `test/core/unit/live/pipeline.rs::synthetic_performance_baseline`，默认忽略。输入为左右 0.25/-0.5 的 float32 双声道，每包 10 ms；每采样率一轮预热、三轮测量，每轮 5 秒音频量。
 
-## 方法与复现
-
-入口为 `test/core/unit/live/pipeline.rs` 的 `synthetic_performance_baseline`，默认忽略。输入为左右分别 0.25/-0.5 的合成 float32 双声道，每包 10 ms。每种输入采样率执行 1 轮预热、3 轮测量，每轮音频 5 秒。实际调用 `AudioPipeline::process`、跨包 Converter、PCM 队列和写线程，终点为 `io::sink`。每轮验证输出恰好为 220500 帧、882000 字节。
-
-没有 WASAPI、节奏等待、协议时钟、水位控制反馈、日志、GUI 或网络接收端。计时是墙钟时间；每轮首个 process 含转换器初始化，max 因而不能作为稳态实时延迟。Source 的采集复制及左右交换不在这组基线内，另有功能回归覆盖。
+实际调用 AudioPipeline::process、跨包 Converter、PCM 队列和写线程，写到 io::sink；每轮核对 220500 输出帧、882000 字节。不包含 WASAPI、Source 复制、左右互换分支、协议时钟、水位反馈、日志、GUI 或接收端。
 
 ```powershell
 $env:AIRPLAY_BASELINE_NAME = 'performance-before.json'
 cargo test --manifest-path airplay-core/Cargo.toml --locked --offline --release --lib synthetic_performance_baseline -- --ignored --nocapture
-# 修改后用相同工具链、主机和参数，名称改为 performance-after.json 再运行一次
 Remove-Item Env:AIRPLAY_BASELINE_NAME
+# 修改后以相同输入和参数生成 performance-after.json，再比较。
 python test/core/checks/compare_performance.py test/.artifacts/core/performance-before.json test/.artifacts/core/performance-after.json
 ```
 
-JSON 位于忽略的 `test/.artifacts/core/`；名称只能为该目录内的 `.json` 文件。比较脚本取每种采样率三轮 p95 的中位数；可选 `--max-regression-percent 25` 在任一采样率超过选定阈值时返回 1，默认只报告。尚未建立跨多台主机的稳定阈值，不能将本次短测变化当作确定的性能提升。
+每轮首个 process 包含初始化，max 不能直接解释为稳态实时延迟。
 
-## 本轮记录
+## Source 复制与缓冲池
 
-修改前已保存相同入口的结果，之后加入时长预算和缓冲复用。下表来自本机两份原始产物；数值为三轮中位数，process p95 单位 µs，每轮 wall 单位 ms。
+入口为 `test/core/unit/source/baseline.rs::synthetic_source_performance_baseline`，默认忽略。使用真实 Subscription::send_audio 路径，包含订阅锁、复制、时长预算和入队；消费者逐样本核对位值、帧数、采样率和进度，借用结束后归还缓冲。
 
-| 输入 Hz | p95 修改前 | p95 修改后 | 变化 | wall 修改前 / 后 |
-|---:|---:|---:|---:|---:|
-| 44100 | 60.3 | 59.1 | -2.0% | 26.26 / 25.40 |
-| 48000 | 51.5 | 53.8 | +4.5% | 25.02 / 25.17 |
-| 96000 | 55.0 | 54.4 | -1.1% | 26.49 / 26.34 |
-| 192000 | 68.8 | 63.9 | -7.1% | 31.42 / 31.04 |
+每种采样率一轮预热、三轮测量，每轮 5000 个 10 ms 包，每 8 包确认消费以限制积压；不按现实时间播放。它不包含 Source 完整采集回调、电平/健康检查、DSP、协议、GUI 或磁盘，也不测量左右互换性能。
 
-耗时没有呈现一致的大幅下降。修改后每轮新建 PCM Vec 1–3 个，复用 459–1999 次；PCM 预算峰值约 5–10.9 ms，远低于 640 ms 上限。新建/复用计数只统计 Vec 对象取得方式，不是通用堆分配跟踪器；复用 Vec 扩容仍可能分配。修改前每次发送都新建 PCM 字节 Vec，没有相同计数器，不能将这些计数换算为整机 CPU 降幅。
+```powershell
+$env:AIRPLAY_SOURCE_BASELINE_NAME = 'source-before.json'
+cargo test --manifest-path airplay-core/Cargo.toml --locked --offline --release --lib synthetic_source_performance_baseline -- --ignored --nocapture
+Remove-Item Env:AIRPLAY_SOURCE_BASELINE_NAME
+# 修改后生成 source-after.json，再使用同一比较脚本。
+python test/core/checks/compare_performance.py test/.artifacts/core/source-before.json test/.artifacts/core/source-after.json
+```
 
-## 预算与解释边界
+source_buffers 的 created/reused/growths 统计缓冲取得方式；复用后扩容仍可能分配，不能换算为全进程分配或 CPU 降幅。队列、回收池和音频完整性规则见[架构](architecture.md#音频完整性与缓冲)。
 
-Source 和 PCM 队列现在分别限制为 640 ms（包括处理中/写入中的块），并各设 256 块硬上限。预算由帧数和该块采样率计算，ns 向上取整，避免固定 64 块在 44.1/48/96/192 kHz 下对应不同音频时长。极小块仍可能先触及块数上限；预算满立即报错并停止该串流分支，不通过继续扩大积压来恢复。
+## 产物与比较
 
-两级预算不代表实际音频延迟，也不包含原生后端预缓冲、协议播放提前量或接收端渲染。PCM 回收池最多保留 32 个 Vec，写线程只尝试归还。这组较早修改仍逐包新建 Source 复制缓冲；后续已加入每次订阅独立的有界回收池，见上方 Source 记录。复制继续保留，没有实现零拷贝。
+JSON 写入忽略的 `test/.artifacts/core/`，名称仅允许该目录下的 .json 文件；默认固定名覆盖，Source 每份小于 64 KiB。前后数据分别在两次代码状态下生成，不修改生产实现来伪造旧基线，不混用两种夹具。
 
-后续实机测量应另记录来源/驱动/采样格式、CPU 与内存、DPC/调度、队列峰值、丢包/重传、长测时长和听感。32-bit RTP 时间戳全链路回绕、睡眠恢复、磁盘压力及实际 HomePod 声道/时钟兼容性仍需专门验证。
+比较脚本取各采样率三轮 p95 的中位数，默认只报告；可选 `--max-regression-percent 25` 作为人工选定阈值。保持同一工具链、锁定依赖、主机、电源状态和输入，记录系统负载；短测受调度、缓存和计时分辨率影响，尚无跨机器稳定阈值。
+
+两级 640 ms 队列预算是积压上限，不能相加解释为真实播放延迟。实机验证应另记录来源/驱动/格式、CPU/内存、DPC/调度、队列峰值、丢包/重传、时长和听感。32-bit RTP 时间戳完整回绕、睡眠恢复、磁盘压力及实际 HomePod 声道/时钟兼容性需要专门验证。

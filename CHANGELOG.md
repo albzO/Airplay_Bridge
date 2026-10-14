@@ -1,58 +1,20 @@
 # 更新日志
 
-## 未发布 / Unreleased
+## 1.0.3 — 2026-10-14
 
-- 启动改为短锁预留编号、后台准备及取消后核对发布；准备预算 15 秒，超时保留占用防止线程累积。配置/发现/预览改为互斥后台操作，设置提交前再次检查取消，停止命令按编号隔离，并补充文件/并发/交互回归。
-  Reserve stream ids before background preparation, enforce preparation deadlines and scoped cancellation, serialize background configuration, and cover late results and failed/cancelled saves.
+- 改进启动、停止与取消处理，增加超时保护，防止旧资源未退出时重复连接。
+  Improve startup, stopping and cancellation with timeout protection against overlapping sessions.
+- 将通知、日志及认证策略保存移至后台，减少音频路径中的阻塞。
+  Move notifications, logging and authentication-policy saves off audio-critical threads.
+- 修复设置保存失败后的状态回退，完善密码重试和旧会话隔离。
+  Fix state rollback after failed saves and strengthen password retries and session isolation.
+- 限制音频缓冲与日志占用，完善故障报告；保持唤醒同时覆盖系统和屏幕。
+  Bound audio buffers and logs, improve error reports, and keep both system and display awake when enabled.
+- 整理界面、音频模块及上游适配，补充自动回归测试。
+  Refactor UI, audio and upstream integration, with additional automated regressions.
 
-- 独立记录后端 stderr 读取状态与原始 Win32 错误；统一首次停止请求的 15 秒预算，收尾涵盖后端、线程、DACP、日志、报告及密码管道。增加 Job Object 和应用退出兜底，未确认退出的资源阻止重连/重复采集，补充无设备管道与交互回归。
-  Track stderr read failures separately and share one stop deadline across cleanup; guard child processes with Job Objects, bound final persistence, and prevent resource overlap after timeouts.
-
-- 复查仓库结构，删除页面未使用绑定及后端定位未用参数，启用前端未使用检查；按模块归位核心测试并统一尾部挂接，修正熄屏说明及文档导航，清理旧迁移生成残留。
-  Remove unused bindings/arguments, enforce frontend unused checks, organize core tests, and refresh repository documentation while retaining active tools and evidence.
-- 增加 Source 复制/入队 Release 基线及每次订阅独立的有界 Vec 回收池，最多保留 32 × 64 KiB 空闲存储；保持完整包、样本位值和帧顺序，补充失败/断开/变长及变采样率回归，记录会话状态与锁边界。
-  Measure Source copy/enqueue costs and reuse bounded per-subscription buffers while preserving packet contents and order; cover cleanup and variable packets/rates, and document session state and lock boundaries.
-- 保持唤醒同时请求系统和显示器，避免自动熄屏触发采集异常；补充失败撤销、句柄释放及设置回归。默认保存终止性时间线故障的包/时钟数值，沿用日志上限，保留时间戳校验。
-  Keep both system and display awake, handle request failures and cleanup, and persist bounded terminal timeline diagnostics without relaxing timestamp validation.
-- 提取前端诊断状态及设备累计统计，统一日志/摘要截断、设备历史与报告上限，保留会话过滤及清空范围；补充脚本与真实模板突发事件回归。
-  Extract diagnostic snapshots and cumulative device counters with bounded histories, text and reports; preserve session filtering and clearing scope.
-- 提取采集诊断 JSON、Windows 时钟读取和生命周期计数，健康进度归入端点模块；保留 WASAPI 包释放、音频交付及首包断续统计口径。
-  Extract capture JSON, Windows clocks and lifecycle counters; preserve packet release, audio delivery and first-packet discontinuity semantics.
-- 为自动日志增加单文件限制与目录保留，pipeline/逐包滚动保留，保护活动文件；Source 在追加超限前轮转，报告超限保留协议首因。
-  Bound automatic log files and directory retention, rotate traces and Source logs, protect open files, and preserve primary failures on oversized reports.
-
-- 修复互换/映射保存失败后运行状态已变化、来源保存失败仍启动预览及保持唤醒并发保存回退问题；统一保存锁、确认快照和失败传播，补充真实文件失败与界面回归。
-  Persist routing before applying it, stop source follow-up after failed saves, and serialize settings with confirmed-state rollback; add filesystem and UI regressions.
-- 报告写入失败仍向界面发送内存报告并单独记录错误，保留协议/采集/管道首因；便携日志位置改为程序目录下的 `data/logs` 脱敏提示。
-  Preserve primary stream errors and in-memory reports when report writes fail; display the correct privacy-safe portable log location.
-- 提取日志视图，保留页面管理的会话快照、保存/打开目录命令及诊断清空范围；新增日志开关、报告展开、清空后继续更新和旧会话隔离的 DOM 回归。
-  Extract log presentation while retaining page-owned session snapshots, persistence/folder commands and diagnostic clearing; cover log controls, reports, continued updates and stale-session isolation.
-- 提取技术详情视图并共享格式/电平展示，保留 Buffer 保存与认证策略重检命令；新增参数、禁用条件、设备展示与重检请求范围的 DOM 回归。
-  Extract technical details and share format/level display while retaining Buffer persistence and auth-policy reset commands; cover parameters, busy restrictions, device details and reset request scope.
-- 提取只读运行统计视图并共享数值格式化，保留页面累计计数与事件归属；新增快照重置、重复事件去重、跨会话累计及旧统计隔离的 DOM 回归。
-  Extract read-only runtime statistics and share numeric formatting while retaining page-owned counters; cover snapshot resets, duplicate events, cumulative totals and stale-session isolation.
-- 提取常规设置视图，以受控更新保留页面保存、失败回退、主题同步和实时映射命令；新增自启/唤醒回退及设置交互的 DOM 回归。
-  Extract general settings with controlled updates while retaining persistence, rollback, theme synchronization and runtime mapping; add DOM regressions for settings and failed autostart/keep-awake commands.
-- 提取设备卡片视图组件，保留页面的设备选择、会话与互换命令；新增互换成功/失败及单设备选择的 DOM 回归，音频处理保持不变。
-  Extract device card presentation while retaining page-owned selection, sessions and swap commands; cover swap success/failure and individual receiver selection without changing audio processing.
-- 提取来源选择视图组件，保留设置/采集命令顺序及弹窗层级；新增分组排序、外部关闭和单声道保存后预览的 DOM 回归。
-  Extract the source picker view while preserving capture orchestration; add DOM coverage for ordering, dismissal and mono source selection.
-- 提取采集统计与诊断时序模块，预览、诊断及最终报告共用每包电平/信号结果；保留指纹、阈值和时序语义，新增 6 项无设备回归。
-  Extract capture metrics and diagnostic timing, share packet statistics, and preserve fingerprint/threshold/timing behavior with six device-free regressions.
-- 提取纯采集包解码与声道映射模块，复用输出缓冲并补充 PCM 位宽、帧裁剪、声道边界及浮点特殊值回归；保留 WASAPI 资源释放顺序。
-  Extract pure capture decoding and channel mapping with reusable output and format/window regressions, preserving WASAPI buffer ownership.
-- 增加真实模板 DOM 自动测试，覆盖按钮禁用、来源选择、密码键盘重试、停止与旧会话隔离；Windows 使用无头 Edge，生成产物继续忽略，CI 暂缓。
-  Add real-template DOM regressions for controls, source selection, keyboard password retries, stopping and stale sessions using headless Edge on Windows; CI remains deferred.
-- 协议控制台/文件日志改为 128 条有界队列异步输出；就绪及故障解析不等待写入，报告增加日志丢失、写入错误和共享收尾期限状态。
-  Move protocol console/file output to a bounded async worker; preserve readiness/fault processing and report log drops, errors and shared-deadline cleanup.
-- 将会话控制与采集时间线分别提取到独立模块，保留旧事件、密码重试和停止回归覆盖。
-  Extract stream session control and capture timeline planning with lifecycle regression coverage.
-- 两级音频队列改按各自 640 ms 预算限量，计入处理中块；复用 PCM 字节及左右互换缓冲，增加显式 Release 合成基线。
-  Bound each audio queue by 640 ms including in-flight work, reuse buffers and add an explicit synthetic release baseline.
-- 模拟接收端校验序号/时间戳模运算与独立 nonce，增加跨 RTP 回绕重传长测和失败清理守卫。
-  Check wrapping RTP counters and independent nonces; add full-chain wrap/retransmission checks and fixture cleanup.
-- 上游适配改为固定子模块版本、三组上下文补丁和本地 Windows 兼容层；移除 Python 源码字符串替换，保留输入/补丁哈希与输出快照检查。固定依赖版本保持不变，CI 暂缓。
-  Replace Python source substitutions with pinned submodules, reviewed context patches and local Windows adapters; retain hashes and output snapshots. CI is deferred.
+验证范围：自动测试与 Release 构建通过；真实设备长测仍需确认。
+Validation scope: automated tests and Release builds pass; real-device endurance testing remains pending.
 
 ## 1.0.2 — 2026-10-10
 

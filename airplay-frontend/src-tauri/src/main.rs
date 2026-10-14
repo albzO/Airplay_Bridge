@@ -209,19 +209,27 @@ fn open_logs(engine: State<Arc<Engine>>) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 #[tauri::command]
-fn forget_auth_policy(engine: State<Arc<Engine>>, names: Vec<String>) -> Result<(), String> {
-    if engine.session.lock().unwrap().is_some() {
-        return Err("请停止串流后重新检测认证方式".into());
-    }
-    let selected: Vec<_> = devices(&engine)
-        .into_iter()
-        .filter(|d| names.contains(&d.name))
-        .collect();
-    engine
-        .auth_memory
-        .lock()
-        .unwrap()
-        .forget(&engine.root, &selected)
+async fn forget_auth_policy(
+    engine: State<'_, Arc<Engine>>,
+    names: Vec<String>,
+) -> Result<(), String> {
+    let e = engine.inner().clone();
+    let operation = configuration::Operation::begin(e.clone(), false)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        operation.check()?;
+        let selected: Vec<_> = devices(&e)
+            .into_iter()
+            .filter(|d| names.contains(&d.name))
+            .collect();
+        let mut next = e.auth_memory.lock().unwrap().clone();
+        operation.check()?;
+        next.forget(&e.root, &selected)?;
+        // Disk replacement committed; publish the same state even if quitting began meanwhile.
+        *e.auth_memory.lock().unwrap() = next;
+        Ok(())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 #[tauri::command]
 fn ui_ready(

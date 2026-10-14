@@ -1,5 +1,19 @@
 [
   {
+    "code": "STREAM_NOTIFY_FAILED",
+    "exit": 1,
+    "message": "会话通知无法继续可靠交付。",
+    "action": "检查界面通知是否阻塞或事件是否超过限制；已请求停止串流，旧通知线程未退出时请重启应用。",
+    "patterns": []
+  },
+  {
+    "code": "SOURCE_NOTIFY_FAILED",
+    "exit": 1,
+    "message": "采集通知通道无法继续交付。",
+    "action": "检查界面通知是否阻塞；采集已停止，旧通知线程未退出时请重启应用。",
+    "patterns": []
+  },
+  {
     "code": "START_TIMEOUT",
     "exit": 1,
     "message": "串流启动准备超过期限。",

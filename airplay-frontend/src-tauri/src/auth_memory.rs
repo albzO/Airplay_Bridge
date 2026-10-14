@@ -4,7 +4,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{collections::BTreeSet, fs, path::Path};
 
-#[derive(Default, Serialize, Deserialize)]
+mod persistence;
+pub use persistence::{Sender, Worker};
+
+#[derive(Clone, Default, Serialize, Deserialize)]
 pub struct Memory {
     required: BTreeSet<String>,
 }
@@ -98,16 +101,22 @@ impl Memory {
         self.required.contains(&key(device))
     }
     pub fn remember(&mut self, root: &Path, identity: &str) -> Result<(), String> {
-        if self.required.insert(identity.to_owned()) {
-            self.save(root)?;
+        if !self.required.contains(identity) {
+            let mut next = self.clone();
+            next.required.insert(identity.to_owned());
+            next.save(root)?;
+            *self = next;
         }
         Ok(())
     }
     pub fn forget(&mut self, root: &Path, devices: &[Device]) -> Result<(), String> {
+        let mut next = self.clone();
         for device in devices {
-            self.required.remove(&key(device));
+            next.required.remove(&key(device));
         }
-        self.save(root)
+        next.save(root)?;
+        *self = next;
+        Ok(())
     }
 }
 

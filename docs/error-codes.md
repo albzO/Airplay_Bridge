@@ -17,6 +17,8 @@ HTTP 状态码、Windows HRESULT、HAP TLV error 是三个独立命名空间，�
 
 | 符号代码 | CLI 退出码 | 含义 | 处理方式 |
 | --- | --- | --- | --- |
+| `STREAM_NOTIFY_FAILED` | 1 | 会话控制通知溢出、事件过大或通知回调异常，已请求停止串流。 | 检查界面通知；旧通知线程未退出时请重启应用。 |
+| `SOURCE_NOTIFY_FAILED` | 1 | 采集通知通道无法继续交付，已停止采集。 | 检查界面通知是否阻塞；旧通知线程未退出时请重启应用。 |
 | START_TIMEOUT | 1 | 串流准备超过 15 秒。 | 检查驱动/磁盘；后台工作未确认退出时重启应用。与后端握手/密码等待的 STREAM_START_TIMEOUT 分开。 |
 | BACKEND_STDERR_FAILED | 1 | 读取后端 stderr 失败。 | 查看 ReadFile 的原始 Win32 错误及独立状态；不能据此判断密码错误。 |
 | STOP_TIMEOUT | 1 | 串流或采集收尾超过统一停止期限。 | 查看 shutdown；旧资源未确认退出时请重启应用后连接。 |

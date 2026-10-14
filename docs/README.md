@@ -1,42 +1,36 @@
 # 文档导航
 
-本文档对应 AirPlay Hub `1.0.2`，版本改动和验证范围见更新日志。
+本文档对应 AirPlay Hub **1.0.3**。这里只保留当前版本的使用、开发、排查和交付说明；历史版本与已完成的优化、审查过程从 Git 历史查阅。
 
 ## 使用与排查
 
 - [界面与使用](ui.md)：来源、设备、设置、托盘和日志。
 - [CLI 诊断](cli.md)：独立诊断工具入口。
-- [错误代码与处理方式](error-codes.md)：统一代码目录、协议状态区别与排查建议。
-- [日志保留限制](log-retention.md)：页面历史、单文件大小、目录清理、活动文件保护及适用边界。
-- [播放回环排查](playback-loopback.md)：VoiceMeeter VAIO 延迟、原始全零音频的实机对照与设置保存方法。
-- [自动熄屏采集故障](display-off-capture.md)：时间戳错误证据、系统/屏幕唤醒措施、故障记录与复测边界。
+- [错误代码](error-codes.md)：错误含义、来源和处理方式。
+- [日志保留限制](log-retention.md)：页面历史、文件和目录上限。
+- [播放回环排查](playback-loopback.md)：Playback 来源、VoiceMeeter 及无声问题。
+- [自动熄屏采集故障](display-off-capture.md)：时间戳错误、保持唤醒及适用边界。
 
 ## 开发与验证
 
-- [构建指南](building.md)：开发环境、依赖、构建、安装包与版本更新约定。
-- [测试说明](../test/README.md)：根目录测试分类、DOM 自动交互、运行入口、合成样例与生成内容。
-- [架构](architecture.md)：模块职责、音频与控制通道。
-- [代码阅读与修改指南](code-reading-guide.md)：关键入口、状态变化、数据流、参数单位和 TypeScript 兼容说明。
-- [启动准备与取消](stream-startup.md)：短锁预留、后台准备、配置互斥、超时占用与设置提交边界。
-- [stderr 与停止期限](stream-shutdown.md)：独立读取状态、共享收尾预算、超时资源保护及应用退出。
-- [会话状态与锁](session-state.md)：各层状态含义、正常组合及并发边界。
-- [性能基线](performance-baseline.md)：无声卡合成测量、复现与解释范围。
-- [Source 性能与缓冲池](source-performance.md)：复制/入队对比、存储复用限制及完整性回归。
-- [贡献指南](../CONTRIBUTING.md)：开发约定与验证方式。
-- [仓库结构复查](repository-review.md)：调用关系、测试归位、生成内容清理及剩余边界。
+- [架构](architecture.md)：模块、会话状态、启动取消、通知、认证保存和停止期限。
+- [代码阅读指南](code-reading-guide.md)：代码入口、数据流和修改位置。
+- [构建指南](building.md)：环境、上游补丁、版本同步及安装包。
+- [测试说明](../test/README.md)：测试分类、命令和生成内容。
+- [性能基线](performance-baseline.md)：合成测量方法、产物限制与解释范围。
+- [贡献指南](../CONTRIBUTING.md)：开发、验证和提交约定。
 
-## 维护与授权
+## 当前发行与授权
 
-- [更新日志](../CHANGELOG.md)：本版改进、历史版本与兼容范围。
-- [维护进度](maintenance-progress.md)：会话、采集解码/统计、日志、协议回绕、上游补丁和音频队列维护记录。
-- [原审查复查](review-followup.md)：逐项完成度、剩余问题、优先级和本轮验证范围。
-- [维护审查记录](security-review-20261008.md)：分支封存、安全修复、历史数据边界与验证结果。
-- [第三方依赖与来源](../THIRD_PARTY.md)：固定版本、使用范围、本地修改和参考资料。
-- [许可证状态](licensing.md)：已确认授权、具体待确认事项和发行材料。
+- [更新日志](../CHANGELOG.md)：当前及历史版本的功能变更。
+- [v1.0.3 交付简报](release-v1.0.3.md)：本次更改、验证范围和产物位置。
+- [第三方依赖与来源](../THIRD_PARTY.md)：固定版本、修改和授权来源。
+- [许可证状态](licensing.md)：授权边界和发行材料。
 
-## 历史记录
+`error-codes.json` 是 Rust/TypeScript 共用的运行时错误契约，随源码保留。
 
-- [早期架构决定](history/architecture-notes.md)
-- [立体声实机验证过程](history/stereo-validation.md)
+## 文档维护规则
 
-历史记录用于追溯决定，当前行为以使用与架构文档为准。
+每次发行直接更新现行文档，功能变化写入 CHANGELOG；当前交付简报随版本替换。已完成的优化、审查、逐轮测试计数和操作流水不继续积存在 docs，也不另建历史目录。
+
+删除过程记录前，先将仍有效的规则或限制合并到相应指南，并确认原文已入 Git。查阅旧文档时使用 `git log -- docs`，再用 `git show <commit>:docs/<文件名>` 查看。

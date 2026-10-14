@@ -124,6 +124,8 @@ fn run(
         Ok(())
     };
     let mut server: Option<auth::Server> = None;
+    let mut policy_worker: Option<auth_memory::Worker> = None;
+    let mut policy_events: Option<auth_memory::Sender> = None;
     let mut owned_source: Option<Arc<Source>> = None;
     let mut activated = false;
     let mut privacy = Redactor::default();
@@ -199,31 +201,28 @@ fn run(
         *e.settings.lock().unwrap() = settings.clone();
         check()?;
         let event_app = app.clone();
-        let event_engine = e.clone();
-        let event_control = control.clone();
+        let policy_engine = e.clone();
+        let worker = auth_memory::Worker::start(identities, control.clone(), move |identity| {
+            let mut next = policy_engine.auth_memory.lock().unwrap().clone();
+            next.remember(&policy_engine.root, identity)?;
+            *policy_engine.auth_memory.lock().unwrap() = next;
+            Ok(())
+        })
+        .map_err(|error| format!("[AUTH_CACHE_FAILED] 认证策略后台线程启动失败：{error}"))?;
+        let policies = worker.sender();
+        policy_events = Some(policies.clone());
+        policy_worker = Some(worker);
         let emit: GuiEmitter = Arc::new(move |mut event| {
-            if !event_control.stop.load(Ordering::Acquire) {
-                if let Some(host) = auth_memory::password_host(&event) {
-                    if let Some((_, identity)) =
-                        identities.iter().find(|(address, _)| address == host)
-                    {
-                        if let Err(error) = event_engine
-                            .auth_memory
-                            .lock()
-                            .unwrap()
-                            .remember(&event_engine.root, identity)
-                        {
-                            let _ = event_app.emit("stream-event", json!({"session_id":id,"kind":"auth_memory_error","error":format!("认证方式记录保存失败：{error}")}));
-                        }
-                    }
-                }
+            policies.observe(&event);
+            for error in policies.take_errors() {
+                let _ = event_app.emit("stream-event", json!({"session_id":id,"kind":"auth_memory_error","error":format!("认证方式记录保存失败：{error}")}));
             }
             event["session_id"] = json!(id);
             let _ = event_app.emit("stream-event", event);
         });
 
-        // 保留带认证记忆的回调供正常收尾；看门狗只发常量错误，不访问文件。
-        // Retain the auth-aware emitter for normal cleanup; watchdog errors never read files.
+        // 回调只登记有界请求/取错误；认证策略锁和文件操作仅在后台线程。
+        // The callback only queues bounded requests/drains errors; policy locks and disk stay off it.
         let prepared_emit = emit;
         let pipe = format!("\\\\.\\pipe\\airplay-bridge-{}-{id}", std::process::id());
         server = Some(auth::Server::start(
@@ -327,6 +326,38 @@ fn run(
             }
         }
         drop(server);
+    }
+    if let Some(mut worker) = policy_worker {
+        if let Err(error) = worker.finish_until(deadline - Duration::from_millis(100)) {
+            let primary = result
+                .err()
+                .map(|error| format!("{error}；"))
+                .unwrap_or_default();
+            result = Err(format!("{primary}认证策略收尾：{error}"));
+            if worker.unfinished() {
+                if let Some(active) = e.session.lock().unwrap().as_mut().filter(|s| s.id == id) {
+                    active.auth_policy = Some(worker);
+                }
+            }
+        }
+    }
+    if let Some(policies) = policy_events {
+        let errors = policies.take_errors();
+        if !errors.is_empty() {
+            let notify = emit.clone();
+            let error = format!("认证方式记录保存失败：{}", errors.join("；"));
+            if let Err(error) = homepod_test::shutdown::run_until(
+                deadline.min(Instant::now() + Duration::from_millis(50)),
+                move || notify(json!({"kind":"auth_memory_error","error":error})),
+            ) {
+                control.cleanup_complete.store(false, Ordering::Release);
+                let primary = result
+                    .err()
+                    .map(|error| format!("{error}；"))
+                    .unwrap_or_default();
+                result = Err(format!("{primary}{error}"));
+            }
+        }
     }
     // 先确认资源收尾，再标记完成/释放预留。超时占用不由迟到结果清除。
     // Confirm cleanup before completion/release; late results never clear an expired reservation.

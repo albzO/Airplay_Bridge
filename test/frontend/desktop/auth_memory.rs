@@ -46,3 +46,29 @@ fn only_explicit_password_evidence_is_learned() {
         );
     }
 }
+
+#[test]
+fn failed_save_does_not_commit_memory_and_next_attempt_retries() {
+    let root = std::env::temp_dir().join(format!("airplay-policy-failure-{}", std::process::id()));
+    fs::create_dir_all(&root).unwrap();
+    // A directory at the pending-file path deterministically rejects the attempted write.
+    fs::create_dir(root.join("auth-policy.pending.json")).unwrap();
+    let mut memory = Memory::default();
+    assert!(memory.remember(&root, "device|key").is_err());
+    assert!(!memory.required.contains("device|key"));
+    fs::remove_dir(root.join("auth-policy.pending.json")).unwrap();
+    memory.remember(&root, "device|key").unwrap();
+    assert!(
+        Memory::load(&root, &[])
+            .unwrap()
+            .required
+            .contains("device|key")
+    );
+    let device: Device = serde_json::from_value(serde_json::json!({"name":"test","service":"test","host":"test","addresses":["127.0.0.1"],"port":7000,"properties":{"deviceid":"device","pk":"key"}})).unwrap();
+    fs::create_dir(root.join("auth-policy.pending.json")).unwrap();
+    assert!(memory.forget(&root, &[device]).is_err());
+    assert!(memory.required.contains("device|key"));
+    fs::remove_dir(root.join("auth-policy.pending.json")).unwrap();
+    fs::remove_file(root.join("auth-policy.json")).unwrap();
+    fs::remove_dir(root).unwrap();
+}

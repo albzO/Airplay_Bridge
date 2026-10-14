@@ -1,6 +1,6 @@
 //! 会话预留与准备期限；不在这些锁内调用驱动、文件或线程等待。
 //! Session reservation and preparation deadline; no driver, file or join calls under these locks.
-use crate::auth;
+use crate::{auth, auth_memory};
 use homepod_test::live::GuiControl;
 use std::{
     sync::{
@@ -120,6 +120,7 @@ pub struct Session {
     pub preparation: Arc<Preparation>,
     pub reply: Option<Sender<auth::Reply>>,
     pub hosts: Vec<String>,
+    pub auth_policy: Option<auth_memory::Worker>,
 }
 
 pub fn reserve(
@@ -156,6 +157,7 @@ pub fn reserve(
         preparation: preparation.clone(),
         reply: None,
         hosts: Vec::new(),
+        auth_policy: None,
     });
     Ok((id, control, preparation))
 }
