@@ -14,7 +14,7 @@ use homepod_test::{capture, data_dir, discovery::Device, source::Source};
 use serde::Serialize;
 use serde_json::Value;
 use session::Session;
-pub use settings::Settings;
+pub use settings::{Appearance, Settings};
 pub use startup::set as set_autostart;
 use std::{
     fs, io,

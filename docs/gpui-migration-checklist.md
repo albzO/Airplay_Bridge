@@ -21,10 +21,10 @@ v1.0.3 两份发行文件通过 SHA256 核对。预研用 GPUI `0.2.2`、GPUI Co
 
 - [x] **接入 GPUI 窗口和事件。** Windows x64 的独立入口接上 `Engine`、后台作业、托盘、单实例唤醒和退出收尾。电平与遥测合并，控制 FIFO 有上限并为最终事件留独立位置。参见 [事件桥接](../airplay-frontend/src-gpui/src/inbox.rs) 和 [窗口入口](../airplay-frontend/src-gpui/src/shell.rs)。
 - [x] **实现最小播放闭环。** 按播放和录音分组选择来源，配置提交后启动预览；可刷新和选择 AirPlay 接收端或立体声对，开始、停止以及输入和重试密码。原生 Rust 会话同步取得可信编号，区分 `PCM_READY` 与实际播放，并过滤迟到事件。参见 [播放页](../airplay-frontend/src-gpui/src/player.rs) 和 [会话状态](../airplay-frontend/src-gpui/src/session.rs)。
-- [ ] **补齐播放控件和常规设置。** 对照旧版实现音量、静音、立体声左右互换、输入声道映射、播放提前量、外观、采集开关、开机自启及保持唤醒。验证设置写入失败回退，保持播放与设置页面底部操作区可用。
+- [x] **补齐播放控件和常规设置。** 音量显示使用接收端回报，静音可恢复最近一次确认的非零音量。播放页提供立体声左右互换，常规设置提供输入声道映射、播放提前量、关闭动作、外观、开机自启和保持唤醒。播放与设置共用底部的来源、采集和串流控件。设置提交失败时沿用已确认值。参见 [播放与设置控件](../airplay-frontend/src-gpui/src/player/controls.rs)。
 - [ ] **迁移诊断和窗口交互。** 补运行统计、技术详情、日志和会话报告，覆盖日志上限、脱敏、清空范围和打开日志目录。恢复拖拽、最小化、最大化及关闭交互，核对键盘操作、焦点和高 DPI 布局。对照 [现有 UI 行为](ui.md)、[诊断状态](../airplay-frontend/src/useDiagnostics.ts) 和 [错误代码](error-codes.md)。
 
-从仓库根目录运行 `.\scripts\build-gpui.ps1 -Offline` 构建预览版。脚本从 `dist/runtime` 取现有后端，输出 `build/gpui-preview/airplay-bridge-gpui.exe`。预览版使用自己的 `portable.flag` 和 `data/`。真机串流、托盘和输入体验的验收仍按后续清单执行。
+从仓库根目录运行 `.\scripts\build-gpui.ps1 -Offline` 构建预览版。脚本从 `dist/runtime` 取现有后端，输出 `build/gpui-preview/airplay-bridge-gpui.exe`。预览版使用自己的 `portable.flag`、`data/` 和 `AirPlay Bridge GPUI Preview` 开机自启项。真机串流、托盘和输入体验的验收仍按后续清单执行。
 
 ## P3 · 回归通过后切换发行入口
 

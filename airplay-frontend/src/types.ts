@@ -92,6 +92,7 @@ export type Settings = {
   detailedLogs: boolean;
   captureDiagnostics: boolean;
   closeAction: 'tray' | 'quit';
+  appearance?: 'system' | 'light' | 'dark';
   speakersSwapped: boolean;
   keepAwake: boolean;
 };

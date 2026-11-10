@@ -121,6 +121,14 @@ const input: Reader<Input> = (value, path) => {
 const settings: Reader<Settings> = (value, path) => {
   const v = object(value, path);
   if (v.closeAction !== 'tray' && v.closeAction !== 'quit') invalid(`${path}.closeAction`);
+  const appearance = v.appearance;
+  if (
+    appearance !== undefined &&
+    appearance !== 'system' &&
+    appearance !== 'light' &&
+    appearance !== 'dark'
+  )
+    invalid(`${path}.appearance`);
   const latency = integer(v.latency, `${path}.latency`);
   const buffer = integer(v.buffer, `${path}.buffer`);
   if (latency < 250 || latency > 2000) invalid(`${path}.latency`);
@@ -131,6 +139,7 @@ const settings: Reader<Settings> = (value, path) => {
     buffer,
     mapping: pair(v.mapping, `${path}.mapping`, integer),
     closeAction: v.closeAction,
+    ...(appearance !== undefined ? { appearance } : {}),
     detailedLogs: boolean(v.detailedLogs, `${path}.detailedLogs`),
     captureDiagnostics: boolean(v.captureDiagnostics, `${path}.captureDiagnostics`),
     speakersSwapped: boolean(v.speakersSwapped, `${path}.speakersSwapped`),

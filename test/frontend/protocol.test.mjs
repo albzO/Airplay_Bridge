@@ -75,6 +75,12 @@ test('initialization validates installed and portable data modes', () => {
     assert.throws(() => decodeInitialization({ ...initialization, dataMode }), /格式不正确/);
 });
 
+test('the legacy adapter preserves the optional native appearance setting', () => {
+  assert.equal(decodeInitialization(initialization).settings.appearance, undefined);
+  const settings = { ...initialization.settings, appearance: 'dark' };
+  assert.equal(decodeInitialization({ ...initialization, settings }).settings.appearance, 'dark');
+});
+
 test('malformed initialization cannot partially populate page state', () => {
   for (const patch of [
     { devices: {} },
@@ -83,6 +89,7 @@ test('malformed initialization cannot partially populate page state', () => {
     { settings: { ...initialization.settings, mapping: [0] } },
     { settings: { ...initialization.settings, buffer: 0 } },
     { settings: { ...initialization.settings, closeAction: 'unknown' } },
+    { settings: { ...initialization.settings, appearance: 'unknown' } },
   ])
     assert.throws(() => decodeInitialization({ ...initialization, ...patch }), /格式不正确/);
 });

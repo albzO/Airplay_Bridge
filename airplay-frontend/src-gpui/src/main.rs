@@ -5,6 +5,7 @@ mod inbox;
 mod player;
 mod session;
 mod shell;
+mod volume;
 
 use airplay_desktop::Engine;
 use anyhow::Result;

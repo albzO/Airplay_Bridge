@@ -1,15 +1,20 @@
 //! GPUI 播放页：来源、接收端、会话和密码交互。
 //! GPUI player: source, receiver, session and password controls.
+mod controls;
+
 use crate::{
     inbox::{Inbox, Pending, StreamUpdate},
     session::{Phase, Session},
+    volume::VolumeReport,
 };
-use airplay_desktop::{DesktopJob, Engine, Initialization, Settings};
-use gpui::{Context, Entity, Focusable, IntoElement, Render, Window, div, prelude::*, rgb};
+use airplay_desktop::{Appearance, DesktopJob, Engine, Initialization, Settings};
+use controls::Page;
+use gpui::{Context, Entity, Focusable, IntoElement, Render, Task, Window, div, prelude::*, rgb};
 use gpui_component::{
     ActiveTheme, Disableable, StyledExt,
     button::{Button, ButtonVariants},
     input::{Copy as CopyText, Cut, Input as TextInput, InputEvent, InputState, SelectAll},
+    slider::{SliderEvent, SliderState, SliderValue},
 };
 use homepod_test::{capture::Input, discovery::Device};
 use std::{collections::BTreeMap, sync::Arc};
@@ -61,6 +66,12 @@ pub struct Player {
     operation: Option<&'static str>,
     backend_available: bool,
     capture_enabled: bool,
+    auto_capture_pending: bool,
+    page: Page,
+    autostart: bool,
+    latency_input: Entity<InputState>,
+    volume_slider: Entity<SliderState>,
+    volume_task: Option<Task<()>>,
     peaks: [f32; 2],
     message: Option<String>,
     source_message: Option<String>,
@@ -88,6 +99,30 @@ impl Player {
         })
         .detach();
         let password = Self::password_input(window, cx);
+        let latency_input = cx.new(|cx| InputState::new(window, cx).default_value("300"));
+        cx.subscribe_in(&latency_input, window, |player, _, event, window, cx| {
+            if matches!(event, InputEvent::PressEnter { secondary: false }) {
+                player.save_latency(window, cx);
+            }
+        })
+        .detach();
+        let volume_slider = cx.new(|_| SliderState::new().max(100.).step(1.).default_value(50.));
+        cx.subscribe_in(&volume_slider, window, |player, _, event, window, cx| {
+            if let SliderEvent::Change(SliderValue::Single(level)) = *event {
+                player.schedule_volume(level, window, cx);
+            }
+        })
+        .detach();
+        let view = cx.weak_entity();
+        window
+            .observe_window_appearance(move |window, cx| {
+                let _ = view.update(cx, |player, cx| {
+                    if player.settings.appearance == Appearance::System {
+                        player.apply_appearance(window, cx);
+                    }
+                });
+            })
+            .detach();
         cx.on_next_frame(window, |player, window, cx| player.initialize(window, cx));
         Self {
             engine,
@@ -100,6 +135,12 @@ impl Player {
             operation: Some("正在初始化"),
             backend_available: false,
             capture_enabled: false,
+            auto_capture_pending: true,
+            page: Page::Playback,
+            autostart: false,
+            latency_input,
+            volume_slider,
+            volume_task: None,
             peaks: [0.; 2],
             message: None,
             source_message: None,
@@ -184,13 +225,17 @@ impl Player {
         self.settings = state.settings;
         self.backend_available = state.backend_available;
         self.capture_enabled = state.capture_enabled;
-        self.message = state.awake_error;
+        self.autostart = state.autostart;
+        self.message = state.awake_error.or(state.autostart_error);
+        self.reset_latency_input(window, cx);
+        self.apply_appearance(window, cx);
         self.set_devices(state.devices);
         self.selected = self.receivers.first().map(|receiver| receiver.key.clone());
         if !self.backend_available {
             self.message = Some("缺少原生后端，请从完整的 GPUI 便携目录启动。".into());
         }
         if self.source().is_some() {
+            self.auto_capture_pending = false;
             self.preview(window, cx, self.backend_available);
         } else if self.backend_available {
             self.refresh(window, cx);
@@ -258,7 +303,10 @@ impl Player {
                     player.settings = next;
                     player.peaks = [0.; 2];
                     player.source_message = None;
-                    player.preview(window, cx, false);
+                    if player.capture_enabled || player.auto_capture_pending {
+                        player.auto_capture_pending = false;
+                        player.preview(window, cx, false);
+                    }
                 }
                 Err(error) => player.message = Some(error),
             },
@@ -307,6 +355,8 @@ impl Player {
         ) {
             Ok(id) => {
                 self.session.start(id);
+                self.volume_task = None;
+                self.sync_volume(window, cx);
                 if retry_secret.is_none() {
                     self.clear_password(window, cx);
                 }
@@ -320,6 +370,8 @@ impl Player {
     fn stop(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(id) = self.session.id {
             self.session.stop();
+            self.volume_task = None;
+            self.sync_volume(window, cx);
             self.retry_secret = None;
             self.clear_password(window, cx);
             self.engine.stop_stream(id);
@@ -397,8 +449,24 @@ impl Player {
         let requests_password = matches!(event, StreamUpdate::Password(_));
         let finished = matches!(event, StreamUpdate::Finished { .. });
         let ready = matches!(event, StreamUpdate::Ready);
+        let volume_report = match &event {
+            StreamUpdate::Volume(report) => Some(*report),
+            _ => None,
+        };
         if !self.session.accept(id, event) {
             return;
+        }
+        if let Some(report) = volume_report {
+            if report == VolumeReport::Rejected {
+                self.message = Some("接收端未接受音量更改。".into());
+            }
+            if self.volume_task.is_none() {
+                self.sync_volume(window, cx);
+            }
+        }
+        if finished {
+            self.volume_task = None;
+            self.sync_volume(window, cx);
         }
         if ready || finished {
             self.retry_secret = None;
@@ -526,102 +594,134 @@ impl Render for Player {
                                     .child("将 Windows 音频发送到 AirPlay 接收端"),
                             ),
                     )
-                    .child(div().text_sm().text_color(muted).child(status)),
-            )
-            .child(
-                div()
-                    .flex()
-                    .gap_4()
-                    .flex_1()
-                    .min_h_0()
                     .child(
                         div()
-                            .id("sources")
-                            .flex_1()
-                            .overflow_y_scroll()
-                            .border_1()
-                            .border_color(border)
-                            .rounded_lg()
-                            .p_4()
+                            .flex()
+                            .items_center()
+                            .gap_3()
+                            .child(div().text_sm().text_color(muted).child(status))
                             .child(
-                                div()
-                                    .flex()
-                                    .flex_col()
-                                    .gap_4()
-                                    .child(div().font_semibold().child("音频来源"))
-                                    .child(self.source_group(true, cx))
-                                    .child(self.source_group(false, cx)),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .id("receivers")
-                            .flex_1()
-                            .overflow_y_scroll()
-                            .border_1()
-                            .border_color(border)
-                            .rounded_lg()
-                            .p_4()
-                            .child(
-                                div()
-                                    .flex()
-                                    .flex_col()
-                                    .gap_3()
-                                    .child(
-                                        div()
-                                            .flex()
-                                            .items_center()
-                                            .justify_between()
-                                            .child(div().font_semibold().child("AirPlay 接收端"))
-                                            .child(
-                                                Button::new("refresh")
-                                                    .label("刷新")
-                                                    .disabled(
-                                                        self.locked() || !self.backend_available,
-                                                    )
-                                                    .on_click(cx.listener(
-                                                        |player, _, window, cx| {
-                                                            player.message = None;
-                                                            player.refresh(window, cx);
-                                                        },
-                                                    )),
-                                            ),
-                                    )
-                                    .when(self.receivers.is_empty(), |el| {
-                                        el.child(
-                                            div()
-                                                .text_sm()
-                                                .text_color(muted)
-                                                .child("尚未发现接收端"),
-                                        )
+                                Button::new("page")
+                                    .label(if self.page == Page::Playback {
+                                        "设置"
+                                    } else {
+                                        "返回播放"
                                     })
-                                    .children(self.receivers.iter().enumerate().map(
-                                        |(index, receiver)| {
-                                            let key = receiver.key.clone();
-                                            let button = Button::new(("receiver", index))
-                                                .label(receiver.label.clone())
-                                                .w_full();
-                                            let button = if self.selected.as_ref() == Some(&key) {
-                                                button.primary()
-                                            } else {
-                                                button.ghost()
-                                            };
-                                            button.disabled(self.locked()).on_click(cx.listener(
-                                                move |player, _, window, cx| {
-                                                    if player.selected.as_ref() != Some(&key) {
-                                                        player.selected = Some(key.clone());
-                                                        player.session = Session::default();
-                                                        player.message = None;
-                                                        player.clear_password(window, cx);
-                                                        cx.notify();
-                                                    }
-                                                },
-                                            ))
-                                        },
-                                    )),
+                                    .on_click(cx.listener(|player, _, _, cx| {
+                                        player.page = if player.page == Page::Playback {
+                                            Page::Settings
+                                        } else {
+                                            Page::Playback
+                                        };
+                                        cx.notify();
+                                    })),
                             ),
                     ),
             )
+            .when(self.page == Page::Playback, |root| {
+                root.child(
+                    div()
+                        .flex()
+                        .gap_4()
+                        .flex_1()
+                        .min_h_0()
+                        .child(
+                            div()
+                                .id("sources")
+                                .flex_1()
+                                .overflow_y_scroll()
+                                .border_1()
+                                .border_color(border)
+                                .rounded_lg()
+                                .p_4()
+                                .child(
+                                    div()
+                                        .flex()
+                                        .flex_col()
+                                        .gap_4()
+                                        .child(div().font_semibold().child("音频来源"))
+                                        .child(self.source_group(true, cx))
+                                        .child(self.source_group(false, cx)),
+                                ),
+                        )
+                        .child(
+                            div()
+                                .id("receivers")
+                                .flex_1()
+                                .overflow_y_scroll()
+                                .border_1()
+                                .border_color(border)
+                                .rounded_lg()
+                                .p_4()
+                                .child(
+                                    div()
+                                        .flex()
+                                        .flex_col()
+                                        .gap_3()
+                                        .child(
+                                            div()
+                                                .flex()
+                                                .items_center()
+                                                .justify_between()
+                                                .child(
+                                                    div().font_semibold().child("AirPlay 接收端"),
+                                                )
+                                                .child(
+                                                    Button::new("refresh")
+                                                        .label("刷新")
+                                                        .disabled(
+                                                            self.locked()
+                                                                || !self.backend_available,
+                                                        )
+                                                        .on_click(cx.listener(
+                                                            |player, _, window, cx| {
+                                                                player.message = None;
+                                                                player.refresh(window, cx);
+                                                            },
+                                                        )),
+                                                ),
+                                        )
+                                        .child(self.volume_controls(cx))
+                                        .when(self.receivers.is_empty(), |el| {
+                                            el.child(
+                                                div()
+                                                    .text_sm()
+                                                    .text_color(muted)
+                                                    .child("尚未发现接收端"),
+                                            )
+                                        })
+                                        .children(self.receivers.iter().enumerate().map(
+                                            |(index, receiver)| {
+                                                let key = receiver.key.clone();
+                                                let button = Button::new(("receiver", index))
+                                                    .label(receiver.label.clone())
+                                                    .w_full();
+                                                let button = if self.selected.as_ref() == Some(&key)
+                                                {
+                                                    button.primary()
+                                                } else {
+                                                    button.ghost()
+                                                };
+                                                button.disabled(self.locked()).on_click(
+                                                    cx.listener(move |player, _, window, cx| {
+                                                        if player.selected.as_ref() != Some(&key) {
+                                                            player.selected = Some(key.clone());
+                                                            player.session = Session::default();
+                                                            player.message = None;
+                                                            player.clear_password(window, cx);
+                                                            cx.notify();
+                                                        }
+                                                    }),
+                                                )
+                                            },
+                                        )),
+                                ),
+                        ),
+                )
+            })
+            .when(self.page == Page::Settings, |root| {
+                root.child(self.settings_page(cx))
+            })
             .when_some(prompt, |el, name| {
                 el.child(
                     div()
@@ -672,7 +772,7 @@ impl Render for Player {
                             .flex_col()
                             .flex_1()
                             .gap_2()
-                            .child(div().text_sm().child(source_name))
+                            .child(self.source_menu(source_name, cx))
                             .child(div().flex().gap_2().children(self.peaks.map(|peak| {
                                 let fill = if peak > 0. {
                                     ((20. * peak.log10() + 60.) / 60.).clamp(0., 1.)
@@ -688,6 +788,7 @@ impl Render for Player {
                                 )
                             }))),
                     )
+                    .child(self.capture_button(cx))
                     .child(if busy {
                         Button::new("stop")
                             .label("停止串流")

@@ -1,5 +1,6 @@
 //! 将后台事件整理成播放页所需的更新，并合并高频快照。
 //! Translate worker events for the player and coalesce high-frequency snapshots.
+use crate::volume::VolumeReport;
 use airplay_desktop::{DesktopEvent, EventSink};
 use async_channel::{Receiver, Sender};
 use serde::Deserialize;
@@ -27,6 +28,7 @@ pub enum StreamUpdate {
     Password(String),
     Ready,
     Playing,
+    Volume(VolumeReport),
     Notice(String),
     Finished {
         error: Option<String>,
@@ -40,7 +42,14 @@ impl StreamUpdate {
         Some(match payload["kind"].as_str()? {
             "preparing_source" => Self::Preparing,
             "password_required" => Self::Password(field("host")?),
-            "native" if payload["line"].as_str()?.contains("[PROBE] PCM_READY") => Self::Ready,
+            "native" => {
+                let line = payload["line"].as_str()?;
+                if line.contains("[PROBE] PCM_READY") {
+                    Self::Ready
+                } else {
+                    Self::Volume(VolumeReport::from_native(line)?)
+                }
+            }
             "telemetry" => Self::Playing,
             "auth_memory_error" | "auth_pipe_error" => Self::Notice(field("error")?),
             "finished" => Self::Finished {

@@ -8,6 +8,15 @@
 use serde::{Deserialize, Serialize};
 use std::{fs, path::Path};
 
+#[derive(Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Appearance {
+    #[default]
+    System,
+    Light,
+    Dark,
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct Settings {
@@ -28,6 +37,7 @@ pub struct Settings {
     pub detailed_logs: bool,
     pub capture_diagnostics: bool,
     pub close_action: String,
+    pub appearance: Appearance,
     pub speakers_swapped: bool,
     pub keep_awake: bool,
 }
@@ -42,6 +52,7 @@ impl Default for Settings {
             detailed_logs: false,
             capture_diagnostics: false,
             close_action: "tray".into(),
+            appearance: Appearance::System,
             speakers_swapped: false,
             keep_awake: true,
         }

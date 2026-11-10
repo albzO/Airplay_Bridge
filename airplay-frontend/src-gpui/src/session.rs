@@ -1,6 +1,9 @@
 //! 播放页会话状态，只有 Engine 返回的编号可以接收事件。
 //! Player session state, keyed by the ID returned by Engine.
-use crate::inbox::StreamUpdate;
+use crate::{
+    inbox::StreamUpdate,
+    volume::{Volume, VolumeReport},
+};
 
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
 pub enum Phase {
@@ -40,6 +43,7 @@ pub struct Session {
     pub phase: Phase,
     pub prompt: Option<String>,
     pub error: Option<String>,
+    pub volume: Volume,
     last_password_host: Option<String>,
 }
 
@@ -97,6 +101,8 @@ impl Session {
                 self.phase = Phase::Ready;
             }
             StreamUpdate::Playing => self.phase = Phase::Playing,
+            StreamUpdate::Volume(VolumeReport::Level(level)) => self.volume.confirm(level),
+            StreamUpdate::Volume(VolumeReport::Rejected) => {}
         }
         true
     }
