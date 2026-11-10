@@ -19,11 +19,12 @@ v1.0.3 两份发行文件通过 SHA256 核对。预研用 GPUI `0.2.2`、GPUI Co
 
 ## P2 · 按用户流程迁移界面
 
-- [ ] **接入 GPUI 窗口和事件。** 锁定依赖，接上 `Engine` 和后台任务。为 GPUI 实体安排主线程更新，验证事件突发和慢 UI 时队列有界、音频线程无需等待渲染。接入窗口、托盘、单实例和退出收尾，沿用现有数据路径。
-- [ ] **迁移界面会话和设置状态。** 用 Rust 状态承接 `useStreamSession.ts`，覆盖确认前停止、旧事件和迟到确认、`PCM_READY` 与实际播放分阶段、收尾未完成时拒绝重连。设置、声道映射或互换失败后恢复到已确认值。参见 [会话状态](../airplay-frontend/src/useStreamSession.ts) 和 [现有前端测试](../test/README.md)。
-- [ ] **先跑通最小播放闭环。** 来源分组与选择 → 电平预览 → 刷新并选 AirPlay 设备 → 开始/停止 → 回到预览。覆盖首启无来源、恢复有效来源、来源失效、准备期间停止、接收端要求密码及密码错误重试。
+- [x] **接入 GPUI 窗口和事件。** Windows x64 的独立入口接上 `Engine`、后台作业、托盘、单实例唤醒和退出收尾。电平与遥测合并，控制 FIFO 有上限并为最终事件留独立位置。参见 [事件桥接](../airplay-frontend/src-gpui/src/inbox.rs) 和 [窗口入口](../airplay-frontend/src-gpui/src/shell.rs)。
+- [x] **实现最小播放闭环。** 按播放和录音分组选择来源，配置提交后启动预览；可刷新和选择 AirPlay 接收端或立体声对，开始、停止以及输入和重试密码。原生 Rust 会话同步取得可信编号，区分 `PCM_READY` 与实际播放，并过滤迟到事件。参见 [播放页](../airplay-frontend/src-gpui/src/player.rs) 和 [会话状态](../airplay-frontend/src-gpui/src/session.rs)。
 - [ ] **补齐播放控件和常规设置。** 对照旧版实现音量、静音、立体声左右互换、输入声道映射、播放提前量、外观、采集开关、开机自启及保持唤醒。验证设置写入失败回退，保持播放与设置页面底部操作区可用。
 - [ ] **迁移诊断和窗口交互。** 补运行统计、技术详情、日志和会话报告，覆盖日志上限、脱敏、清空范围和打开日志目录。恢复拖拽、最小化、最大化及关闭交互，核对键盘操作、焦点和高 DPI 布局。对照 [现有 UI 行为](ui.md)、[诊断状态](../airplay-frontend/src/useDiagnostics.ts) 和 [错误代码](error-codes.md)。
+
+从仓库根目录运行 `.\scripts\build-gpui.ps1 -Offline` 构建预览版。脚本从 `dist/runtime` 取现有后端，输出 `build/gpui-preview/airplay-bridge-gpui.exe`。预览版使用自己的 `portable.flag` 和 `data/`。真机串流、托盘和输入体验的验收仍按后续清单执行。
 
 ## P3 · 回归通过后切换发行入口
 

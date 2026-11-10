@@ -50,6 +50,7 @@ Run commands from the project root. Frontend tests require frontend dependencies
 # Rust 单元测试 / Rust unit tests
 cargo test --manifest-path airplay-core/Cargo.toml --locked --offline --lib
 cargo test --manifest-path airplay-desktop/Cargo.toml --locked --offline
+cargo test --manifest-path airplay-frontend/src-gpui/Cargo.toml --locked --offline --release --target x86_64-pc-windows-msvc --target-dir build/gpui-migration-target
 # Tauri 入口嵌入生产产物，先构建前端再检查入口。
 # Build production assets before checking the Tauri entry point.
 pnpm --dir airplay-frontend build
