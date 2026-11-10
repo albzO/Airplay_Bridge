@@ -37,8 +37,12 @@ impl Player {
         self.message = None;
         let appearance_changed = next.appearance != self.settings.appearance;
         let latency_changed = next.latency != self.settings.latency;
+        let buffer_changed = next.buffer != self.settings.buffer;
         if latency_changed && job.is_err() {
             self.reset_latency_input(window, cx);
+        }
+        if buffer_changed && job.is_err() {
+            self.reset_buffer_input(window, cx);
         }
         self.run_job(
             "正在保存设置",
@@ -58,11 +62,19 @@ impl Player {
                 if latency_changed {
                     player.reset_latency_input(window, cx);
                 }
+                if buffer_changed {
+                    player.reset_buffer_input(window, cx);
+                }
             },
         );
     }
 
-    fn save_settings(&mut self, next: Settings, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn save_settings(
+        &mut self,
+        next: Settings,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if self.settings_locked() {
             return;
         }
@@ -361,7 +373,7 @@ impl Player {
             })
     }
 
-    pub(super) fn settings_page(&self, cx: &Context<Self>) -> impl IntoElement {
+    pub(super) fn general_settings(&self, cx: &Context<Self>) -> impl IntoElement {
         let disabled = self.settings_locked();
         let border = cx.theme().border;
         let muted = cx.theme().muted_foreground;

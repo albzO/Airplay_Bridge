@@ -22,12 +22,12 @@ v1.0.3 两份发行文件通过 SHA256 核对。预研用 GPUI `0.2.2`、GPUI Co
 - [x] **接入 GPUI 窗口和事件。** Windows x64 的独立入口接上 `Engine`、后台作业、托盘、单实例唤醒和退出收尾。电平与遥测合并，控制 FIFO 有上限并为最终事件留独立位置。参见 [事件桥接](../airplay-frontend/src-gpui/src/inbox.rs) 和 [窗口入口](../airplay-frontend/src-gpui/src/shell.rs)。
 - [x] **实现最小播放闭环。** 按播放和录音分组选择来源，配置提交后启动预览；可刷新和选择 AirPlay 接收端或立体声对，开始、停止以及输入和重试密码。原生 Rust 会话同步取得可信编号，区分 `PCM_READY` 与实际播放，并过滤迟到事件。参见 [播放页](../airplay-frontend/src-gpui/src/player.rs) 和 [会话状态](../airplay-frontend/src-gpui/src/session.rs)。
 - [x] **补齐播放控件和常规设置。** 音量显示使用接收端回报，静音可恢复最近一次确认的非零音量。播放页提供立体声左右互换，常规设置提供输入声道映射、播放提前量、关闭动作、外观、开机自启和保持唤醒。播放与设置共用底部的来源、采集和串流控件。设置提交失败时沿用已确认值。参见 [播放与设置控件](../airplay-frontend/src-gpui/src/player/controls.rs)。
-- [ ] **迁移诊断和窗口交互。** 补运行统计、技术详情、日志和会话报告，覆盖日志上限、脱敏、清空范围和打开日志目录。恢复拖拽、最小化、最大化及关闭交互，核对键盘操作、焦点和高 DPI 布局。对照 [现有 UI 行为](ui.md)、[诊断状态](../airplay-frontend/src/useDiagnostics.ts) 和 [错误代码](error-codes.md)。
+- [x] **迁移诊断和窗口交互。** 设置页已接入运行统计、技术详情、日志和会话报告。会话日志使用脱敏副本，清空显示只清除逐包摘要。窗口采用 Windows 原生标题栏，关闭交由现有托盘和退出逻辑处理。参见 [诊断状态](../airplay-frontend/src-gpui/src/diagnostics.rs)、[诊断页面](../airplay-frontend/src-gpui/src/player/diagnostic_view.rs) 和 [日志保留规则](log-retention.md)。
 
 从仓库根目录运行 `.\scripts\build-gpui.ps1 -Offline` 构建预览版。脚本从 `dist/runtime` 取现有后端，输出 `build/gpui-preview/airplay-bridge-gpui.exe`。预览版使用自己的 `portable.flag`、`data/` 和 `AirPlay Bridge GPUI Preview` 开机自启项。真机串流、托盘和输入体验的验收仍按后续清单执行。
 
 ## P3 · 回归通过后切换发行入口
 
-- [ ] **补齐测试迁移。** 复用 core、原生后端及桌面 Rust 测试。将 `session`、`diagnostics`、`protocol` 和 Playwright 用例中仍适用的断言移到 Rust 状态、后端边界或 GPUI/Windows 交互测试。用模拟接收端验证认证、密码管道、立体声和慢启动，再用真实接收端验证 Playback 与录音来源、托盘后台连续播放和多次启停。用同机同配置对比 P0 的 Release 基线，记录差异与可接受范围。
+- [ ] **补齐测试迁移。** 复用 core、原生后端及桌面 Rust 测试。将 `session`、`diagnostics`、`protocol` 和 Playwright 用例中仍适用的断言移到 Rust 状态、后端边界或 GPUI/Windows 交互测试。用模拟接收端验证认证、密码管道、立体声和慢启动，再用真实接收端验证 Playback 与录音来源、托盘后台连续播放和多次启停。实机验收覆盖窗口拖动、缩放、键盘焦点和高 DPI。用同机同配置对比 P0 的 Release 基线，记录差异与可接受范围。
 - [ ] **切换构建与打包。** 更新 `build-desktop.ps1`，由 Cargo 构建新 GUI，继续生成 `airplay-bridge.exe`、`runtime/`、`tools/` 和许可证材料。将打包版本号从 `tauri.conf.json` 改由新桌面 crate 提供，处理图标、Windows manifest 和文件版本信息。在 NSIS、Inno Setup 和打包脚本中移除 WebView2 检查与引导参数，验证安装包和便携包在干净 Windows 上可启动和串流。对照 [构建及发行说明](building.md) 和 [打包脚本](../scripts/package-release.ps1)。
 - [ ] **验证升级和回退。** 现有正式安装版沿用 Inno Setup 身份，单独检查 NSIS 打包产物。测试覆盖安装后配置、自启、托盘和后端定位；便携版在独立副本内验证升级；确认卸载只清理发行文件。用旧版和备份数据演练回退。保留 v1.0.3 发行包作为回退入口，验收通过后再清理旧 Vue/Tauri 入口、浏览器测试和相关 Node/pnpm 构建步骤，更新文档和 SHA256。

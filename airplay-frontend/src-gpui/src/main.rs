@@ -1,6 +1,7 @@
 #![windows_subsystem = "windows"]
 //! GPUI 播放入口及 Windows 事件循环。
 //! GPUI player entry point and Windows event loop.
+mod diagnostics;
 mod inbox;
 mod player;
 mod session;
@@ -9,7 +10,9 @@ mod volume;
 
 use airplay_desktop::Engine;
 use anyhow::Result;
-use gpui::{App, AppContext, Application, Bounds, WindowBounds, WindowOptions, px, size};
+use gpui::{
+    App, AppContext, Application, Bounds, TitlebarOptions, WindowBounds, WindowOptions, px, size,
+};
 use gpui_component::Root;
 use player::Player;
 use std::{cell::Cell, rc::Rc};
@@ -62,10 +65,15 @@ fn open_player(
         WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(bounds)),
             window_min_size: Some(size(px(680.), px(520.))),
+            // 保留 Windows 原生标题栏的拖动、缩放及系统菜单。
+            // Keep Windows caption dragging, resizing and the system menu.
+            titlebar: Some(TitlebarOptions {
+                title: Some("AirPlay Bridge · GPUI".into()),
+                ..Default::default()
+            }),
             ..Default::default()
         },
         move |window, cx| {
-            window.set_window_title("AirPlay Bridge · GPUI");
             let player = cx.new(|cx| Player::new(player_engine, window, cx));
             cx.new(|cx| Root::new(player, window, cx))
         },

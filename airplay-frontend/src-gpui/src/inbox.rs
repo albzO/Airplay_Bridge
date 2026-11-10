@@ -1,6 +1,9 @@
 //! 将后台事件整理成播放页所需的更新，并合并高频快照。
 //! Translate worker events for the player and coalesce high-frequency snapshots.
-use crate::volume::VolumeReport;
+use crate::{
+    diagnostics::{self, Batch},
+    volume::VolumeReport,
+};
 use airplay_desktop::{DesktopEvent, EventSink};
 use async_channel::{Receiver, Sender};
 use serde::Deserialize;
@@ -68,6 +71,7 @@ pub struct Pending {
     pub playing: Option<u64>,
     pub finished: Option<(u64, StreamUpdate)>,
     pub overflow: Option<u64>,
+    pub diagnostics: Batch,
 }
 
 #[derive(Clone)]
@@ -89,15 +93,19 @@ impl Inbox {
     }
 
     pub fn sink(&self) -> EventSink {
+        self.session_sink(false)
+    }
+
+    pub fn session_sink(&self, detailed_logs: bool) -> EventSink {
         let inbox = self.clone();
-        Arc::new(move |event| inbox.push(event))
+        Arc::new(move |event| inbox.push(event, detailed_logs))
     }
 
     pub fn take(&self) -> Pending {
         mem::take(&mut *self.pending.lock().unwrap())
     }
 
-    fn push(&self, event: DesktopEvent) {
+    fn push(&self, event: DesktopEvent, detailed_logs: bool) {
         match event {
             DesktopEvent::SourceLevel(payload) => {
                 let Ok(mut update) = serde_json::from_value::<SourceUpdate>(payload) else {
@@ -120,17 +128,26 @@ impl Inbox {
                 session_id,
                 payload,
             } => {
-                let Some(update) = StreamUpdate::decode(&payload) else {
+                let update = StreamUpdate::decode(&payload);
+                let diagnostics = diagnostics::decode(&payload, detailed_logs);
+                if update.is_none() && diagnostics.is_empty() {
                     return;
-                };
+                }
                 let mut pending = self.pending.lock().unwrap();
-                match update {
-                    StreamUpdate::Playing => pending.playing = Some(session_id),
-                    StreamUpdate::Finished { .. } => pending.finished = Some((session_id, update)),
-                    _ if pending.controls.len() < CONTROL_CAPACITY => {
-                        pending.controls.push_back((session_id, update))
+                for entry in diagnostics {
+                    pending.diagnostics.push(session_id, entry);
+                }
+                if let Some(update) = update {
+                    match update {
+                        StreamUpdate::Playing => pending.playing = Some(session_id),
+                        StreamUpdate::Finished { .. } => {
+                            pending.finished = Some((session_id, update))
+                        }
+                        _ if pending.controls.len() < CONTROL_CAPACITY => {
+                            pending.controls.push_back((session_id, update))
+                        }
+                        _ => pending.overflow = Some(session_id),
                     }
-                    _ => pending.overflow = Some(session_id),
                 }
             }
         }

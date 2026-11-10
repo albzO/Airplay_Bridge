@@ -1,14 +1,17 @@
 //! GPUI 播放页：来源、接收端、会话和密码交互。
 //! GPUI player: source, receiver, session and password controls.
 mod controls;
+mod diagnostic_view;
 
 use crate::{
+    diagnostics::Diagnostics,
     inbox::{Inbox, Pending, StreamUpdate},
     session::{Phase, Session},
     volume::VolumeReport,
 };
 use airplay_desktop::{Appearance, DesktopJob, Engine, Initialization, Settings};
 use controls::Page;
+use diagnostic_view::SettingsTab;
 use gpui::{Context, Entity, Focusable, IntoElement, Render, Task, Window, div, prelude::*, rgb};
 use gpui_component::{
     ActiveTheme, Disableable, StyledExt,
@@ -68,8 +71,14 @@ pub struct Player {
     capture_enabled: bool,
     auto_capture_pending: bool,
     page: Page,
+    settings_tab: SettingsTab,
+    diagnostics: Diagnostics,
+    report_open: bool,
+    device_details: Option<String>,
+    auth_notice: Option<String>,
     autostart: bool,
     latency_input: Entity<InputState>,
+    buffer_input: Entity<InputState>,
     volume_slider: Entity<SliderState>,
     volume_task: Option<Task<()>>,
     peaks: [f32; 2],
@@ -106,6 +115,13 @@ impl Player {
             }
         })
         .detach();
+        let buffer_input = cx.new(|cx| InputState::new(window, cx).default_value("128"));
+        cx.subscribe_in(&buffer_input, window, |player, _, event, window, cx| {
+            if matches!(event, InputEvent::PressEnter { secondary: false }) {
+                player.save_buffer(window, cx);
+            }
+        })
+        .detach();
         let volume_slider = cx.new(|_| SliderState::new().max(100.).step(1.).default_value(50.));
         cx.subscribe_in(&volume_slider, window, |player, _, event, window, cx| {
             if let SliderEvent::Change(SliderValue::Single(level)) = *event {
@@ -137,8 +153,14 @@ impl Player {
             capture_enabled: false,
             auto_capture_pending: true,
             page: Page::Playback,
+            settings_tab: SettingsTab::General,
+            diagnostics: Diagnostics::default(),
+            report_open: false,
+            device_details: None,
+            auth_notice: None,
             autostart: false,
             latency_input,
+            buffer_input,
             volume_slider,
             volume_task: None,
             peaks: [0.; 2],
@@ -228,6 +250,8 @@ impl Player {
         self.autostart = state.autostart;
         self.message = state.awake_error.or(state.autostart_error);
         self.reset_latency_input(window, cx);
+        self.reset_buffer_input(window, cx);
+        self.diagnostics.set_mode(state.data_mode);
         self.apply_appearance(window, cx);
         self.set_devices(state.devices);
         self.selected = self.receivers.first().map(|receiver| receiver.key.clone());
@@ -348,13 +372,15 @@ impl Player {
         // start_stream 同步返回预留编号。GPUI 下一次处理队列前编号已登记。
         // start_stream returns the reservation synchronously, before GPUI drains the inbox.
         match self.engine.start_stream(
-            self.inbox.sink(),
+            self.inbox.session_sink(self.settings.detailed_logs),
             names,
             self.settings.clone(),
             retry_secret.is_some(),
         ) {
             Ok(id) => {
                 self.session.start(id);
+                self.diagnostics.begin(&self.settings);
+                self.report_open = false;
                 self.volume_task = None;
                 self.sync_volume(window, cx);
                 if retry_secret.is_none() {
@@ -409,6 +435,10 @@ impl Player {
     }
 
     fn accept(&mut self, pending: Pending, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(id) = self.session.id {
+            self.diagnostics
+                .accept(pending.diagnostics, id, &self.devices);
+        }
         if let Some(source) = pending
             .source
             .filter(|update| update.endpoint == self.settings.endpoint)
@@ -418,6 +448,9 @@ impl Player {
             }
             if let Some(peaks) = source.peaks {
                 self.peaks = peaks;
+            }
+            if let Some(warning) = &source.warning {
+                self.diagnostics.source_warning(warning);
             }
             if let Some(message) = source.error.or(source.warning) {
                 self.source_message = Some(message);
