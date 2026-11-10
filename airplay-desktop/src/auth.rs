@@ -222,5 +222,5 @@ impl Drop for Server {
 }
 
 #[cfg(test)]
-#[path = "../../../test/frontend/desktop/auth.rs"]
+#[path = "../../test/frontend/desktop/auth.rs"]
 mod tests;

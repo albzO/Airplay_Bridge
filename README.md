@@ -27,7 +27,7 @@ AirPlay 协议基础及部分组件来自第三方开源项目，其归属和许
 
 从源码构建需要 Git、Rust MSVC、Visual Studio C++ Build Tools / Windows SDK、MSYS2 UCRT64、Python、Node.js 和 pnpm。原生后端在固定子模块源码的临时副本应用已审查补丁，再选择所需代码编译。具体依赖与适配维护步骤见 [构建指南](docs/building.md)。
 
-生产代码分为 `airplay-frontend/`、`airplay-backend/` 和 `airplay-core/`。测试源码集中在根目录 `test/frontend/`、`test/backend/`、`test/core/`，随 Git 提交；目录和运行入口见 [测试说明](test/README.md)。源码构建需保留完整的 `test/`，截图、日志、录音与本机配置仍不提交或打包。
+生产代码分为 `airplay-frontend/`、`airplay-desktop/`、`airplay-backend/` 和 `airplay-core/`。测试源码集中在根目录 `test/frontend/`、`test/backend/`、`test/core/`，随 Git 提交；目录和运行入口见 [测试说明](test/README.md)。源码构建需保留完整的 `test/`，截图、日志、录音与本机配置仍不提交或打包。
 
 前端可用 `pnpm --dir airplay-frontend test:dom` 自动检查真实模板的按钮、来源选择、密码重试及会话隔离；Windows 默认使用已安装 Edge，无需声卡或 AirPlay 接收设备。
 
@@ -69,12 +69,13 @@ C/C++ 原生后端
 AirPlay 接收端
 ```
 
-GUI 直接链接 `airplay-core/` 中的 Rust 库，协议后端为独立的 `airplay-backend.exe`；`homepod-test.exe` 是使用同一核心模块的诊断工具。Python 仅在构建阶段生成上游适配源码，不参与运行时音频处理。模块和生命周期说明见 [架构文档](docs/architecture.md)。
+GUI 通过 `airplay-desktop/` 调用 `airplay-core/` 中的 Rust 库，协议后端为独立的 `airplay-backend.exe`。`homepod-test.exe` 是使用同一核心模块的诊断工具。Python 在构建阶段生成上游适配源码。模块和生命周期说明见 [架构文档](docs/architecture.md)。
 
 ## 仓库结构
 
 ```text
 ├── airplay-frontend/  Vue 界面与 Tauri 桌面应用
+├── airplay-desktop/   Windows 桌面服务
 ├── airplay-core/      共用 Rust 音频库及诊断 CLI
 ├── airplay-backend/   C/C++ AirPlay 后端与 Windows 适配
 ├── test/             按 frontend/backend/core 分类的测试源码和合成素材

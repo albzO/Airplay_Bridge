@@ -18,7 +18,7 @@
 - 前端构建同时检查未使用的局部变量与参数；测试通过生产模块观察内部状态，不为测试保留页面未使用的绑定。
 - `.editorconfig` 与 `.gitattributes` 统一文本编码、缩进和 LF 换行；图片保持二进制内容。
 - `docs/` 只维护当前版本的使用、开发、排查和交付文档；实现规则写入对应指南，功能变化写入 CHANGELOG。已完成的优化/审查过程先确认已入 Git，再移除，不另建历史目录或逐轮报告。删除或合并文档时同步导航、README、测试说明及链接。
-- 通用数据类型放在 `src/types.ts`，桌面数据格式校验放在 `src/protocol.ts`，命令错误转换放在 `src/commands.ts`；设置校验与持久化放在 `src-tauri/src/settings.rs`，窗口行为放在 `window.rs`。外部 JSON 接收为 `unknown`，验证后再使用；不要用 `any` 或直接断言掩盖字段不一致。
+- 通用数据类型放在 `src/types.ts`，桌面数据格式校验放在 `src/protocol.ts`，命令错误转换放在 `src/commands.ts`。设置校验与持久化放在 `airplay-desktop/src/settings.rs`，窗口行为放在 `src-tauri/src/window.rs`。外部 JSON 接收为 `unknown`，验证后再使用；不要用 `any` 或直接断言掩盖字段不一致。
 - 新日志路径应通过 `log_store.rs` 限制单文件并纳入保留命名；队列和页面历史也须有上限，规则见 [日志保留限制](docs/log-retention.md)。
 - 日志在落盘和展示日志前脱敏；真实设备数据只用于发现、选择和控制。凭据不要加入日志、进程参数、配置文件或发布包。
 - 界面修改应检查浅色/深色、最小窗口尺寸、键盘交互和托盘状态。
@@ -34,13 +34,12 @@ python scripts/check-sensitive-data.py
 # 排版检查；首次安装工具依赖时使用锁文件
 pnpm --dir airplay-frontend format:check
 cargo fmt --manifest-path airplay-core/Cargo.toml --check
+cargo fmt --manifest-path airplay-desktop/Cargo.toml --check
 cargo fmt --manifest-path airplay-frontend/src-tauri/Cargo.toml --check
 
 # Rust 音频库测试，不连接实际接收端
 cargo test --manifest-path airplay-core/Cargo.toml --locked --offline --lib
-# Tauri 测试嵌入前端产物，先完成构建，不与产物替换并行运行。
-pnpm --dir airplay-frontend build
-cargo test --manifest-path airplay-frontend/src-tauri/Cargo.toml --locked --offline
+cargo test --manifest-path airplay-desktop/Cargo.toml --locked --offline
 
 # 前端类型检查和构建
 pnpm --dir airplay-frontend test:protocol

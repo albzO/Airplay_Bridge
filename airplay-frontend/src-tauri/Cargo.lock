@@ -21,12 +21,21 @@ dependencies = [
 name = "airplay-bridge"
 version = "1.0.3"
 dependencies = [
+ "airplay-desktop",
  "homepod-test",
- "serde",
  "serde_json",
  "tauri",
  "tauri-build",
  "tauri-plugin-single-instance",
+]
+
+[[package]]
+name = "airplay-desktop"
+version = "1.0.3"
+dependencies = [
+ "homepod-test",
+ "serde",
+ "serde_json",
  "windows",
 ]
 

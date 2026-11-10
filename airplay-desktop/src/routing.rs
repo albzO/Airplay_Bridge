@@ -50,5 +50,5 @@ pub fn set_speaker_order(
 }
 
 #[cfg(test)]
-#[path = "../../../test/frontend/desktop/routing.rs"]
+#[path = "../../test/frontend/desktop/routing.rs"]
 mod tests;

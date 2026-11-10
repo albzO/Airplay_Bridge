@@ -73,15 +73,15 @@ Buffer 是发送端的 PCM 预读深度，与播放提前量不同。标注“�
 |---|---|
 | `src/App.vue` | 页面、交互与 Rust 事件订阅 |
 | `src/style.css` | 布局和主题 |
-| `src-tauri/src/main.rs` | 桌面生命周期、配置、设备发现和会话控制 |
-| `src-tauri/src/auth.rs` | 密码交互与命名管道 |
-| `src-tauri/src/auth_memory.rs` | 接收端认证方式记录 |
-| `src-tauri/src/awake.rs` | Windows 系统与屏幕唤醒请求 |
+| `src-tauri/src/main.rs`、`commands.rs` | 窗口、托盘、单实例和 IPC |
+| `../airplay-desktop/src/lib.rs` | 桌面服务、配置作业、会话事件和退出收尾 |
+| `../airplay-desktop/src/auth.rs`、`auth_memory.rs` | 密码管道和接收端认证方式记录 |
+| `../airplay-desktop/src/awake.rs` | Windows 系统与屏幕唤醒请求 |
 | `../airplay-core/src/source.rs` | 共享来源采集器与订阅 |
 | `../airplay-core/src/live.rs` | 音频发送流水线与后端进程 |
 | `../airplay-backend/` | 原生 AirPlay 后端及 Windows 适配 |
 
-GUI 直接链接 `homepod-test` Rust 库，启动的协议后端是 `airplay-backend.exe`，不通过 CLI exe 管理采集。
+GUI 通过 `airplay-desktop` 调用 `homepod-test` Rust 库，协议后端为 `airplay-backend.exe`。
 
 ## 构建
 

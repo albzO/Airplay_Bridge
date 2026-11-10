@@ -10,7 +10,7 @@ use std::{fs, path::Path};
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
-pub(crate) struct Settings {
+pub struct Settings {
     /// Windows 音频端点标识；空字符串表示尚未选择来源。
     /// Windows audio endpoint identity; empty means no source has been selected.
     pub endpoint: String,
@@ -99,5 +99,5 @@ impl Settings {
 }
 
 #[cfg(test)]
-#[path = "../../../test/frontend/desktop/settings.rs"]
+#[path = "../../test/frontend/desktop/settings.rs"]
 mod tests;

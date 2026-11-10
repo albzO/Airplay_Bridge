@@ -178,5 +178,5 @@ pub fn release(active: &mut Option<Session>, id: u64) {
 }
 
 #[cfg(test)]
-#[path = "../../../test/frontend/desktop/session.rs"]
+#[path = "../../test/frontend/desktop/session.rs"]
 mod tests;

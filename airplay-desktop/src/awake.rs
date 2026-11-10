@@ -93,5 +93,5 @@ impl Drop for Awake {
     }
 }
 #[cfg(test)]
-#[path = "../../../test/frontend/desktop/awake.rs"]
+#[path = "../../test/frontend/desktop/awake.rs"]
 mod tests;

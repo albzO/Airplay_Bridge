@@ -1,6 +1,6 @@
 //! 快速预留会话，后台准备、校验与发布；看门狗不等待驱动/磁盘锁。
 //! Reserve immediately, prepare/validate/publish off-thread; the watchdog never waits on driver/disk locks.
-use crate::{Engine, Settings, auth, auth_memory, devices, ensure_source, finished_error, session};
+use crate::{DesktopEvent, Engine, EventSink, Settings, auth, auth_memory, ensure_source, session};
 use homepod_test::{
     capture,
     live::{self, GuiContext, GuiControl, GuiEmitter},
@@ -13,98 +13,101 @@ use std::{
     thread,
     time::{Duration, Instant},
 };
-use tauri::{Emitter, State};
 
-#[tauri::command]
-pub fn start_stream(
-    app: tauri::AppHandle,
-    engine: State<Arc<Engine>>,
-    names: Vec<String>,
-    settings: Settings,
-    password_first: bool,
-) -> Result<u64, String> {
-    settings.validate()?;
-    if names.is_empty() || names.len() > 2 {
-        return Err("请选择一台设备或一个立体声对".into());
-    }
-    let e = engine.inner().clone();
-    let (id, control, preparation) = {
-        let mut active = e.session.lock().unwrap();
-        if e.quitting.load(Ordering::Acquire) {
-            return Err("应用正在退出".into());
+impl Engine {
+    pub fn start_stream(
+        self: &Arc<Self>,
+        events: EventSink,
+        names: Vec<String>,
+        settings: Settings,
+        password_first: bool,
+    ) -> Result<u64, String> {
+        settings.validate()?;
+        if names.is_empty() || names.len() > 2 {
+            return Err("请选择一台设备或一个立体声对".into());
         }
-        session::reserve(
-            &mut active,
-            e.configuration_busy.load(Ordering::Acquire),
-            settings.mapping,
-        )?
-    };
-    let watch_engine = e.clone();
-    let watch_app = app.clone();
-    let watch_control = control.clone();
-    let watch_preparation = preparation.clone();
-    let watch = move || {
-        while watch_preparation.preparing() {
-            let expired = {
-                let active = watch_engine.session.lock().unwrap();
-                if active.as_ref().map(|s| s.id) != Some(id) {
+        let e = self.clone();
+        let (id, control, preparation) = {
+            let mut active = e.session.lock().unwrap();
+            if e.quitting.load(Ordering::Acquire) {
+                return Err("应用正在退出".into());
+            }
+            session::reserve(
+                &mut active,
+                e.configuration_busy.load(Ordering::Acquire),
+                settings.mapping,
+            )?
+        };
+        let watch_engine = e.clone();
+        let watch_events = events.clone();
+        let watch_control = control.clone();
+        let watch_preparation = preparation.clone();
+        let watch = move || {
+            while watch_preparation.preparing() {
+                let expired = {
+                    let active = watch_engine.session.lock().unwrap();
+                    if active.as_ref().map(|s| s.id) != Some(id) {
+                        return;
+                    }
+                    let cancelled = watch_control.stop.load(Ordering::Acquire);
+                    watch_preparation
+                        .expire(&watch_control, Instant::now())
+                        .map(|error| (error, cancelled))
+                };
+                if let Some((error, cancelled)) = expired {
+                    if watch_preparation.claim_terminal() {
+                        let error = homepod_test::failure::describe(error, "STREAM_FAILED");
+                        let code = homepod_test::failure::code_for(&error, "STREAM_FAILED");
+                        let _ = homepod_test::shutdown::run_until(
+                            Instant::now() + Duration::from_millis(100),
+                            move || {
+                                watch_events(DesktopEvent::Stream {
+                                    session_id: id,
+                                    payload: json!({"kind":"finished","error":error,"safe_error":error,"error_code":code,"cancelled":cancelled}),
+                                });
+                            },
+                        );
+                    }
                     return;
                 }
-                let cancelled = watch_control.stop.load(Ordering::Acquire);
-                watch_preparation
-                    .expire(&watch_control, Instant::now())
-                    .map(|error| (error, cancelled))
-            };
-            if let Some((error, cancelled)) = expired {
-                if watch_preparation.claim_terminal() {
-                    let error = homepod_test::failure::describe(error, "STREAM_FAILED");
-                    let code = homepod_test::failure::code_for(&error, "STREAM_FAILED");
-                    let _ = homepod_test::shutdown::run_until(
-                        Instant::now() + Duration::from_millis(100),
-                        move || {
-                            let _ = watch_app.emit("stream-event", json!({"session_id":id,"kind":"finished","error":error,"safe_error":error,"error_code":code,"cancelled":cancelled}));
-                        },
-                    );
-                }
-                return;
+                thread::sleep(Duration::from_millis(10));
             }
-            thread::sleep(Duration::from_millis(10));
+        };
+        let watchdog = thread::Builder::new()
+            .name("stream-prepare-watch".into())
+            .spawn(watch);
+        if let Err(error) = watchdog {
+            preparation.finish();
+            session::release(&mut e.session.lock().unwrap(), id);
+            return Err(format!("无法启动准备监控线程：{error}"));
         }
-    };
-    let watchdog = thread::Builder::new()
-        .name("stream-prepare-watch".into())
-        .spawn(watch);
-    if let Err(error) = watchdog {
-        preparation.finish();
-        session::release(&mut e.session.lock().unwrap(), id);
-        return Err(format!("无法启动准备监控线程：{error}"));
+        let worker_engine = e.clone();
+        let worker_preparation = preparation.clone();
+        let worker = thread::Builder::new()
+            .name("stream-session".into())
+            .spawn(move || {
+                run(
+                    events,
+                    worker_engine,
+                    id,
+                    control,
+                    worker_preparation,
+                    names,
+                    settings,
+                    password_first,
+                );
+            });
+        if let Err(error) = worker {
+            preparation.finish();
+            session::release(&mut e.session.lock().unwrap(), id);
+            return Err(format!("无法启动会话线程：{error}"));
+        }
+        Ok(id)
     }
-    let worker_engine = e.clone();
-    let worker_preparation = preparation.clone();
-    let worker = thread::Builder::new()
-        .name("stream-session".into())
-        .spawn(move || {
-            run(
-                app,
-                worker_engine,
-                id,
-                control,
-                worker_preparation,
-                names,
-                settings,
-                password_first,
-            );
-        });
-    if let Err(error) = worker {
-        preparation.finish();
-        session::release(&mut e.session.lock().unwrap(), id);
-        return Err(format!("无法启动会话线程：{error}"));
-    }
-    Ok(id)
 }
 
 fn run(
-    app: tauri::AppHandle,
+    events: EventSink,
     e: Arc<Engine>,
     id: u64,
     control: Arc<GuiControl>,
@@ -129,10 +132,12 @@ fn run(
     let mut owned_source: Option<Arc<Source>> = None;
     let mut activated = false;
     let mut privacy = Redactor::default();
-    let plain_app = app.clone();
-    let emit: GuiEmitter = Arc::new(move |mut event| {
-        event["session_id"] = json!(id);
-        let _ = plain_app.emit("stream-event", event);
+    let stream_events = events.clone();
+    let emit: GuiEmitter = Arc::new(move |payload| {
+        stream_events(DesktopEvent::Stream {
+            session_id: id,
+            payload,
+        });
     });
     emit(json!({"kind":"preparing_source"}));
     let work = || -> Result<(), String> {
@@ -144,7 +149,7 @@ fn run(
             return Err("请选择一台设备或一个立体声对".into());
         }
         settings.validate()?;
-        let found = devices(&e);
+        let found = e.devices();
         let mut chosen = Vec::new();
         for name in &names {
             let d: Vec<_> = found.iter().filter(|d| &d.name == name).collect();
@@ -200,7 +205,7 @@ fn run(
         settings.save_checked(&e.root, check)?;
         *e.settings.lock().unwrap() = settings.clone();
         check()?;
-        let event_app = app.clone();
+        let event_emit = emit.clone();
         let policy_engine = e.clone();
         let worker = auth_memory::Worker::start(identities, control.clone(), move |identity| {
             let mut next = policy_engine.auth_memory.lock().unwrap().clone();
@@ -212,13 +217,14 @@ fn run(
         let policies = worker.sender();
         policy_events = Some(policies.clone());
         policy_worker = Some(worker);
-        let emit: GuiEmitter = Arc::new(move |mut event| {
+        let emit: GuiEmitter = Arc::new(move |event| {
             policies.observe(&event);
             for error in policies.take_errors() {
-                let _ = event_app.emit("stream-event", json!({"session_id":id,"kind":"auth_memory_error","error":format!("认证方式记录保存失败：{error}")}));
+                event_emit(
+                    json!({"kind":"auth_memory_error","error":format!("认证方式记录保存失败：{error}")}),
+                );
             }
-            event["session_id"] = json!(id);
-            let _ = event_app.emit("stream-event", event);
+            event_emit(event);
         });
 
         // 回调只登记有界请求/取错误；认证策略锁和文件操作仅在后台线程。
@@ -236,7 +242,7 @@ fn run(
             .unwrap()
             .use_shutdown_budget(control.shutdown.clone());
         check()?;
-        let (source, created) = ensure_source(app.clone(), &e, &settings, check)?;
+        let (source, created) = ensure_source(events.clone(), &e, &settings, check)?;
         if created {
             owned_source = Some(source.clone());
         }
@@ -267,10 +273,9 @@ fn run(
             e.capture_enabled.store(true, Ordering::Release);
         }
         activated = true;
-        let _ = app.emit(
-            "source-level",
+        events(DesktopEvent::SourceLevel(
             json!({"endpoint":endpoint,"captureEnabled":true}),
-        );
+        ));
         let context = GuiContext {
             backend: e.backend.clone(),
             endpoint,
@@ -397,3 +402,25 @@ fn run(
         );
     });
 }
+
+fn finished_error(
+    result: Result<(), String>,
+    cancelled: bool,
+    cleanup_complete: bool,
+) -> Option<String> {
+    let original = result.err();
+    if !cleanup_complete {
+        return Some(format!(
+            "{}[STOP_TIMEOUT] 旧会话资源尚未确认退出，请重启应用后连接",
+            original.map_or(String::new(), |error| format!("{error}；"))
+        ));
+    }
+    original.filter(|error| {
+        !cancelled
+            || !(error.ends_with("详情：已取消建立流") || error.ends_with("详情：启动采集已取消"))
+    })
+}
+
+#[cfg(test)]
+#[path = "../../test/frontend/desktop/shutdown.rs"]
+mod shutdown_checks;
