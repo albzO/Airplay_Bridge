@@ -27,6 +27,7 @@ VIAddVersionKey "LegalCopyright" "See NOTICE"
 
 Function .onInit
   SetShellVarContext current
+  SetRegView 64
   ${IfNot} ${RunningX64}
     MessageBox MB_ICONSTOP "AirPlay Bridge requires Windows x64."
     Abort
@@ -37,29 +38,6 @@ Section "AirPlay Bridge"
   IfFileExists "$INSTDIR\portable.flag" 0 +3
     MessageBox MB_ICONSTOP "This is a portable folder. Choose another installation directory."
     Abort
-  ; Microsoft documents machine registration in the 32-bit view, user in native view.
-  SetRegView 32
-  ReadRegStr $0 HKLM "SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}" "pv"
-  ${If} $0 == ""
-  ${OrIf} $0 == "0.0.0.0"
-    SetRegView 64
-    ReadRegStr $0 HKCU "SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}" "pv"
-  ${EndIf}
-  ${If} $0 == ""
-  ${OrIf} $0 == "0.0.0.0"
-    DetailPrint "Installing Microsoft WebView2 Runtime (internet required)..."
-    InitPluginsDir
-    SetOutPath "$PLUGINSDIR"
-    File /oname=MicrosoftEdgeWebview2Setup.exe "${WEBVIEW_BOOTSTRAPPER}"
-    ClearErrors
-    ExecWait '"$PLUGINSDIR\MicrosoftEdgeWebview2Setup.exe" /silent /install' $1
-    ${If} ${Errors}
-    ${OrIf} $1 != 0
-      MessageBox MB_ICONSTOP "WebView2 installation failed. Install Microsoft WebView2 Runtime, then run setup again."
-      Abort
-    ${EndIf}
-  ${EndIf}
-  SetRegView 64
   SetOutPath "$INSTDIR"
   File /r "${PAYLOAD}\*"
   WriteUninstaller "$INSTDIR\Uninstall.exe"

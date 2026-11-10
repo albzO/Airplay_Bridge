@@ -1,6 +1,7 @@
 #![windows_subsystem = "windows"]
 //! GPUI 播放入口及 Windows 事件循环。
 //! GPUI player entry point and Windows event loop.
+mod desktop_job;
 mod diagnostics;
 mod inbox;
 mod player;
@@ -8,7 +9,7 @@ mod session;
 mod shell;
 mod volume;
 
-use airplay_desktop::Engine;
+use airplay_desktop::{Engine, is_preview_executable};
 use anyhow::Result;
 use gpui::{
     App, AppContext, Application, Bounds, TitlebarOptions, WindowBounds, WindowOptions, px, size,
@@ -33,7 +34,8 @@ fn main() {
 }
 
 fn run() -> Result<i32> {
-    let Some(_instance) = shell::primary_instance()? else {
+    let preview = is_preview_executable(&std::env::current_exe()?);
+    let Some(_instance) = shell::primary_instance(preview)? else {
         return Ok(0);
     };
     let engine = Engine::load()?;
@@ -43,7 +45,7 @@ fn run() -> Result<i32> {
     let app_error = setup_error.clone();
     Application::new().run(move |cx| {
         gpui_component::init(cx);
-        if let Err(error) = open_player(cx, engine, app_exit) {
+        if let Err(error) = open_player(cx, engine, app_exit, preview) {
             app_error.set(Some(error));
             cx.quit();
         }
@@ -58,6 +60,7 @@ fn open_player(
     cx: &mut App,
     engine: std::sync::Arc<Engine>,
     exit_code: Rc<Cell<i32>>,
+    preview: bool,
 ) -> Result<()> {
     let bounds = Bounds::centered(None, size(px(900.), px(670.)), cx);
     let player_engine = engine.clone();
@@ -68,7 +71,7 @@ fn open_player(
             // 保留 Windows 原生标题栏的拖动、缩放及系统菜单。
             // Keep Windows caption dragging, resizing and the system menu.
             titlebar: Some(TitlebarOptions {
-                title: Some("AirPlay Bridge · GPUI".into()),
+                title: Some(shell::title(preview).into()),
                 ..Default::default()
             }),
             ..Default::default()
@@ -78,7 +81,7 @@ fn open_player(
             cx.new(|cx| Root::new(player, window, cx))
         },
     )?;
-    shell::attach(cx, window, engine, exit_code)?;
+    shell::attach(cx, window, engine, exit_code, preview)?;
     cx.activate(true);
     Ok(())
 }

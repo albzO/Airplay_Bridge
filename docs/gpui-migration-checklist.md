@@ -28,6 +28,8 @@ v1.0.3 两份发行文件通过 SHA256 核对。预研用 GPUI `0.2.2`、GPUI Co
 
 ## P3 · 回归通过后切换发行入口
 
-- [ ] **补齐测试迁移。** 复用 core、原生后端及桌面 Rust 测试。将 `session`、`diagnostics`、`protocol` 和 Playwright 用例中仍适用的断言移到 Rust 状态、后端边界或 GPUI/Windows 交互测试。用模拟接收端验证认证、密码管道、立体声和慢启动，再用真实接收端验证 Playback 与录音来源、托盘后台连续播放和多次启停。实机验收覆盖窗口拖动、缩放、键盘焦点和高 DPI。用同机同配置对比 P0 的 Release 基线，记录差异与可接受范围。
-- [ ] **切换构建与打包。** 更新 `build-desktop.ps1`，由 Cargo 构建新 GUI，继续生成 `airplay-bridge.exe`、`runtime/`、`tools/` 和许可证材料。将打包版本号从 `tauri.conf.json` 改由新桌面 crate 提供，处理图标、Windows manifest 和文件版本信息。在 NSIS、Inno Setup 和打包脚本中移除 WebView2 检查与引导参数，验证安装包和便携包在干净 Windows 上可启动和串流。对照 [构建及发行说明](building.md) 和 [打包脚本](../scripts/package-release.ps1)。
-- [ ] **验证升级和回退。** 现有正式安装版沿用 Inno Setup 身份，单独检查 NSIS 打包产物。测试覆盖安装后配置、自启、托盘和后端定位；便携版在独立副本内验证升级；确认卸载只清理发行文件。用旧版和备份数据演练回退。保留 v1.0.3 发行包作为回退入口，验收通过后再清理旧 Vue/Tauri 入口、浏览器测试和相关 Node/pnpm 构建步骤，更新文档和 SHA256。
+- [x] **完成本机自动回归。** 核心 119 项、桌面服务 21 项、GPUI 9 项、旧前端逻辑 29 项和 DOM 29 项通过。模拟接收端覆盖认证、密码管道及重试、立体声和慢启动。GPUI 增加 COM 作业线程回归。
+- [x] **切换构建与打包。** `build-desktop.ps1` 默认构建 GPUI 版 `airplay-bridge.exe`。Windows x64 上已跑通完整的 `-Release -Offline` 构建，并用产出的后端重跑模拟回归。Cargo 版本写入 Windows 资源和两个安装器，发行包包含后端、CLI 和 Rust 依赖通知。Inno Setup 沿用 v1.0.3 的 AppId，NSIS 可选。候选 1.1.0 的三个包已生成并通过 SHA256 校验。参见 [构建及发行说明](building.md) 和 [打包脚本](../scripts/package-release.ps1)。
+- [x] **验证便携升级和回退。** 在隔离目录用 1.1.0 覆盖 v1.0.3，验证设置、设备缓存、认证策略和测试日志的文件哈希。候选程序在本机完成设备枚举，读取旧版提前量和关闭动作，并从窗口退出。恢复 v1.0.3 程序与备份数据后核对版本及哈希。
+- [ ] **完成安装与实机验收。** 在隔离 Windows 验证 Inno Setup 原位升级、卸载与回退，检查自启和数据路径。用真实接收端验证 Playback 与录音来源、托盘后台播放和多次启停，并检查键盘、窗口拖动及不同 DPI 下的布局。
+- [ ] **结束回退期。** 保留 v1.0.3 发行包。实机验收通过后清理旧 Vue/Tauri 入口、浏览器对照测试和相关构建依赖。

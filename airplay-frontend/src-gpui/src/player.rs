@@ -4,6 +4,7 @@ mod controls;
 mod diagnostic_view;
 
 use crate::{
+    desktop_job,
     diagnostics::Diagnostics,
     inbox::{Inbox, Pending, StreamUpdate},
     session::{Phase, Session},
@@ -195,9 +196,10 @@ impl Player {
         cx: &mut Context<Self>,
         complete: impl FnOnce(&mut Self, Result<T, String>, &mut Window, &mut Context<Self>) + 'static,
     ) {
-        let job = match job {
-            Ok(job) => job,
+        let result = match job.and_then(desktop_job::dispatch) {
+            Ok(result) => result,
             Err(error) => {
+                self.operation = None;
                 self.message = Some(error);
                 cx.notify();
                 return;
@@ -206,7 +208,10 @@ impl Player {
         self.operation = Some(label);
         cx.notify();
         cx.spawn_in(window, async move |view, cx| {
-            let result = cx.background_executor().spawn(async move { job() }).await;
+            let result = result
+                .recv()
+                .await
+                .unwrap_or_else(|_| Err("桌面任务提前退出".into()));
             let _ = cx.update(|window, cx| {
                 view.update(cx, |player, cx| {
                     player.operation = None;

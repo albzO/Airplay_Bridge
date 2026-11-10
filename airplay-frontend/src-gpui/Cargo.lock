@@ -44,11 +44,12 @@ dependencies = [
 
 [[package]]
 name = "airplay-bridge-gpui"
-version = "1.0.3"
+version = "1.1.0"
 dependencies = [
  "airplay-desktop",
  "anyhow",
  "async-channel 2.5.0",
+ "embed-resource",
  "gpui",
  "gpui-component",
  "homepod-test",

@@ -1,10 +1,10 @@
 # AirPlay Bridge 桌面应用
 
-桌面程序使用 Vue 3 / TypeScript、Tauri 2 和 Rust 音频核心库。项目架构、构建依赖与 CLI 说明见 [项目介绍](../README.md)。
+桌面程序使用 GPUI 原生窗口、Rust 桌面服务和音频核心库。项目架构、构建依赖与 CLI 说明见 [项目介绍](../README.md)。
 
 ## 运行
 
-按照 [构建指南](building.md) 构建后启动 `dist/airplay-bridge.exe`。同目录的原生后端与 DLL 必须保留，界面资源已嵌入 GUI exe。运行需要 Microsoft Edge WebView2 Runtime。
+按照构建指南构建后启动 `dist/airplay-bridge.exe`，并保留同目录 `runtime/` 中的原生后端与 DLL。[构建指南](building.md)
 
 电脑与接收端需位于可互相访问的局域网。设备发现与串流依赖局域网通信，防火墙或无线网络隔离可能影响连接。
 
@@ -12,13 +12,13 @@
 
 ### 播放
 
-底部固定操作区提供音频来源选择、开始/停止串流和刷新按钮，在播放与设置页面均可操作。音频来源列表向上展开，选择框底边显示总峰值电平，格式右侧显示 dBFS。
+播放和设置页面共用底部操作区，可选择来源、开关采集及开始或停止串流。两条电平条显示左右输入。播放页的 AirPlay 接收端区提供刷新与选择。
 
 首次启动或没有有效的上次来源记录时，显示“请选择音频流来源”，不自动选择 Windows 默认设备，也不启动采集。手动选择后开始电平预览并保存来源；下次启动仅恢复仍有效的来源。
 
 选择录音设备或 Playback 播放设备作为音频来源。录音设备采集输入信号，Playback 采集所选输出端点正在播放的音频；来源选定后显示电平，无需先连接扬声器。
 
-来源选单分为独立的“播放设备”和“录音设备”区块，以扬声器／麦克风图标及说明区分，各组内按名称排序。选中后，来源选择框仍显示“播放”或“录音”类型标签。
+来源选单分为“播放设备”和“录音设备”，各组按名称排序。
 
 刷新并选择 AirPlay 设备，点击开始串流。若接收端要求访问密码，固定音频来源操作区上方弹出输入框，提示“输入 {设备} 的 AirPlay 密码”。输入框自动聚焦，回车确认；密码错误后全选原输入供重试。密码只供当前认证使用，不保存到配置。
 
@@ -28,7 +28,7 @@
 
 ### 设置
 
-通过窗口右上角的齿轮进入设置。设置标题靠左，返回播放按钮与子页面 tab 位于同一行；滚动页面时，这一栏固定在顶部。运行统计、技术详情与日志保留原有布局。
+点击右上角“设置”，在顶部切换四个标签。点击“返回播放”回到设备列表。
 
 | 子页面 | 内容 |
 |---|---|
@@ -71,9 +71,9 @@ Buffer 是发送端的 PCM 预读深度，与播放提前量不同。标注“�
 
 | 文件或目录 | 职责 |
 |---|---|
-| `src/App.vue` | 页面、交互与 Rust 事件订阅 |
-| `src/style.css` | 布局和主题 |
-| `src-tauri/src/main.rs`、`commands.rs` | 窗口、托盘、单实例和 IPC |
+| `src-gpui/src/main.rs`、`shell.rs` | 原生窗口、托盘和单实例 |
+| `src-gpui/src/player.rs`、`player/` | 播放、设置和诊断界面 |
+| `src-gpui/src/inbox.rs`、`diagnostics.rs` | 有界事件、诊断快照和传输计数 |
 | `../airplay-desktop/src/lib.rs` | 桌面服务、配置作业、会话事件和退出收尾 |
 | `../airplay-desktop/src/auth.rs`、`auth_memory.rs` | 密码管道和接收端认证方式记录 |
 | `../airplay-desktop/src/awake.rs` | Windows 系统与屏幕唤醒请求 |
@@ -88,12 +88,12 @@ GUI 通过 `airplay-desktop` 调用 `homepod-test` Rust 库，协议后端为 `a
 在项目根目录运行：
 
 ```powershell
-.\Build-UI.ps1
+.\scripts\build-desktop.ps1 -Release
 ```
 
 依赖已下载后可加 `-Offline`；`-Release` 优化 Rust 桌面应用；`-SkipBackend` 仅在已有可用后端及 DLL 时使用。完整依赖和自定义工具路径说明见 [根目录 README](../README.md)。
 
-单独启动 Vite 开发服务器仅提供前端环境，不能代替 Tauri 与原生音频后端。
+用 `scripts/build-gpui.ps1` 构建独立便携预览，数据保存在 `build/gpui-preview/data/`。
 
 Playback 逐包诊断还记录释放前原始缓冲的各声道峰值、非零字节数和非有限采样数，以及映射选择、Windows 端点电平和读数年龄。`capture_start` 中 `capture_wait=wasapi_event` 表示使用事件驱动回采；这些统计不保存原始音频。
 

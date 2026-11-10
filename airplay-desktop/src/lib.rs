@@ -15,7 +15,7 @@ use serde::Serialize;
 use serde_json::Value;
 use session::Session;
 pub use settings::{Appearance, Settings};
-pub use startup::set as set_autostart;
+pub use startup::{is_preview_executable, set as set_autostart};
 use std::{
     fs, io,
     path::{Path, PathBuf},

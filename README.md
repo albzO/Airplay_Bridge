@@ -2,7 +2,7 @@
 
 Windows 上的 AirPlay 2 音频发送工具。通过桌面界面选择录音或播放设备，将音频发送到 HomePod 等 AirPlay 接收端。
 
-当前维护版本为 **1.0.3**，包含通知线程隔离、认证策略后台保存、可取消启动和统一停止期限；保留暂停播放误触发重建等既有修复，相关串流行为仍需实机回归确认。主要验证 HomePod mini 单设备及立体声对，其他接收端的兼容性尚未完整验证。版本说明见 [更新日志](CHANGELOG.md)，项目授权状态见 [许可证说明](docs/licensing.md)。
+本分支准备 **1.1.0 GPUI 发行候选**。v1.0.3 是升级和回退的对照版本。测试范围与剩余实机验收见 [迁移清单](docs/gpui-migration-checklist.md)，版本和授权信息见 [更新日志](CHANGELOG.md) 与 [许可证说明](docs/licensing.md)。
 
 ## AI 辅助开发声明
 
@@ -23,13 +23,13 @@ AirPlay 协议基础及部分组件来自第三方开源项目，其归属和许
 
 使用安装包：先从托盘退出正在运行的应用，再运行安装程序。现有 Inno Setup 安装版可直接升级，沿用原目录并保留配置；不要先卸载。
 
-使用便携包：将完整目录解压到可写目录，启动 `airplay-bridge.exe`。便携版与安装版的数据目录不同，不自动迁移彼此的配置。需要 Windows x64 和 Microsoft Edge WebView2 Runtime；保留 `runtime/` 中的后端和 DLL。
+使用便携包：在 Windows x64 上将完整目录解压到可写位置，启动 `airplay-bridge.exe`。保留 `runtime/` 中的后端和 DLL。便携版数据位于程序目录的 `data/`，安装版位于 `%APPDATA%\AirPlay Hub`。
 
-从源码构建需要 Git、Rust MSVC、Visual Studio C++ Build Tools / Windows SDK、MSYS2 UCRT64、Python、Node.js 和 pnpm。原生后端在固定子模块源码的临时副本应用已审查补丁，再选择所需代码编译。具体依赖与适配维护步骤见 [构建指南](docs/building.md)。
+从源码构建需要 Git、Rust MSVC、Visual Studio C++ Build Tools / Windows SDK、MSYS2 UCRT64 和 Python。原生后端在固定子模块源码的临时副本应用已审查补丁，再选择所需代码编译。具体依赖与适配维护步骤见 [构建指南](docs/building.md)。
 
 生产代码分为 `airplay-frontend/`、`airplay-desktop/`、`airplay-backend/` 和 `airplay-core/`。测试源码集中在根目录 `test/frontend/`、`test/backend/`、`test/core/`，随 Git 提交；目录和运行入口见 [测试说明](test/README.md)。源码构建需保留完整的 `test/`，截图、日志、录音与本机配置仍不提交或打包。
 
-前端可用 `pnpm --dir airplay-frontend test:dom` 自动检查真实模板的按钮、来源选择、密码重试及会话隔离；Windows 默认使用已安装 Edge，无需声卡或 AirPlay 接收设备。
+GPUI 自动回归覆盖会话隔离、音量回报和诊断保留。旧版 DOM 对照测试仍可用 `pnpm --dir airplay-frontend test:dom` 运行。
 
 在仓库根目录运行：
 
@@ -51,15 +51,15 @@ git -C upstream/airplay-cli/libraop submodule update --init -- crosstools
 
 选择音频来源、刷新并选择设备，点击开始串流。需要密码时在底部音频来源区上方的密码浮层中输入。立体声对需先在 Apple 家庭 App 中组成。
 
-底部固定音频来源与串流操作；右上角齿轮打开设置。默认关闭窗口收起到托盘，托盘右键“退出”关闭应用。保持唤醒默认开启，在应用运行期间同时阻止自动睡眠和自动熄屏；关闭开关或退出应用后释放请求。
+底部提供音频来源、采集与串流操作。点击右上角“设置”查看常规、运行统计、技术详情和日志。默认关闭窗口收起到托盘，托盘右键“退出”关闭应用。保持唤醒默认开启，在运行期间同时阻止自动睡眠和自动熄屏。
 
 构建入口位于 `scripts/`，后端、依赖获取和自定义工具路径见 [构建指南](docs/building.md)。
 
 ## 软件架构
 
 ```text
-Vue / TypeScript 界面
-        ↓ Tauri 命令与事件
+GPUI 原生窗口
+        ↓ Rust 桌面服务与有界事件
 Rust 桌面管理与音频核心
   WASAPI 采集 → 声道映射 → rubato 重采样 → 16-bit PCM
         ↓ 有界队列和进程管道
@@ -74,7 +74,7 @@ GUI 通过 `airplay-desktop/` 调用 `airplay-core/` 中的 Rust 库，协议后
 ## 仓库结构
 
 ```text
-├── airplay-frontend/  Vue 界面与 Tauri 桌面应用
+├── airplay-frontend/  GPUI 桌面应用与旧 Vue/Tauri 对照入口
 ├── airplay-desktop/   Windows 桌面服务
 ├── airplay-core/      共用 Rust 音频库及诊断 CLI
 ├── airplay-backend/   C/C++ AirPlay 后端与 Windows 适配
@@ -130,7 +130,7 @@ GUI 配置与日志位于 `%APPDATA%\AirPlay Hub`；CLI 设备清单、日志和
 
 ## 第三方代码与致谢
 
-协议后端基于 [Music Assistant airplay-cli](https://github.com/music-assistant/airplay-cli)，使用 [libraop](https://github.com/philippe44/libraop) 的 bplist 读写及 [crosstools](https://github.com/philippe44/crosstools) 的接口声明。Rust 音频处理使用 rubato，界面使用 Vue 和 Tauri。感谢这些项目的作者和维护者。
+协议后端基于 Music Assistant airplay-cli，使用 libraop 的 bplist 读写及 crosstools 的接口声明。Rust 音频处理使用 rubato，界面使用 GPUI 和 GPUI Component。参见 [第三方依赖与来源](THIRD_PARTY.md)。
 
 第三方代码属于原作者；本项目提供 Windows 适配、桌面应用和音频流水线。固定版本、使用文件、本地修改、包依赖及协议参考资料分别记录在 [THIRD_PARTY.md](THIRD_PARTY.md)。子模块引用不改变第三方授权条件。
 

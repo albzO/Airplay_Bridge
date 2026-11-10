@@ -11,14 +11,16 @@ const RUN: PCWSTR = w!("Software\\Microsoft\\Windows\\CurrentVersion\\Run");
 fn entry_name(exe: &Path) -> PCWSTR {
     // 预览版与现有安装可并存，各自维护开机自启项。
     // The preview and installed app can coexist with separate startup entries.
-    if exe
-        .file_name()
-        .is_some_and(|name| name.eq_ignore_ascii_case("airplay-bridge-gpui.exe"))
-    {
+    if is_preview_executable(exe) {
         w!("AirPlay Bridge GPUI Preview")
     } else {
         w!("AirPlay Hub")
     }
+}
+
+pub fn is_preview_executable(exe: &Path) -> bool {
+    exe.file_name()
+        .is_some_and(|name| name.eq_ignore_ascii_case("airplay-bridge-gpui.exe"))
 }
 
 pub fn enabled() -> Result<bool, String> {

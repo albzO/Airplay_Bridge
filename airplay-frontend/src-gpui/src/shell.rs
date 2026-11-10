@@ -27,9 +27,21 @@ use windows::{
     core::{Owned, PCWSTR, w},
 };
 
-// 预览入口和已安装的 Tauri 应用使用不同实例名。
-// The preview entry point uses a different instance name from the installed Tauri app.
-const WAKE_EVENT: PCWSTR = w!("Local\\AirPlayBridge.GPUI.Reveal.v1");
+fn wake_event(preview: bool) -> PCWSTR {
+    if preview {
+        w!("Local\\AirPlayBridge.GPUI.Preview.Reveal.v1")
+    } else {
+        w!("Local\\AirPlayBridge.GPUI.Reveal.v1")
+    }
+}
+
+pub fn title(preview: bool) -> &'static str {
+    if preview {
+        "AirPlay Bridge · GPUI"
+    } else {
+        "AirPlay Bridge"
+    }
+}
 
 enum Action {
     Reveal,
@@ -38,10 +50,10 @@ enum Action {
     Exit(i32),
 }
 
-pub fn primary_instance() -> Result<Option<Owned<HANDLE>>> {
+pub fn primary_instance(preview: bool) -> Result<Option<Owned<HANDLE>>> {
     let (event, already_running) = unsafe {
         SetLastError(ERROR_SUCCESS);
-        let event = CreateEventW(None, false, false, WAKE_EVENT)?;
+        let event = CreateEventW(None, false, false, wake_event(preview))?;
         (event, GetLastError() == ERROR_ALREADY_EXISTS)
     };
     let event = unsafe { Owned::new(event) };
@@ -57,6 +69,7 @@ pub fn attach<T: 'static>(
     window: WindowHandle<T>,
     engine: Arc<Engine>,
     exit_code: Rc<Cell<i32>>,
+    preview: bool,
 ) -> Result<()> {
     let (send, receive) = async_channel::unbounded();
     let hwnd = window.update(cx, |_, window, cx| {
@@ -84,7 +97,7 @@ pub fn attach<T: 'static>(
     ])?;
     let tray = TrayIconBuilder::new()
         .with_icon(Icon::from_rgba(icon.into_raw(), width, height)?)
-        .with_tooltip("AirPlay Bridge · GPUI")
+        .with_tooltip(title(preview))
         .with_menu(Box::new(menu))
         .with_menu_on_left_click(false)
         .build()?;
@@ -115,7 +128,8 @@ pub fn attach<T: 'static>(
     thread::Builder::new()
         .name("gpui-instance-wake".into())
         .spawn(move || {
-            let Ok(event) = (unsafe { OpenEventW(SYNCHRONIZATION_SYNCHRONIZE, false, WAKE_EVENT) })
+            let Ok(event) =
+                (unsafe { OpenEventW(SYNCHRONIZATION_SYNCHRONIZE, false, wake_event(preview)) })
             else {
                 return;
             };

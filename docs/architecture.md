@@ -6,8 +6,8 @@
 
 | 目录                        | 职责                                                               |
 | --------------------------- | ------------------------------------------------------------------ |
-| airplay-frontend/src/       | Vue 界面、IPC 校验、会话和诊断状态                                 |
-| airplay-frontend/src-tauri/ | Tauri 窗口、托盘、单实例、IPC 与进程退出                          |
+| airplay-frontend/src-gpui/  | GPUI 界面、托盘、单实例、有界事件与诊断显示                         |
+| airplay-frontend/src/、src-tauri/ | 旧 Vue/Tauri 界面和 IPC 回归对照                             |
 | airplay-desktop/            | 桌面配置、Source 管理、会话准备、认证和退出收尾                    |
 | airplay-core/src/           | WASAPI、持续 Source、转换/漂移、传输、诊断及 CLI                   |
 | airplay-backend/            | 原生后端、上游补丁及 Windows 兼容层                                |
@@ -30,6 +30,8 @@ capture 下的 decode、timeline、metrics、health、diagnostics、clock 和 li
 ## 状态与所有权
 
 `airplay-desktop` 可独立编译。`Engine` 预留会话和配置操作，调用方将 `DesktopJob` 交给后台执行。服务通过 `EventSink` 交付电平和会话事件。Tauri 的 `commands.rs` 保留原有 IPC 字段和事件名，并负责后台调度。
+
+GPUI 在独立线程执行阻塞桌面作业，让 WASAPI 自行初始化 STA，再将结果送回界面线程。设备枚举与输入声道映射都走这个入口。
 
 | 对象或状态                           | 所有者与含义                                            |
 | ------------------------------------ | ------------------------------------------------------- |
