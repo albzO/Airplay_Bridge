@@ -148,8 +148,6 @@ export type Initialization = {
   backendAvailable: boolean;
   autostart: boolean;
   captureEnabled: boolean;
-  awakeActive?: boolean;
-  awakeError?: string | null;
   autostartError?: string | null;
 };
 
@@ -160,7 +158,7 @@ export type Initialization = {
 export type StreamEvent = { session_id: number } & (
   | { kind: 'preparing_source' }
   | { kind: 'password_required'; host: string }
-  | { kind: 'auth_memory_error' | 'auth_pipe_error'; error: string }
+  | { kind: 'auth_memory_error' | 'auth_pipe_error' | 'awake_error'; error: string }
   | { kind: 'log_path'; path: string; detailed_logs: boolean; pipeline_path?: string | null }
   | ({ kind: 'telemetry' } & Telemetry)
   | { kind: 'report'; report: SessionReport }

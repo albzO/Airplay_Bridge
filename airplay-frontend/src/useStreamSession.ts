@@ -186,7 +186,7 @@ export function useStreamSession(options: SessionOptions) {
         void submit();
       }
     }
-    if (e.kind === 'auth_memory_error' || e.kind === 'auth_pipe_error')
+    if (e.kind === 'auth_memory_error' || e.kind === 'auth_pipe_error' || e.kind === 'awake_error')
       error.value = describeError(e.error, e.kind);
     if (e.kind === 'telemetry') {
       if (stopping.value) return;

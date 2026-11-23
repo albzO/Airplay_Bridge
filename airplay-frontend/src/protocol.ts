@@ -164,8 +164,6 @@ export function decodeInitialization(value: unknown): Initialization {
     autostart: boolean(v.autostart, 'autostart'),
     captureEnabled:
       v.captureEnabled === undefined ? true : boolean(v.captureEnabled, 'captureEnabled'),
-    awakeActive: optional(v.awakeActive, 'awakeActive', boolean),
-    awakeError: optional(v.awakeError, 'awakeError', nullableText),
     autostartError: optional(v.autostartError, 'autostartError', nullableText),
   };
 }
@@ -211,6 +209,7 @@ export function decodeStreamEvent(value: unknown): StreamEvent | null {
       'password_required',
       'auth_memory_error',
       'auth_pipe_error',
+      'awake_error',
       'log_path',
       'telemetry',
       'report',
@@ -230,6 +229,7 @@ export function decodeStreamEvent(value: unknown): StreamEvent | null {
       return { kind, session_id, host: text(v.host, 'host') };
     case 'auth_memory_error':
     case 'auth_pipe_error':
+    case 'awake_error':
       return { kind, session_id, error: text(v.error, 'error') };
     case 'log_path':
       return {

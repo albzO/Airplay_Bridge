@@ -41,6 +41,13 @@ impl Preparation {
         *self.phase.lock().unwrap() == Phase::Preparing
     }
 
+    /// 已建立且尚未收尾。收尾超时会保留会话预留，但不再算作串流中。
+    /// Established and not yet finished. A cleanup timeout keeps the reservation, but no longer
+    /// counts as streaming.
+    pub fn active(&self) -> bool {
+        *self.phase.lock().unwrap() == Phase::Active
+    }
+
     pub fn check(&self, control: &GuiControl) -> Result<(), String> {
         self.check_at(control, Instant::now())
     }

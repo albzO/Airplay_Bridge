@@ -57,8 +57,6 @@ pub struct Initialization {
     pub data_path: PathBuf,
     pub data_mode: DataMode,
     pub backend_available: bool,
-    pub awake_active: bool,
-    pub awake_error: Option<String>,
     pub autostart: bool,
     pub autostart_error: Option<String>,
     pub capture_enabled: bool,
@@ -81,10 +79,12 @@ pub struct Engine {
     session: Mutex<Option<Session>>,
     source: Mutex<Option<Arc<Source>>>,
     configuration_busy: AtomicBool,
+    /// 发现设备只与串流互斥：它重写 devices.json，开始串流要读取它。
+    /// Discovery excludes only streaming: it rewrites devices.json, which starting a stream reads.
+    discovering: AtomicBool,
     quitting: AtomicBool,
     capture_enabled: AtomicBool,
     awake: Mutex<awake::Awake>,
-    awake_startup_error: Option<String>,
 }
 
 impl Engine {
@@ -108,8 +108,6 @@ impl Engine {
         let known_devices = read_devices(&root);
         let auth_memory =
             auth_memory::Memory::load(&root, &known_devices).map_err(io::Error::other)?;
-        let mut awake = awake::Awake::default();
-        let awake_startup_error = awake.set(settings.keep_awake).err();
         Ok(Arc::new(Self {
             root,
             portable: data_dir::portable_root(&exe).is_some(),
@@ -119,10 +117,10 @@ impl Engine {
             session: Mutex::new(None),
             source: Mutex::new(None),
             configuration_busy: AtomicBool::new(false),
+            discovering: AtomicBool::new(false),
             quitting: AtomicBool::new(false),
             capture_enabled: AtomicBool::new(false),
-            awake: Mutex::new(awake),
-            awake_startup_error,
+            awake: Mutex::new(awake::Awake::default()),
         }))
     }
 
@@ -142,8 +140,6 @@ impl Engine {
                 DataMode::Installed
             },
             backend_available: self.backend_available(),
-            awake_active: self.awake.lock().unwrap().active(),
-            awake_error: self.awake_startup_error.clone(),
             autostart: startup.as_ref().copied().unwrap_or(false),
             autostart_error: startup.err(),
             capture_enabled: self.capture_enabled.load(Ordering::SeqCst),
@@ -234,6 +230,29 @@ impl Engine {
         self.settings.lock().unwrap().close_action == "quit"
     }
 
+    /// 按当前状态持有或释放唤醒请求：仅在开关开启、串流已建立且未退出时持有。
+    /// 先取 awake 锁再读会话，并发的开始、结束和设置保存以最后一次为准；
+    /// 因此不可在持有会话锁时调用。
+    /// Hold or release the power request to match the current state: only with the switch on, a
+    /// stream established and no quit under way. The awake lock is taken before reading the
+    /// session so concurrent starts, ends and saves settle on the last one; never call this while
+    /// holding the session lock.
+    fn apply_awake(&self, keep_awake: bool) -> Result<(), String> {
+        let mut awake = self.awake.lock().unwrap();
+        let streaming = self
+            .session
+            .lock()
+            .unwrap()
+            .as_ref()
+            .is_some_and(|session| session.preparation.active());
+        awake.set(keep_awake && streaming && !self.quitting.load(Ordering::Acquire))
+    }
+
+    fn sync_awake(&self) -> Result<(), String> {
+        let keep_awake = self.settings.lock().unwrap().keep_awake;
+        self.apply_awake(keep_awake)
+    }
+
     /// 只启动一次收尾。界面入口负责退出事件循环和进程级兜底。
     /// Begin cleanup once. The shell owns event-loop exit and its process-level fallback.
     pub fn begin_shutdown(self: &Arc<Self>) -> Option<(Instant, mpsc::Receiver<bool>)> {
@@ -247,7 +266,7 @@ impl Engine {
             if let Some(s) = engine.session.lock().unwrap().as_ref() {
                 s.control.request_stop_until(deadline);
             }
-            let _ = engine.awake.lock().unwrap().set(false);
+            let _ = engine.sync_awake();
             let source_stopped = stop_source_until(&engine, deadline).is_ok();
             while engine.session.lock().unwrap().is_some() && Instant::now() < deadline {
                 thread::sleep(

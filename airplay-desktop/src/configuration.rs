@@ -1,5 +1,6 @@
-//! 后台配置/预览/发现互斥。占用登记只持有短会话锁，慢操作不持有全局会话/设置锁。
-//! Admit one background configuration/preview/discovery operation under a short session lock.
+//! 后台配置/预览互斥；发现设备单独登记，只与串流互斥。占用登记只持有短会话锁，慢操作不持有全局会话/设置锁。
+//! Admit one background configuration/preview operation under a short session lock; discovery is
+//! admitted separately and excludes only streaming.
 use crate::{
     DesktopEvent, DesktopJob, Engine, EventSink, Settings, ensure_source, routing, stop_source,
 };
@@ -86,16 +87,54 @@ fn preview_source(
     Ok(source)
 }
 
+/// 一次发现设备的占用；作业结束（或未运行即丢弃）时释放。
+/// One discovery's claim, released when the job ends or is dropped unrun.
+pub struct Discovery {
+    engine: Arc<Engine>,
+}
+
+impl Discovery {
+    pub fn begin(engine: Arc<Engine>) -> Result<Self, String> {
+        let session = engine.session.lock().unwrap();
+        if engine.quitting.load(Ordering::Acquire) {
+            return Err("应用正在退出".into());
+        }
+        if session.is_some() {
+            return Err("[OPERATION_BUSY] 请停止串流后再刷新设备".into());
+        }
+        if engine.discovering.swap(true, Ordering::AcqRel) {
+            return Err("[OPERATION_BUSY] 正在发现设备，请稍后重试".into());
+        }
+        drop(session);
+        Ok(Self { engine })
+    }
+
+    fn check(&self) -> Result<(), String> {
+        if self.engine.quitting.load(Ordering::Acquire) {
+            return Err("应用正在退出".into());
+        }
+        Ok(())
+    }
+}
+
+impl Drop for Discovery {
+    fn drop(&mut self) {
+        self.engine.discovering.store(false, Ordering::Release);
+    }
+}
+
 impl Engine {
+    /// 可与保存设置、切换采集同时进行；期间不能开始串流。
+    /// May run alongside saving settings or switching capture; a stream cannot start meanwhile.
     pub fn prepare_discover_devices(
         self: &Arc<Self>,
     ) -> Result<DesktopJob<Vec<discovery::Device>>, String> {
         let e = self.clone();
-        let operation = Operation::begin(e.clone(), false)?;
+        let discovery = Discovery::begin(e.clone())?;
         Ok(Box::new(move || {
-            operation.check()?;
+            discovery.check()?;
             discovery::discover(&e.root, 6).map_err(|e| e.to_string())?;
-            operation.check()?;
+            discovery.check()?;
             Ok(e.devices())
         }))
     }
@@ -149,20 +188,15 @@ impl Engine {
         let operation = Operation::begin(e.clone(), true)?;
         Ok(Box::new(move || {
             operation.check()?;
-            let was_active = {
-                let mut awake = e.awake.lock().unwrap();
-                operation.check()?;
-                let previous = awake.active();
-                awake.set(settings.keep_awake)?;
-                previous
-            };
+            // 串流中立即应用新开关；未串流时只保存，建立串流时再申请。
+            // While streaming the new switch applies at once; otherwise it is only saved, and the
+            // request is made when a stream is established.
+            e.apply_awake(settings.keep_awake)?;
             if let Err(error) = settings.save_checked(&e.root, || operation.check()) {
-                // 退出已经释放电源请求时，迟到失败不能重新获取它。
-                // Do not reacquire power requests after quit has released them.
-                let mut awake = e.awake.lock().unwrap();
-                if !e.quitting.load(Ordering::Acquire) {
-                    let _ = awake.set(was_active);
-                }
+                // 恢复到仍然有效的旧设置；退出或串流结束后不会重新获取请求。
+                // Fall back to the settings still in force; after a quit or the end of the stream
+                // this does not reacquire the request.
+                let _ = e.sync_awake();
                 return Err(error);
             }
             // rename 成功是设置的提交点；即使此刻收到停止，也保持内存与磁盘一致。

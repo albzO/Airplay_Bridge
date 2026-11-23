@@ -54,7 +54,9 @@ impl StreamUpdate {
                 }
             }
             "telemetry" => Self::Playing,
-            "auth_memory_error" | "auth_pipe_error" => Self::Notice(field("error")?),
+            "auth_memory_error" | "auth_pipe_error" | "awake_error" => {
+                Self::Notice(field("error")?)
+            }
             "finished" => Self::Finished {
                 error: field("safe_error").or_else(|| field("error")),
                 code: field("error_code"),

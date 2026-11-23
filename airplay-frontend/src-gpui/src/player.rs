@@ -253,7 +253,7 @@ impl Player {
         self.backend_available = state.backend_available;
         self.capture_enabled = state.capture_enabled;
         self.autostart = state.autostart;
-        self.message = state.awake_error.or(state.autostart_error);
+        self.message = state.autostart_error;
         self.reset_latency_input(window, cx);
         self.reset_buffer_input(window, cx);
         self.diagnostics.set_mode(state.data_mode);

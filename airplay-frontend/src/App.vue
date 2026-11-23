@@ -490,10 +490,6 @@ onMounted(async () => {
     captureEnabled.value = s.captureEnabled;
     diagnostics.setDataMode(s.dataMode);
     if (s.autostartError) error.value = '无法读取开机自启状态：' + s.autostartError;
-    if (s.awakeError) {
-      settings.value.keepAwake = !!s.awakeActive;
-      error.value = s.awakeError;
-    }
     if (!inputs.value.some((i) => i.id === settings.value.endpoint && i.channels)) {
       settings.value.endpoint = '';
     }

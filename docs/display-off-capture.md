@@ -12,7 +12,7 @@
 
 ## 更改行为
 
-- 复用原 `keepAwake` 设置，默认开启。设置页显示“避免自动睡眠和屏幕熄灭”，在应用运行期间生效，包括托盘、未串流和来源预览状态。
+- 复用原 `keepAwake` 设置，默认开启，设置页显示“串流中保持系统唤醒”。请求在串流建立后获取，停止、失败或退出收尾时释放；收尾超时保留会话预留时也会释放。仅预览电平、未串流和托盘空闲时不阻止熄屏，Ely 界面（`src-ely`）此时会在窗口不可见或显示器熄灭后停止采集，恢复可见时自动重建；`src-gpui` 与 WebView 版不会，Source 可能因熄屏报时间戳错误，需重新开启采集或开始串流以重建。
 - 同一电源请求对象依次获取 SystemRequired、DisplayRequired。第二项失败撤销第一项，不发布成功状态；错误保留 Windows 信息并归类为 `AWAKE_FAILED`。
 - 关闭开关时销毁请求对象，退出时释放请求并关闭句柄；不修改全局电源计划或用户设置。[Microsoft PowerCreateRequest 文档](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-powercreaterequest)说明 CloseHandle 会清理对象。
 - 保留时间戳校验、Source/Session 生命周期和音频帧顺序。此次采用避免自动熄屏的缓解措施，没有宣称修复底层驱动。

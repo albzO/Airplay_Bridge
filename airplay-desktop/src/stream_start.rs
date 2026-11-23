@@ -34,7 +34,8 @@ impl Engine {
             }
             session::reserve(
                 &mut active,
-                e.configuration_busy.load(Ordering::Acquire),
+                e.configuration_busy.load(Ordering::Acquire)
+                    || e.discovering.load(Ordering::Acquire),
                 settings.mapping,
             )?
         };
@@ -273,6 +274,13 @@ fn run(
             e.capture_enabled.store(true, Ordering::Release);
         }
         activated = true;
+        // 唤醒失败只提示，不中断串流。
+        // A failed power request is reported without interrupting the stream.
+        if let Err(error) = e.sync_awake() {
+            prepared_emit(
+                json!({"kind":"awake_error","error":homepod_test::failure::describe(&error, "AWAKE_FAILED")}),
+            );
+        }
         events(DesktopEvent::SourceLevel(
             json!({"endpoint":endpoint,"captureEnabled":true}),
         ));
@@ -368,6 +376,7 @@ fn run(
     // Confirm cleanup before completion/release; late results never clear an expired reservation.
     let notify = preparation.finish();
     session::release(&mut e.session.lock().unwrap(), id);
+    let _ = e.sync_awake();
     if !notify {
         return;
     }

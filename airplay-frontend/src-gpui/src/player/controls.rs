@@ -402,7 +402,7 @@ impl Player {
                             })),
                     ))
                     .child(setting_row(
-                        "保持系统唤醒",
+                        "串流中保持系统唤醒",
                         Switch::new("keep-awake")
                             .checked(self.settings.keep_awake)
                             .disabled(disabled)
