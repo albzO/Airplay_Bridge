@@ -34,7 +34,7 @@ Pick any recording device, or the output a device is already playing, and stream
 </table>
 
 > [!NOTE]
-> This branch prepares the **2.0.0 release candidate**: the desktop UI is rebuilt on GPUI and the Ely component library, and the unpublished 1.1.0 release candidate is folded into it. v1.0.3 is the reference for upgrades and rollback. Test coverage and the remaining hardware checks are in the [migration checklist](docs/gpui-migration-checklist.md) (Chinese). The devices in the screenshots are made up.
+> **2.0** rebuilds the desktop UI on GPUI and the Ely component library, and folds in the unpublished 1.1.0 release candidate. Upgrading from v1.0.3 keeps settings and data. Test coverage and hardware checks are in the [migration checklist](docs/gpui-migration-checklist.md) (Chinese). The devices in the screenshots are made up.
 
 ## ✨ Features
 

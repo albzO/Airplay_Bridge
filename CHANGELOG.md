@@ -1,6 +1,6 @@
 # 更新日志
 
-## 2.0.0（发行候选）
+## 2.0 — 2026-11-23
 
 1.1.0 发行候选未正式发布，其内容并入本版本。
 The 1.1.0 release candidate was never published; its changes are part of this release.
