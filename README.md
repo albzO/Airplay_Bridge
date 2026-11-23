@@ -8,11 +8,15 @@
 
 Pick any recording device, or the output a device is already playing, and stream it over AirPlay 2 to a HomePod, a HomePod stereo pair or another receiver.
 
-![Windows x64](https://img.shields.io/badge/Windows-x64-0078D4?logo=windows&logoColor=white)
-![Version](https://img.shields.io/badge/version-2.0.0--rc-2F7D4F)
-![Rust](https://img.shields.io/badge/Rust-1.98%2B-B7410E?logo=rust&logoColor=white)
-![UI](https://img.shields.io/badge/UI-GPUI%20%2B%20Ely-444)
-![License](https://img.shields.io/badge/license-Apache--2.0-blue)
+<p align="center">
+  <a href="https://github.com/albzO/Airplay_Bridge/releases/latest"><img alt="Download Setup" src="https://img.shields.io/badge/Download-Setup-E07A2E?logo=windows&logoColor=white&style=flat-square"></a>
+  <a href="https://github.com/albzO/Airplay_Bridge/releases/latest"><img alt="Download Portable" src="https://img.shields.io/badge/Download-Portable-E07A2E?logo=windows&logoColor=white&style=flat-square"></a>
+  <a href="https://github.com/albzO/Airplay_Bridge/releases/latest"><img alt="Release" src="https://img.shields.io/github/v/release/albzO/Airplay_Bridge?color=2f81f7&style=flat-square"></a>
+  <a href="LICENSE"><img alt="License" src="https://img.shields.io/github/license/albzO/Airplay_Bridge?color=orange&style=flat-square"></a>
+  <img alt="Windows x64" src="https://img.shields.io/badge/Windows-x64-0078D4?logo=windows&logoColor=white&style=flat-square">
+  <img alt="Rust" src="https://img.shields.io/badge/Rust-1.98%2B-B7410E?logo=rust&logoColor=white&style=flat-square">
+  <img alt="UI" src="https://img.shields.io/badge/UI-GPUI%20%2B%20Ely-444?style=flat-square">
+</p>
 
 [Quick start](#-quick-start) · [Features](#-features) · [Technical route](#-technical-route-and-choices) · [Docs](#-documentation) · [Changelog](CHANGELOG.md)
 

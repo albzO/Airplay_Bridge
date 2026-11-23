@@ -8,11 +8,15 @@
 
 选择任意录音设备或正在播放的输出设备，通过 AirPlay 2 发送到 HomePod、HomePod 立体声对等接收端。
 
-![Windows x64](https://img.shields.io/badge/Windows-x64-0078D4?logo=windows&logoColor=white)
-![Version](https://img.shields.io/badge/version-2.0.0--rc-2F7D4F)
-![Rust](https://img.shields.io/badge/Rust-1.98%2B-B7410E?logo=rust&logoColor=white)
-![UI](https://img.shields.io/badge/UI-GPUI%20%2B%20Ely-444)
-![License](https://img.shields.io/badge/license-Apache--2.0-blue)
+<p align="center">
+  <a href="https://github.com/albzO/Airplay_Bridge/releases/latest"><img alt="下载安装包" src="https://img.shields.io/badge/Download-Setup-E07A2E?logo=windows&logoColor=white&style=flat-square"></a>
+  <a href="https://github.com/albzO/Airplay_Bridge/releases/latest"><img alt="下载便携版" src="https://img.shields.io/badge/Download-Portable-E07A2E?logo=windows&logoColor=white&style=flat-square"></a>
+  <a href="https://github.com/albzO/Airplay_Bridge/releases/latest"><img alt="Release" src="https://img.shields.io/github/v/release/albzO/Airplay_Bridge?color=2f81f7&style=flat-square"></a>
+  <a href="LICENSE"><img alt="License" src="https://img.shields.io/github/license/albzO/Airplay_Bridge?color=orange&style=flat-square"></a>
+  <img alt="Windows x64" src="https://img.shields.io/badge/Windows-x64-0078D4?logo=windows&logoColor=white&style=flat-square">
+  <img alt="Rust" src="https://img.shields.io/badge/Rust-1.98%2B-B7410E?logo=rust&logoColor=white&style=flat-square">
+  <img alt="UI" src="https://img.shields.io/badge/UI-GPUI%20%2B%20Ely-444?style=flat-square">
+</p>
 
 [快速开始](#-快速开始) · [功能](#-功能) · [技术路线](#-技术路线与技术选择) · [文档](#-文档) · [更新日志](CHANGELOG.md)
 
