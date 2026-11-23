@@ -110,4 +110,9 @@ try {
     [IO.File]::WriteAllLines((Join-Path $output 'SHA256SUMS.txt'), [string[]]$hashes)
     foreach ($file in $artifacts) { Write-Host "Built: $file" }
 }
-finally { Pop-Location }
+finally {
+    # 暂存目录只在打包期间使用。
+    # The staging directory is only needed while packaging.
+    if ($stage -and (Test-Path -LiteralPath $stage)) { Remove-Item -LiteralPath $stage -Recurse -Force }
+    Pop-Location
+}
