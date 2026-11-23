@@ -67,6 +67,25 @@ begin
     Result := CustomMessage('PortableDirectory');
 end;
 
+// 把安装语言写入用户数据目录，应用启动时读取；之后可在设置中更改。
+// Record the setup language in the user data directory. The app reads it at startup; it can be
+// changed later in Settings.
+procedure CurStepChanged(CurStep: TSetupStep);
+var
+  DataDir, Code: String;
+begin
+  if CurStep = ssPostInstall then
+  begin
+    DataDir := ExpandConstant('{userappdata}\AirPlay Hub');
+    if ActiveLanguage = 'chinesesimplified' then
+      Code := 'zh'
+    else
+      Code := 'en';
+    if ForceDirectories(DataDir) then
+      SaveStringToFile(DataDir + '\language', Code, False);
+  end;
+end;
+
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 var
   Startup: String;

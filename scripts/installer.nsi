@@ -32,6 +32,8 @@ Function .onInit
     MessageBox MB_ICONSTOP "AirPlay Bridge requires Windows x64."
     Abort
   ${EndIf}
+  ; Let the user pick the setup language, which also becomes the app's UI language.
+  !insertmacro MUI_LANGDLL_DISPLAY
 FunctionEnd
 
 Section "AirPlay Bridge"
@@ -41,6 +43,16 @@ Section "AirPlay Bridge"
   SetOutPath "$INSTDIR"
   File /r "${PAYLOAD}\*"
   WriteUninstaller "$INSTDIR\Uninstall.exe"
+  ; Record the setup language in the user data directory (2052 = Simplified Chinese). The app
+  ; reads it at startup; it can be changed later in Settings.
+  CreateDirectory "$APPDATA\AirPlay Hub"
+  FileOpen $0 "$APPDATA\AirPlay Hub\language" w
+  ${If} $LANGUAGE == 2052
+    FileWrite $0 "zh"
+  ${Else}
+    FileWrite $0 "en"
+  ${EndIf}
+  FileClose $0
   CreateDirectory "$SMPROGRAMS\AirPlay Bridge"
   CreateShortcut "$SMPROGRAMS\AirPlay Bridge\AirPlay Bridge.lnk" "$INSTDIR\airplay-bridge.exe"
   CreateShortcut "$SMPROGRAMS\AirPlay Bridge\Uninstall.lnk" "$INSTDIR\Uninstall.exe"
