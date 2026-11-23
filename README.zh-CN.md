@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="docs/images/icon.png" width="128" height="128" alt="AirPlay Hub 图标">
+
 # AirPlay Hub
 
 [English](README.md) · **简体中文**
