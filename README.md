@@ -1,14 +1,8 @@
-<div align="center">
+<p align="center"><img src="docs/images/icon.png" width="128" height="128" alt="AirPlay Hub icon"></p>
 
-<img src="docs/images/icon.png" width="128" height="128" alt="AirPlay Hub icon">
+<h1 align="center">AirPlay Hub</h1>
 
-# AirPlay Hub
-
-**English** · [简体中文](README.zh-CN.md)
-
-**Send the sound on your Windows PC to AirPlay devices.**
-
-Pick any recording device, or the output a device is already playing, and stream it over AirPlay 2 to a HomePod, a HomePod stereo pair or another receiver.
+<p align="center"><b>Send the sound on your Windows PC to AirPlay devices.</b></p>
 
 <p align="center">
   <a href="https://github.com/albzO/Airplay_Bridge/releases/latest"><img alt="Download Setup" src="https://img.shields.io/badge/Download-Setup-E07A2E?logo=windows&logoColor=white&style=flat-square"></a>
@@ -20,9 +14,12 @@ Pick any recording device, or the output a device is already playing, and stream
   <img alt="UI" src="https://img.shields.io/badge/UI-GPUI%20%2B%20Ely-444?style=flat-square">
 </p>
 
-[Quick start](#quick-start) · [Features](#features) · [Technical route](#technical-route-and-choices) · [Docs](#documentation) · [Changelog](CHANGELOG.md)
+<p align="center">
+  <b>English</b> · <a href="README.zh-CN.md">简体中文</a><br>
+  <a href="#quick-start">Quick start</a> · <a href="#features">Features</a> · <a href="#technical-route-and-choices">Technical route</a> · <a href="#documentation">Docs</a> · <a href="CHANGELOG.md">Changelog</a>
+</p>
 
-</div>
+Pick any recording device, or the output a device is already playing, and stream it over AirPlay 2 to a HomePod, a HomePod stereo pair or another receiver.
 
 <table>
   <tr>

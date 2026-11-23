@@ -1,14 +1,8 @@
-<div align="center">
+<p align="center"><img src="docs/images/icon.png" width="128" height="128" alt="AirPlay Hub 图标"></p>
 
-<img src="docs/images/icon.png" width="128" height="128" alt="AirPlay Hub 图标">
+<h1 align="center">AirPlay Hub</h1>
 
-# AirPlay Hub
-
-[English](README.md) · **简体中文**
-
-**把 Windows 上的声音送到 AirPlay 设备。**
-
-选择任意录音设备或正在播放的输出设备，通过 AirPlay 2 发送到 HomePod、HomePod 立体声对等接收端。
+<p align="center"><b>把 Windows 上的声音送到 AirPlay 设备。</b></p>
 
 <p align="center">
   <a href="https://github.com/albzO/Airplay_Bridge/releases/latest"><img alt="下载安装包" src="https://img.shields.io/badge/Download-Setup-E07A2E?logo=windows&logoColor=white&style=flat-square"></a>
@@ -20,9 +14,12 @@
   <img alt="UI" src="https://img.shields.io/badge/UI-GPUI%20%2B%20Ely-444?style=flat-square">
 </p>
 
-[快速开始](#快速开始) · [功能](#功能) · [技术路线](#技术路线与技术选择) · [文档](#文档) · [更新日志](CHANGELOG.md)
+<p align="center">
+  <a href="README.md">English</a> · <b>简体中文</b><br>
+  <a href="#快速开始">快速开始</a> · <a href="#功能">功能</a> · <a href="#技术路线与技术选择">技术路线</a> · <a href="#文档">文档</a> · <a href="CHANGELOG.md">更新日志</a>
+</p>
 
-</div>
+选择任意录音设备或正在播放的输出设备，通过 AirPlay 2 发送到 HomePod、HomePod 立体声对等接收端。
 
 <table>
   <tr>
