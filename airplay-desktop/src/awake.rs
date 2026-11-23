@@ -1,5 +1,5 @@
-//! 应用级系统/显示器电源请求，避免自动熄屏触发采集端点时钟异常。
-//! App-scoped system/display requests avoid automatic display-off transitions during capture.
+//! 串流期间的系统/显示器电源请求，避免自动熄屏触发采集端点时钟异常。
+//! System/display requests held while streaming avoid automatic display-off during capture.
 use windows::{
     Win32::{
         Foundation::{CloseHandle, HANDLE},
@@ -93,5 +93,5 @@ impl Drop for Awake {
     }
 }
 #[cfg(test)]
-#[path = "../../../test/frontend/desktop/awake.rs"]
+#[path = "../../test/frontend/desktop/awake.rs"]
 mod tests;

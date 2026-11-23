@@ -12,11 +12,119 @@ fn engine() -> Arc<Engine> {
         session: Mutex::new(None),
         source: Mutex::new(None),
         configuration_busy: AtomicBool::new(false),
+        discovering: AtomicBool::new(false),
         quitting: AtomicBool::new(false),
         capture_enabled: AtomicBool::new(false),
         awake: Mutex::new(awake::Awake::default()),
-        awake_startup_error: None,
     })
+}
+
+#[test]
+fn discovery_blocks_streaming_and_itself_but_not_configuration() {
+    let e = engine();
+    let busy = |e: &Engine| {
+        e.configuration_busy.load(Ordering::Acquire) || e.discovering.load(Ordering::Acquire)
+    };
+    let job = e.prepare_discover_devices().unwrap();
+    assert!(reserve(&mut e.session.lock().unwrap(), busy(&e), [0, 1]).is_err());
+    assert!(e.prepare_discover_devices().is_err());
+    // 发现期间仍可保存设置、切换采集。
+    // Settings and capture can still change during discovery.
+    drop(Operation::begin(e.clone(), false).unwrap());
+    // 未运行就丢弃的作业也要释放占用。
+    // A job dropped without running still releases its claim.
+    drop(job);
+    let (id, _, preparation) = reserve(&mut e.session.lock().unwrap(), busy(&e), [0, 1]).unwrap();
+    assert!(e.prepare_discover_devices().is_err());
+    preparation.finish();
+    release(&mut e.session.lock().unwrap(), id);
+    assert!(e.prepare_discover_devices().is_ok());
+}
+
+fn awake(e: &Engine) -> bool {
+    e.awake.lock().unwrap().active()
+}
+
+#[test]
+fn awake_request_follows_the_established_stream_only() {
+    let e = engine();
+    e.sync_awake().unwrap();
+    assert!(!awake(&e), "idle app must not hold a request");
+    let (id, control, preparation) =
+        reserve(&mut e.session.lock().unwrap(), false, [0, 1]).unwrap();
+    e.sync_awake().unwrap();
+    assert!(!awake(&e), "preparing is not streaming");
+    preparation.activate(&control).unwrap();
+    e.sync_awake().unwrap();
+    assert!(awake(&e));
+    // 串流中切换开关立即生效。
+    // Toggling the switch during a stream applies at once.
+    e.apply_awake(false).unwrap();
+    assert!(!awake(&e));
+    e.apply_awake(true).unwrap();
+    assert!(awake(&e));
+    preparation.finish();
+    release(&mut e.session.lock().unwrap(), id);
+    e.sync_awake().unwrap();
+    assert!(!awake(&e));
+    // 已结束的串流不能被迟到的设置保存重新唤醒。
+    // A late settings save cannot reacquire the request after the stream ended.
+    e.apply_awake(true).unwrap();
+    assert!(!awake(&e));
+}
+
+#[test]
+fn awake_request_is_released_when_cleanup_times_out_or_the_app_quits() {
+    let e = engine();
+    let (id, control, preparation) =
+        reserve(&mut e.session.lock().unwrap(), false, [0, 1]).unwrap();
+    preparation.activate(&control).unwrap();
+    e.sync_awake().unwrap();
+    assert!(awake(&e));
+    e.quitting.store(true, Ordering::Release);
+    e.sync_awake().unwrap();
+    assert!(!awake(&e));
+    e.quitting.store(false, Ordering::Release);
+    e.sync_awake().unwrap();
+    assert!(awake(&e));
+    control.cleanup_complete.store(false, Ordering::Release);
+    preparation.finish();
+    release(&mut e.session.lock().unwrap(), id);
+    e.sync_awake().unwrap();
+    assert!(
+        e.session.lock().unwrap().is_some(),
+        "reservation is retained"
+    );
+    assert!(!awake(&e));
+}
+
+#[test]
+fn saving_while_idle_never_acquires_and_a_failed_save_keeps_the_stream_awake() {
+    let root = std::env::temp_dir().join(format!("airplay-awake-save-{}", std::process::id()));
+    std::fs::create_dir(&root).unwrap();
+    let mut e = engine();
+    Arc::get_mut(&mut e).unwrap().root = root.clone();
+    let idle = e.prepare_save_settings(Settings::default()).unwrap()();
+    let idle_awake = awake(&e);
+    let (_, control, preparation) = reserve(&mut e.session.lock().unwrap(), false, [0, 1]).unwrap();
+    preparation.activate(&control).unwrap();
+    e.sync_awake().unwrap();
+    // 暂存文件路径被目录占用，触发真实写入失败。
+    // A directory at the pending-file path forces a real write failure.
+    std::fs::create_dir(root.join("settings.pending.json")).unwrap();
+    let off = Settings {
+        keep_awake: false,
+        ..Settings::default()
+    };
+    let failed = e.prepare_save_settings(off.clone()).unwrap()();
+    let after_failure = awake(&e);
+    std::fs::remove_dir(root.join("settings.pending.json")).unwrap();
+    let saved = e.prepare_save_settings(off).unwrap()();
+    let after_save = awake(&e);
+    let _ = std::fs::remove_dir_all(&root);
+    assert!(idle.is_ok() && !idle_awake);
+    assert!(failed.is_err() && after_failure);
+    assert!(saved.is_ok() && !after_save);
 }
 
 #[test]

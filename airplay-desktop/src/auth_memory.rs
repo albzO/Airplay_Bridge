@@ -121,5 +121,5 @@ impl Memory {
 }
 
 #[cfg(test)]
-#[path = "../../../test/frontend/desktop/auth_memory.rs"]
+#[path = "../../test/frontend/desktop/auth_memory.rs"]
 mod tests;

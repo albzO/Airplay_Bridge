@@ -71,7 +71,7 @@ function mappedChannel(side: 0 | 1) {
           />登录 Windows 后启动 AirPlay Hub</label
         ><small>默认关闭。启用后请保留软件所在位置。</small>
       </dd>
-      <dt>保持系统唤醒</dt>
+      <dt>串流中保持系统唤醒</dt>
       <dd>
         <label class="log-switch"
           ><input
@@ -80,9 +80,7 @@ function mappedChannel(side: 0 | 1) {
             :disabled="saving"
             @change="emit('awake-change')"
           />避免自动睡眠和屏幕熄灭</label
-        ><small
-          >开启后在应用运行期间生效，包括托盘状态；同时阻止自动熄屏，关闭此开关或退出应用后恢复。</small
-        >
+        ><small>串流期间阻止自动睡眠和熄屏，停止串流后恢复。</small>
       </dd>
       <dt>右上角关闭按钮</dt>
       <dd>

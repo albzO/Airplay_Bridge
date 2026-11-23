@@ -158,5 +158,5 @@ impl Drop for Worker {
 }
 
 #[cfg(test)]
-#[path = "../../../../test/frontend/desktop/auth_persistence.rs"]
+#[path = "../../../test/frontend/desktop/auth_persistence.rs"]
 mod tests;

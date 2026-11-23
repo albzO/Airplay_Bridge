@@ -5,14 +5,12 @@
 | 组件 | 用途 |
 |---|---|
 | Rust 稳定版，MSVC 工具链 | Rust 核心库和桌面应用；需要支持 edition 2024 |
-| Visual Studio C++ Build Tools 与 Windows SDK | Rust MSVC 链接及 Windows 开发环境 |
+| Visual Studio C++ Build Tools 与 Windows SDK | Rust MSVC 链接、GPUI 的着色器编译和程序资源 |
 | MSYS2 UCRT64 | 原生 C/C++ 后端，需 GCC/G++、CMake、Ninja、OpenSSL、winpthreads 和 binutils |
-| Python 3 | 固定上游源码的编译视图生成 |
+| Python 3 | 生成固定上游源码的编译视图与发行包 Rust 许可清单 |
 | Git | 获取固定子模块、校验提交并应用上下文补丁；构建期间也需要可执行文件 |
-| Node.js 20.19+ 或 22.12+，以及 pnpm | Vue/Vite 前端构建 |
-| Microsoft Edge WebView2 Runtime | 运行桌面界面 |
 
-将 Python、Node.js 和 pnpm 加入 PATH。构建脚本默认从 `%USERPROFILE%\.cargo\bin` 使用 Cargo，从 `C:\msys64` 使用 MSYS2。
+将 Cargo 和 Python 加入 PATH。后端构建默认使用 `C:\msys64`。旧 Vue/Tauri 对照入口的构建和测试使用 Node.js、pnpm 与 WebView2。
 
 ### 获取源码
 
@@ -57,7 +55,7 @@ python test/backend/test_upstream.py
 # 首次构建：下载依赖并构建全部组件
 .\scripts\build-desktop.ps1
 
-# Rust 桌面应用使用 release 配置；原生后端仍按 build-backend.ps1 的配置构建
+# GPUI 桌面应用和诊断 CLI 使用 Release 配置
 .\scripts\build-desktop.ps1 -Release
 
 # 已下载全部依赖后，离线构建
@@ -71,6 +69,18 @@ python test/backend/test_upstream.py
 ```
 
 保留完整 `dist/` 目录，包括 `runtime/airplay-backend.exe` 和同目录的所需 DLL；仅复制 GUI exe 无法完成音频串流。
+
+### 2.0 界面
+
+2.0 界面位于 `airplay-frontend/src-ely`，依赖 Ely GPUI Components（Git 固定提交）和 `gpui-pre 0.3.11`，需要 Rust 1.98 及以上。先构建一次后端以生成 `dist/runtime`，再编译界面：
+
+```powershell
+cargo build --manifest-path airplay-frontend/src-ely/Cargo.toml --release
+```
+
+可执行文件为 `airplay-frontend/src-ely/target/release/airplay-bridge-gpui.exe`。调试构建在可执行文件旁找不到 `runtime/` 时回退到 `dist/runtime`。在可执行文件旁放空的 `portable.flag` 可使用独立的 `data/` 目录。
+
+`build-desktop.ps1`、`build-gpui.ps1` 和 `package-release.ps1` 目前仍构建 1.1 候选界面 `src-gpui`；发布 2.0.0 前需切换到 `src-ely`，并让 Rust 依赖通知包含 Ely、随包字体和图标。
 
 ### 自定义后端工具路径
 
@@ -96,14 +106,16 @@ Maintain native changes in `airplay-backend/patches/` and local C adapters; Pyth
 
 ## 版本更新与发行 / Version updates and distribution
 
-维护者提出更新到新版本时，默认同步桌面应用、前端包、Rust 核心、锁文件及安装脚本版本，并更新 CHANGELOG、README、文档导航、发行包说明和受影响的使用文档；保留历史版本记录。发行文档记录功能改动、使用方式与串流验证范围，不保存安装测试结果。
+打包脚本的桌面版本目前取自 `airplay-frontend/src-gpui/Cargo.toml`（1.1.0），同时用于程序文件资源、安装包和便携包；2.0 界面的版本在 `airplay-frontend/src-ely/Cargo.toml`（2.0.0），切换打包入口时一并改为读取它。安装程序会把安装语言写入用户数据目录的 `language` 文件。发行脚本在 `releases/v<版本>/` 输出沿用既有 AppId 的 Inno Setup 安装包、便携 ZIP 和 `SHA256SUMS.txt`。通过 `-Iscc` 可指定 Inno Setup 编译器。
 
-Whenever the maintainer requests a new version, synchronize application, frontend, core, lockfile and installer versions, and update the changelog, README, documentation index, distribution guide and affected usage documents. Preserve release history, document behavior and streaming validation scope, and omit installation test results.
+发行版 GUI 和诊断 CLI 静态链接 MSVC C 运行库。原生 AirPlay 后端所需的 DLL 随 `runtime/` 一起分发。
 
-先构建并检查安装包，再同步发行包内的 Markdown。更改说明文件后重新打包、更新 SHA256 校验值；确认包内说明与源码一致，且没有配置、设备清单或日志。更改程序或安装逻辑时需要重新运行相关安装测试，测试后清理临时记录。
+```powershell
+.\scripts\package-release.ps1 -Offline
+# 已构建同版本 Release 时复用 dist
+.\scripts\package-release.ps1 -SkipBuild -Offline
+# 另外生成用于全新安装的 NSIS 包
+.\scripts\package-release.ps1 -SkipBuild -Offline -IncludeNsis
+```
 
-Build and check the installer before synchronizing packaged Markdown. After documentation changes, repack and refresh SHA256 checksums; ensure packaged documents match source and exclude runtime data. Rerun relevant installation checks when application or installer behavior changes, and clean up temporary records afterward.
-
-现有正式安装使用 `scripts/installpackcompiler.iss` 的 Inno Setup 身份。`scripts/package-release.ps1` 当前生成便携 ZIP 和 NSIS 安装包；面向原安装版升级时，需用 Inno Setup 编译器重新生成同名安装包，并重新计算校验值。仅修改版本号不能让 NSIS 接管 Inno Setup 的卸载项和安装目录。
-
-Existing installations use the Inno Setup identity in `scripts/installpackcompiler.iss`. The current packaging script emits a portable ZIP and an NSIS installer; compile the Inno Setup installer for upgrades of existing installations and refresh checksums afterward. A version change alone does not bridge installer families.
+既有 Inno Setup 安装用默认安装包升级。便携版升级前备份 `data/`，退出后替换程序与 `runtime/`。发行脚本从明确清单复制文件，另附 Windows Rust 依赖索引及其源码包中的许可证和通知。文档改动随下一次打包重新生成校验值。

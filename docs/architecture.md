@@ -6,8 +6,10 @@
 
 | 目录                        | 职责                                                               |
 | --------------------------- | ------------------------------------------------------------------ |
-| airplay-frontend/src/       | Vue 界面、IPC 校验、会话和诊断状态                                 |
-| airplay-frontend/src-tauri/ | 桌面命令、配置、Source 管理、认证、托盘和生命周期                  |
+| airplay-frontend/src-ely/   | 2.0 界面：GPUI（gpui-pre）+ Ely 组件、托盘、单实例、空闲采集、语言 |
+| airplay-frontend/src-gpui/  | 1.1 候选界面；其会话、事件、诊断模块由 src-ely 共用                 |
+| airplay-frontend/src/、src-tauri/ | 旧 Vue/Tauri 界面和 IPC 回归对照                             |
+| airplay-desktop/            | 桌面配置、Source 管理、会话准备、认证和退出收尾                    |
 | airplay-core/src/           | WASAPI、持续 Source、转换/漂移、传输、诊断及 CLI                   |
 | airplay-backend/            | 原生后端、上游补丁及 Windows 兼容层                                |
 | upstream/                   | 固定版本的第三方 Git 子模块                                        |
@@ -27,6 +29,12 @@ capture 下的 decode、timeline、metrics、health、diagnostics、clock 和 li
 上游适配采用固定子模块、上下文补丁和本地 Windows 实现。Python 校验/应用补丁及选择编译内容；哈希和输出快照更新见[构建指南](building.md#上游适配变更)。
 
 ## 状态与所有权
+
+`airplay-desktop` 可独立编译。`Engine` 预留会话和配置操作，调用方将 `DesktopJob` 交给后台执行。服务通过 `EventSink` 交付电平和会话事件。Tauri 的 `commands.rs` 保留原有 IPC 字段和事件名，并负责后台调度。
+
+GPUI 在独立线程执行阻塞桌面作业，让 WASAPI 自行初始化 STA，再将结果送回界面线程。设备枚举与输入声道映射都走这个入口。
+
+配置、预览和采集切换共用一个“配置忙”占用；发现设备单独登记 `Engine.discovering`，只与开始串流互斥（它重写 `devices.json`，开始串流要读取它）。2.0 界面因此在发现期间只锁住设备卡片和开始串流。
 
 | 对象或状态                           | 所有者与含义                                            |
 | ------------------------------------ | ------------------------------------------------------- |
@@ -104,7 +112,7 @@ stderr 的 reading/eof/failed/cancelled 独立于协议、认证及日志状态�
 
 App.vue 组合来源、设备及设置视图；useStreamSession 管理会话，useDiagnostics 管理有界日志/摘要和应用累计统计。子视图通过 props/事件连接，不修改发现结果或直接控制音频；设置共用确认快照，失败回退。清空诊断仅清展示摘要，不清设备累计、路径或报告。
 
-portable.flag 选择程序目录下 data/，安装版使用 %APPDATA%/AirPlay Hub；CLI 有独立数据子目录，见[使用说明](ui.md)。keepAwake 同时持有 SystemRequired / DisplayRequired，覆盖预览、托盘及会话；它避免自动熄屏，不提供完整睡眠/恢复支持。
+portable.flag 选择程序目录下 data/，安装版使用 %APPDATA%/AirPlay Hub；CLI 有独立数据子目录，见[使用说明](ui.md)。keepAwake 在串流建立后同时持有 SystemRequired / DisplayRequired，收尾完成即释放，不覆盖预览和托盘空闲；它避免串流中自动熄屏，不提供完整睡眠/恢复支持。
 
 配置/初始化中的驱动调用没有统一响应上限，占用仍阻止重复累积；initialize 的独立枚举不属于 Preparing 预算。合成测量、模拟协议和本地测试不代表真实设备长测通过。
 

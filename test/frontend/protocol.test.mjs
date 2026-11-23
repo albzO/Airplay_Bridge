@@ -64,7 +64,6 @@ test('existing UI fixtures initialize; omitted optional fields use existing defa
   assert.deepEqual(result.inputs, inputs);
   assert.equal(result.captureEnabled, true);
   assert.equal(result.dataMode, 'installed');
-  assert.equal(result.awakeError, undefined);
   assert.deepEqual(decodeDevices(devices), devices);
 });
 
@@ -75,6 +74,12 @@ test('initialization validates installed and portable data modes', () => {
     assert.throws(() => decodeInitialization({ ...initialization, dataMode }), /格式不正确/);
 });
 
+test('the legacy adapter preserves the optional native appearance setting', () => {
+  assert.equal(decodeInitialization(initialization).settings.appearance, undefined);
+  const settings = { ...initialization.settings, appearance: 'dark' };
+  assert.equal(decodeInitialization({ ...initialization, settings }).settings.appearance, 'dark');
+});
+
 test('malformed initialization cannot partially populate page state', () => {
   for (const patch of [
     { devices: {} },
@@ -83,6 +88,7 @@ test('malformed initialization cannot partially populate page state', () => {
     { settings: { ...initialization.settings, mapping: [0] } },
     { settings: { ...initialization.settings, buffer: 0 } },
     { settings: { ...initialization.settings, closeAction: 'unknown' } },
+    { settings: { ...initialization.settings, appearance: 'unknown' } },
   ])
     assert.throws(() => decodeInitialization({ ...initialization, ...patch }), /格式不正确/);
 });
@@ -100,6 +106,7 @@ test('all known stream variants preserve fields used by the page', () => {
     { kind: 'password_required', host: 'fixture-host' },
     { kind: 'auth_memory_error', error: 'fixture' },
     { kind: 'auth_pipe_error', error: 'fixture' },
+    { kind: 'awake_error', error: 'fixture' },
     { kind: 'log_path', path: 'fixture.log', detailed_logs: true, pipeline_path: null },
     telemetry,
     {

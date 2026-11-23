@@ -38,6 +38,10 @@ DOM 新增来源失败/重试、等待预览、冷启动保存失败、映射回
 
 `frontend/diagnostics.test.mjs` 直接执行生产 `useDiagnostics.ts`，覆盖所有日志入口的数量/文本限制、结束摘要、报告大小、清空/重连、重复/部分/非法统计、设备淘汰及原型式键名。DOM 突发事件回归验证真实页面的 300/120 上限、截断、脱敏和清空范围。
 
+`frontend/desktop/gpui_diagnostics.rs` 直接调用 GPUI 的诊断批次和汇总，覆盖日志与摘要容量、UTF-16 截断、报告大小、迟到报告隔离、清空范围，以及设备统计跨会话累计。
+
+`frontend/desktop/gpui_jobs.rs` 在 MTA 调用线程提交作业，验证独立作业线程仍能初始化 WASAPI 所需的 STA。
+
 `core/unit/capture/{clock,state,diagnostics}.rs` 覆盖 QPC 换算、首包断续、观察与成功交付计数、可选进度、诊断暂停时间差、端点字段、sink 错误和最终 JSON 字段；无需声卡。`core/unit/log_store.rs` 用真实临时文件验证容量、目录保留、活动预留、未知文件/目录保护及 Windows 打开句柄。Source 临界轮转及超大报告首因回归在 `core/unit/live/`。完整保留规则见 [日志限制](../docs/log-retention.md)。
 
 ## 运行 / Run
@@ -49,10 +53,12 @@ Run commands from the project root. Frontend tests require frontend dependencies
 ```powershell
 # Rust 单元测试 / Rust unit tests
 cargo test --manifest-path airplay-core/Cargo.toml --locked --offline --lib
-# Tauri 测试嵌入生产产物，先完成构建再运行，避免与资源替换并行。
-# Build production assets before Tauri tests; do not rebuild them concurrently.
+cargo test --manifest-path airplay-desktop/Cargo.toml --locked --offline
+cargo test --manifest-path airplay-frontend/src-gpui/Cargo.toml --locked --offline --release --target x86_64-pc-windows-msvc --target-dir build/gpui-migration-target
+# Tauri 入口嵌入生产产物，先构建前端再检查入口。
+# Build production assets before checking the Tauri entry point.
 pnpm --dir airplay-frontend build
-cargo test --manifest-path airplay-frontend/src-tauri/Cargo.toml --locked --offline
+cargo check --manifest-path airplay-frontend/src-tauri/Cargo.toml --locked --offline
 
 # 前端协议及模拟页面 / Frontend protocol and mocked UI
 pnpm --dir airplay-frontend test:protocol

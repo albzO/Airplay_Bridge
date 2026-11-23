@@ -440,10 +440,7 @@ test('keep-awake save failure restores the checkbox and preserves other settings
   const awake = page.getByRole('checkbox', { name: '避免自动睡眠和屏幕熄灭' });
   await expect(awake).toBeChecked();
   await expect(
-    page.getByText(
-      '开启后在应用运行期间生效，包括托盘状态；同时阻止自动熄屏，关闭此开关或退出应用后恢复。',
-      { exact: true },
-    ),
+    page.getByText('串流期间阻止自动睡眠和熄屏，停止串流后恢复。', { exact: true }),
   ).toBeVisible();
   const initial = (await calls(page, 'save_settings')).at(-1).args.settings;
   await hold(page, 'save_settings');

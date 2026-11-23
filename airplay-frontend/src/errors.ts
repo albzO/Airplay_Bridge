@@ -17,6 +17,7 @@ const commandCodes: Record<string, string> = {
   forget_auth_policy: 'AUTH_CACHE_FAILED',
   auth_pipe_error: 'AUTH_PIPE_FAILED',
   auth_memory_error: 'AUTH_CACHE_FAILED',
+  awake_error: 'AWAKE_FAILED',
 };
 function errorOrigin(detail: string): string {
   const os = detail.match(/os error (\d+)/);

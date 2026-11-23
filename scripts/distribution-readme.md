@@ -1,6 +1,6 @@
-# AirPlay Hub 1.0.3
+# AirPlay Bridge
 
-软件版本号 `1.0.3`。版本说明见同目录 `release-notes.md`。
+版本说明见同目录 `release-notes.md`。
 
 启动上一级目录中的 `airplay-bridge.exe`。保留整个发行目录；`runtime/` 中的后端和 DLL 是串流必需文件。
 
@@ -16,11 +16,11 @@ NOTICE                   项目版权及第三方通知
 
 ## 使用
 
-Windows x64，需要 Microsoft Edge WebView2 Runtime。确保电脑与接收端在可互相访问的局域网中，选择音频来源，刷新并选择设备，开始串流。
+在 Windows x64 上运行。确保电脑与接收端在可互相访问的局域网中，选择音频来源，刷新并选择设备，开始串流。
 
 若设备要求密码，在底部来源区上方输入。立体声对需先在 Apple 家庭 App 中组成。默认关闭窗口收起到托盘；托盘右键“退出”关闭程序。
 
-设置中提供外观、保持系统唤醒、播放提前量、声道映射、统计、技术详情和日志。Playback 采集的是向所选播放设备输出的声音。
+设置中提供外观、串流中保持系统唤醒、播放提前量、声道映射、统计、技术详情和日志。Playback 采集的是向所选播放设备输出的声音。
 
 ## 安装与升级 / Installation and upgrade
 
@@ -51,6 +51,6 @@ VoiceMeeter 播放端点出现“系统和耳机有声音，但采集短暂有�
 
 ## 第三方声明
 
-自有代码声明见根目录 LICENSE、NOTICE；第三方声明见 THIRD_PARTY.md 和 licenses/。完整发行材料的许可证核对状态见同目录 licensing.md。本目录整理不改变现有许可证状态。
+自有代码声明见根目录 LICENSE、NOTICE。第三方来源见 `THIRD_PARTY.md`，Rust 依赖和随包通知文件见 `licenses/rust/DEPENDENCIES.tsv`。发行材料的核对状态见 `licensing.md`。
 
 错误代码与处理方式见 `error-codes.md`。日志默认隐藏设备名、IP、用户目录等信息，仅保留 UUID 与技术数据。
