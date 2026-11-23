@@ -18,7 +18,7 @@
   <img alt="UI" src="https://img.shields.io/badge/UI-GPUI%20%2B%20Ely-444?style=flat-square">
 </p>
 
-[快速开始](#-快速开始) · [功能](#-功能) · [技术路线](#-技术路线与技术选择) · [文档](#-文档) · [更新日志](CHANGELOG.md)
+[快速开始](#快速开始) · [功能](#功能) · [技术路线](#技术路线与技术选择) · [文档](#文档) · [更新日志](CHANGELOG.md)
 
 </div>
 
@@ -36,7 +36,7 @@
 > [!NOTE]
 > **2.0** 桌面界面基于 GPUI 与 Ely 组件库重做，未发布的 1.1.0 发行候选并入本版本。从 v1.0.3 升级会保留设置与数据。测试范围与实机验收见 [迁移清单](docs/gpui-migration-checklist.md)。截图中的设备为虚构示例。
 
-## ✨ 功能
+## 功能
 
 **音频**
 
@@ -63,7 +63,7 @@
 - 搜索设备时不锁住界面，来源与设置照常可用。
 - 运行统计、技术详情、脱敏日志与逐包诊断。
 
-## 🚀 快速开始
+## 快速开始
 
 ### 安装包
 
@@ -92,7 +92,7 @@ git -C upstream/airplay-cli/libraop submodule update --init -- crosstools
 
 依赖下载完成后可加 `-Offline` 离线构建。运行时保留整个 `dist/` 目录中的后端与 DLL。
 
-## 🎧 使用
+## 使用
 
 1. 在“音频来源”中选择录音设备或播放设备，电平条开始跳动。
 2. 在“AirPlay 设备”中选择接收端或立体声对，点击底部的 **开始串流**。
@@ -100,7 +100,7 @@ git -C upstream/airplay-cli/libraop submodule update --init -- crosstools
 
 立体声对需先在 Apple 家庭 App 中组成。点击右上角齿轮进入设置，查看常规、运行统计、技术详情和日志。默认关闭窗口收进托盘，托盘右键“退出”关闭应用。完整说明见 [界面与设置](docs/ui.md)。
 
-## 🧭 技术路线与技术选择
+## 技术路线与技术选择
 
 | 版本 | 界面 | 要点 |
 |---|---|---|
@@ -116,7 +116,7 @@ git -C upstream/airplay-cli/libraop submodule update --init -- crosstools
 
 完整原因、约束、取舍与待办见 [技术路线](docs/tech-stack.zh-CN.md)。
 
-## 🏗️ 架构
+## 架构
 
 ```text
 GPUI 原生窗口（gpui-pre + Ely 组件库）
@@ -132,7 +132,7 @@ AirPlay 接收端
 
 界面通过 `airplay-desktop/` 调用 `airplay-core/` 中的 Rust 库，协议后端为独立的 `airplay-backend.exe`。`homepod-test.exe` 是使用同一核心模块的诊断工具，Python 只在构建阶段生成上游适配源码。模块与生命周期见 [架构文档](docs/architecture.md)。
 
-## 📁 仓库结构
+## 仓库结构
 
 ```text
 ├── airplay-frontend/  桌面界面（src-ely：GPUI + Ely）
@@ -154,7 +154,7 @@ AirPlay 接收端
 
 第三方源码通过 `.gitmodules` 以固定提交引用，GitHub 自动生成的源码 ZIP 不包含子模块内容。
 
-## 📚 文档
+## 文档
 
 | 使用 | 开发 | 发行与授权 |
 |---|---|---|
@@ -164,7 +164,7 @@ AirPlay 接收端
 | [自动熄屏采集故障](docs/display-off-capture.md) | [测试说明](test/README.md) | [贡献指南](CONTRIBUTING.md) |
 | [日志保留限制](docs/log-retention.md) | [迁移清单](docs/gpui-migration-checklist.md) | [文档导航](docs/README.md) |
 
-## 🔒 运行数据与隐私
+## 运行数据与隐私
 
 - GUI 配置与日志位于 `%APPDATA%\AirPlay Hub`；CLI 设备清单、日志和录音诊断位于其 `cli` 子目录。
 - 密码不持久保存，也不作为进程参数传递。
@@ -173,7 +173,7 @@ AirPlay 接收端
 
 日志的保留范围见 [日志限制](docs/log-retention.md)，合成测量见 [性能基线](docs/performance-baseline.md)。
 
-## ⚠️ 当前限制
+## 当前限制
 
 - 仅支持 Windows；发送格式固定为 44100 Hz、16-bit、双声道。
 - 立体声面向已有的 HomePod 立体声对，尚未实现通用多房间组网。
@@ -182,20 +182,20 @@ AirPlay 接收端
 - 服务层与原生后端返回的错误信息目前只有中文。
 - 编译、模拟检查及发送成功不能代替真实接收端的播放验证。
 
-## 🗺️ 路线图
+## 路线图
 
 - [x] 打包入口切换到 2.0 界面。
 - [ ] 完成实机验收后发布 2.0。
 - [ ] 软件捕获：只采集指定应用的音频。
 - [ ] 多设备编组：多个 AirPlay 接收端同步播放。
 
-## 🤖 AI 辅助开发声明
+## AI 辅助开发声明
 
 本项目在 OpenAI Codex 与 Anthropic Claude 的协助下开发。AI 参与了架构方案讨论、代码生成与修改、界面设计、问题分析和文档编写；项目维护者负责需求与功能方向、开发决策、真实设备测试和发布管理。本项目不声称全部代码由维护者独立手写。
 
 AirPlay 协议基础及部分组件来自第三方开源项目，其归属和许可证见 [THIRD_PARTY.md](THIRD_PARTY.md)。AI 辅助开发不改变这些第三方声明。生成的代码仍可能存在缺陷，实际验证范围与当前限制见上文。
 
-## 🙏 第三方代码与致谢
+## 第三方代码与致谢
 
 协议后端基于 Music Assistant airplay-cli，使用 libraop 的 bplist 读写及 crosstools 的接口声明。Rust 音频处理使用 rubato；界面使用 GPUI 与 Ely GPUI Components，随附 Inter、JetBrains Mono、IBM Plex Sans 字体与 Lucide 图标。
 
@@ -221,7 +221,7 @@ AirPlay 协议基础及部分组件来自第三方开源项目，其归属和许
 
 第三方代码属于原作者；本项目提供 Windows 适配、桌面应用和音频流水线。固定版本、使用文件、本地修改、包依赖及协议参考资料见 [THIRD_PARTY.md](THIRD_PARTY.md)。子模块引用不改变第三方授权条件。
 
-## 📄 许可证
+## 许可证
 
 本项目自有代码及文档采用 **Apache License 2.0**，完整条款见 [LICENSE](LICENSE)，归属说明见 [NOTICE](NOTICE)。除另有声明外，该许可适用于本项目的原创贡献和可授权的本地修改，不覆盖或替换第三方的原有许可。
 
@@ -229,6 +229,6 @@ Apache-2.0 允许商业使用、修改和分发，无需单独取得本项目的
 
 目前明确待确认的是固定版本 libraop 的 `bplist.cpp` / `bplist.h` 授权依据：该历史提交缺少引用的许可证，当前上游已提供 MIT 声明，尚需确认对所用版本的适用范围。实际发行包的依赖通知材料也尚未完整汇总。详见 [许可证状态](docs/licensing.md)。
 
-## 💬 贡献与问题反馈
+## 贡献与问题反馈
 
 提交问题或改动时，请说明复现步骤、预期与实际行为、相关版本及验证范围。分享日志前移除个人设备、地址、端点与路径信息。开发约定和检查方式见 [贡献指南](CONTRIBUTING.md)。

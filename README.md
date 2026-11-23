@@ -18,7 +18,7 @@ Pick any recording device, or the output a device is already playing, and stream
   <img alt="UI" src="https://img.shields.io/badge/UI-GPUI%20%2B%20Ely-444?style=flat-square">
 </p>
 
-[Quick start](#-quick-start) · [Features](#-features) · [Technical route](#-technical-route-and-choices) · [Docs](#-documentation) · [Changelog](CHANGELOG.md)
+[Quick start](#quick-start) · [Features](#features) · [Technical route](#technical-route-and-choices) · [Docs](#documentation) · [Changelog](CHANGELOG.md)
 
 </div>
 
@@ -36,7 +36,7 @@ Pick any recording device, or the output a device is already playing, and stream
 > [!NOTE]
 > **2.0** rebuilds the desktop UI on GPUI and the Ely component library, and folds in the unpublished 1.1.0 release candidate. Upgrading from v1.0.3 keeps settings and data. Test coverage and hardware checks are in the [migration checklist](docs/gpui-migration-checklist.md) (Chinese). The devices in the screenshots are made up.
 
-## ✨ Features
+## Features
 
 **Audio**
 
@@ -63,7 +63,7 @@ Pick any recording device, or the output a device is already playing, and stream
 - Searching for devices no longer locks the window; source and settings stay usable.
 - Runtime statistics, technical details, redacted logs and per-packet diagnostics.
 
-## 🚀 Quick start
+## Quick start
 
 ### Installer
 
@@ -92,7 +92,7 @@ git -C upstream/airplay-cli/libraop submodule update --init -- crosstools
 
 Add `-Offline` once dependencies are downloaded. At run time keep the backend and DLLs that live in `dist/`.
 
-## 🎧 Using it
+## Using it
 
 1. Under **Audio source**, choose a recording or playback device; the level meters start moving.
 2. Under **AirPlay devices**, choose a receiver or a stereo pair, then click **Start streaming** at the bottom.
@@ -100,7 +100,7 @@ Add `-Offline` once dependencies are downloaded. At run time keep the backend an
 
 Stereo pairs must be made in Apple's Home app first. The gear at the top right opens settings: General, Statistics, Technical and Logs. Closing the window hides it to the tray by default; choose **Quit** from the tray menu to exit. The full guide is in [UI and settings](docs/ui.md) (Chinese).
 
-## 🧭 Technical route and choices
+## Technical route and choices
 
 | Version | UI | Highlights |
 |---|---|---|
@@ -116,7 +116,7 @@ Stereo pairs must be made in Apple's Home app first. The gear at the top right o
 
 Reasons, constraints, trade-offs and to-dos are in [Technical route](docs/tech-stack.md).
 
-## 🏗️ Architecture
+## Architecture
 
 ```text
 GPUI native window (gpui-pre + Ely components)
@@ -132,7 +132,7 @@ AirPlay receiver
 
 The UI calls the Rust libraries in `airplay-core/` through `airplay-desktop/`; the protocol backend is the separate `airplay-backend.exe`. `homepod-test.exe` is a diagnostic tool built on the same core, and Python is used only at build time to generate the upstream adaptation. Modules and lifecycles are in [Architecture](docs/architecture.md) (Chinese).
 
-## 📁 Repository layout
+## Repository layout
 
 ```text
 ├── airplay-frontend/  Desktop UI (src-ely: GPUI + Ely)
@@ -154,7 +154,7 @@ The UI calls the Rust libraries in `airplay-core/` through `airplay-desktop/`; t
 
 Third-party sources are referenced through `.gitmodules` at pinned commits; GitHub's automatic source ZIP does not include submodule contents.
 
-## 📚 Documentation
+## Documentation
 
 Most documents are in Chinese; the README and the technical route have English versions.
 
@@ -166,7 +166,7 @@ Most documents are in Chinese; the README and the technical route have English v
 | [Display-off capture](docs/display-off-capture.md) | [Test guide](test/README.md) | [Contributing](CONTRIBUTING.md) |
 | [Log retention](docs/log-retention.md) | [Migration checklist](docs/gpui-migration-checklist.md) | [Docs index](docs/README.md) |
 
-## 🔒 Data and privacy
+## Data and privacy
 
 - GUI settings and logs live in `%APPDATA%\AirPlay Hub`; the CLI's device list, logs and recording diagnostics live in its `cli` subfolder.
 - Passwords are never stored and never passed as process arguments.
@@ -175,7 +175,7 @@ Most documents are in Chinese; the README and the technical route have English v
 
 Retention is described in [Log retention](docs/log-retention.md) and synthetic measurements in [Performance baseline](docs/performance-baseline.md) (both Chinese).
 
-## ⚠️ Current limits
+## Current limits
 
 - Windows only; the send format is fixed at 44100 Hz, 16-bit, stereo.
 - Stereo targets existing HomePod stereo pairs; general multi-room grouping is not implemented.
@@ -184,20 +184,20 @@ Retention is described in [Log retention](docs/log-retention.md) and synthetic m
 - Errors returned by the service layer and the native backend are in Chinese only.
 - Builds, simulated checks and successful sends do not replace playback checks on real receivers.
 
-## 🗺️ Roadmap
+## Roadmap
 
 - [x] Switch packaging to the 2.0 UI.
 - [ ] Release 2.0 after hardware checks.
 - [ ] Per-app capture: stream the audio of one application.
 - [ ] Multi-device groups: play to several AirPlay receivers in sync.
 
-## 🤖 AI-assisted development
+## AI-assisted development
 
 This project is developed with help from OpenAI Codex and Anthropic Claude. AI took part in architecture discussions, writing and changing code, UI design, problem analysis and documentation; the maintainer owns the requirements and direction, development decisions, testing on real devices and release management. The project does not claim that all code was written by hand by the maintainer.
 
 The AirPlay protocol basis and some components come from third-party open-source projects; their attribution and licences are in [THIRD_PARTY.md](THIRD_PARTY.md). AI assistance does not change those notices. Generated code may still contain defects; what has actually been verified and the current limits are stated above.
 
-## 🙏 Third-party code and thanks
+## Third-party code and thanks
 
 The protocol backend is based on Music Assistant's airplay-cli and uses libraop's bplist reader / writer and crosstools' interface declarations. Audio resampling uses rubato; the UI uses GPUI and Ely GPUI Components and ships the Inter, JetBrains Mono and IBM Plex Sans fonts and Lucide icons.
 
@@ -223,7 +223,7 @@ Thanks to these projects:
 
 Third-party code belongs to its authors; this project provides the Windows adaptation, the desktop app and the audio pipeline. Pinned versions, files used, local changes, package dependencies and protocol references are in [THIRD_PARTY.md](THIRD_PARTY.md). Referencing submodules does not change third-party licence terms.
 
-## 📄 License
+## License
 
 The project's own code and documentation are licensed under the **Apache License 2.0**; see [LICENSE](LICENSE) for the full terms and [NOTICE](NOTICE) for attribution. Unless stated otherwise it covers the project's original contributions and licensable local changes, and does not replace third-party licences.
 
@@ -231,6 +231,6 @@ Apache-2.0 allows commercial use, modification and distribution without a separa
 
 One item is still open: the licensing basis of `bplist.cpp` / `bplist.h` in the pinned libraop version. That historical commit lacks the licence it refers to; upstream now carries an MIT notice, but whether it covers the version used still needs confirming. The dependency notices for release packages are also not yet complete. See [Licence status](docs/licensing.md) (Chinese).
 
-## 💬 Contributing and feedback
+## Contributing and feedback
 
 When reporting a problem or proposing a change, include the steps to reproduce, the expected and actual behaviour, the versions involved and what you verified. Remove personal device names, addresses, endpoints and paths before sharing logs. Conventions and checks are in [Contributing](CONTRIBUTING.md) (Chinese).
