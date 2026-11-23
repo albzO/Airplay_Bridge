@@ -1,6 +1,6 @@
-# 默认构建 2.0 界面（src-ely）；-Legacy 构建旧的 src-gpui 界面。
-# Builds the 2.0 UI (src-ely) by default; -Legacy builds the older src-gpui UI.
-param([switch]$Offline, [switch]$Production, [switch]$DebugBuild, [switch]$Legacy)
+# 构建桌面界面（src-ely）。
+# Builds the desktop UI (src-ely).
+param([switch]$Offline, [switch]$Production, [switch]$DebugBuild)
 
 $ErrorActionPreference = 'Stop'
 Push-Location -LiteralPath (Split-Path -Parent $PSScriptRoot)
@@ -30,9 +30,8 @@ try {
     }
 
     $target = 'x86_64-pc-windows-msvc'
-    $crate = if ($Legacy) { 'src-gpui' } else { 'src-ely' }
-    $targetDir = if ($Legacy) { 'build/gpui-migration-target' } else { 'build/ely-target' }
-    $arguments = @('build', '--manifest-path', "airplay-frontend/$crate/Cargo.toml", '--target', $target, '--target-dir', $targetDir, '--locked')
+    $targetDir = 'build/ely-target'
+    $arguments = @('build', '--manifest-path', 'airplay-frontend/src-ely/Cargo.toml', '--target', $target, '--target-dir', $targetDir, '--locked')
     $arguments += @('--config', 'target.x86_64-pc-windows-msvc.rustflags=["-C","target-feature=+crt-static"]')
     $profileFolder = if ($DebugBuild) { 'debug' } else { 'release' }
     if (!$DebugBuild) { $arguments += '--release' }
@@ -43,7 +42,7 @@ try {
     $gui = "$targetDir/$target/$profileFolder/airplay-bridge-gpui.exe"
     if ($Production) {
         Copy-Item -LiteralPath $gui -Destination 'dist/airplay-bridge.exe'
-        if (!$Legacy) { Copy-ElyLicenses $Offline }
+        Copy-ElyLicenses $Offline
         Write-Host 'Built: dist/airplay-bridge.exe'
         return
     }

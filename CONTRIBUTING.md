@@ -9,16 +9,15 @@
 - 核心单元测试镜像生产模块组织：`core/unit/capture/`、`core/unit/live/`、`core/unit/source/` 保存子模块测试；移动时同步 `#[path]` 和文档。删除代码须有调用关系/编译器证据，不把 CLI、模拟接收端或 Windows 兼容符号仅凭名称判断为无用。
 - `upstream/` 是固定版本第三方子模块。修改适配优先在 `airplay-backend/` 完成，不直接编辑 `build/` 中的生成文件。更新依赖提交应单独提交，并更新第三方记录；不要把第三方源码作为普通文件提交到本仓库。
 - 上游源码修改维护为 `airplay-backend/patches/` 中有上下文的补丁，Windows 实现维护在本地 C 兼容层；Python 只校验、应用补丁和选择编译内容，不添加源码字符串替换。变更须审查 `upstream-manifest.json` 的固定提交、输入/补丁哈希及应用顺序，审查生成差异后更新输出快照；运行 `python test/backend/test_upstream.py`。步骤见 [上游适配变更](docs/building.md#上游适配变更)，不要自动接受新清单。
-- 保留 Rust 和 pnpm 锁文件。依赖升级与功能修改尽量分开。
+- 保留 Rust 锁文件。依赖升级与功能修改尽量分开。
 - 不提交设备清单、密码、录音、日志、构建产物或个人工具路径。
 - 沿用现有命名和排版，代码注释使用中英双语，中文在前、英文在后，在同一注释块内对应说明。关键入口说明输入来源、参数单位、状态条件、资源生命周期和设计原因；复杂流程先说明整体步骤，再补充局部原因，避免只写职责标签或逐行重复代码。
 - 双语注释保留一致的字段名、协议术语、数值范围和单位；修改逻辑时同步更新两种语言。短注释相邻排列，长说明按语言分段，不逐词交错，也不翻译代码标识或第三方版权声明。
 - 文件按外部导入、本地导入、常量与类型、状态、辅助方法、入口与生命周期排列；Rust 测试通过模块尾部的挂接引用 `test/`，依赖初始化顺序优先于机械排序。
-- 前端使用 2 空格、单引号、分号和约 100 列换行；Rust 使用 rustfmt。不要将第三方或生成文件纳入统一格式化。
-- 前端构建同时检查未使用的局部变量与参数；测试通过生产模块观察内部状态，不为测试保留页面未使用的绑定。
+- Rust 使用 rustfmt。不要将第三方或生成文件纳入统一格式化。
 - `.editorconfig` 与 `.gitattributes` 统一文本编码、缩进和 LF 换行；图片保持二进制内容。
 - `docs/` 只维护当前版本的使用、开发、排查和交付文档；实现规则写入对应指南，功能变化写入 CHANGELOG。已完成的优化/审查过程先确认已入 Git，再移除，不另建历史目录或逐轮报告。删除或合并文档时同步导航、README、测试说明及链接。
-- 通用数据类型放在 `src/types.ts`，桌面数据格式校验放在 `src/protocol.ts`，命令错误转换放在 `src/commands.ts`。设置校验与持久化放在 `airplay-desktop/src/settings.rs`，窗口行为放在 `src-tauri/src/window.rs`。外部 JSON 接收为 `unknown`，验证后再使用；不要用 `any` 或直接断言掩盖字段不一致。
+- 界面状态与操作放在 `airplay-frontend/src-ely/src/player.rs`，绘制放在 `view.rs`、`settings_view.rs`，桌面事件解析放在 `inbox.rs`。设置校验与持久化放在 `airplay-desktop/src/settings.rs`，窗口与托盘放在 `src-ely/src/shell.rs`。外部 JSON 先校验必填字段再使用。
 - 新日志路径应通过 `log_store.rs` 限制单文件并纳入保留命名；队列和页面历史也须有上限，规则见 [日志保留限制](docs/log-retention.md)。
 - 日志在落盘和展示日志前脱敏；真实设备数据只用于发现、选择和控制。凭据不要加入日志、进程参数、配置文件或发布包。
 - 界面修改应检查浅色/深色、最小窗口尺寸、键盘交互和托盘状态。
@@ -31,33 +30,25 @@
 # 当前源码及待新增文件的敏感数据规则检查；输出仅包含位置与规则名
 python scripts/check-sensitive-data.py
 
-# 排版检查；首次安装工具依赖时使用锁文件
-pnpm --dir airplay-frontend format:check
+# 排版检查
 cargo fmt --manifest-path airplay-core/Cargo.toml --check
 cargo fmt --manifest-path airplay-desktop/Cargo.toml --check
-cargo fmt --manifest-path airplay-frontend/src-tauri/Cargo.toml --check
+cargo fmt --manifest-path airplay-frontend/src-ely/Cargo.toml --check
 
 # Rust 音频库测试，不连接实际接收端
 cargo test --manifest-path airplay-core/Cargo.toml --locked --offline --lib
 cargo test --manifest-path airplay-desktop/Cargo.toml --locked --offline
 
-# 前端类型检查和构建
-pnpm --dir airplay-frontend test:protocol
-pnpm --dir airplay-frontend test:session
-pnpm --dir airplay-frontend test:diagnostics
-pnpm --dir airplay-frontend test:dom
-pnpm --dir airplay-frontend build
-
-# 桌面程序编译检查
-cargo check --manifest-path airplay-frontend/src-tauri/Cargo.toml --locked --offline
+# 桌面界面测试
+cargo test --manifest-path airplay-frontend/src-ely/Cargo.toml --locked --offline
 
 # 完整本机构建（已有全部依赖）
 .\scripts\build-desktop.ps1 -Offline
 ```
 
-测试源码与合成素材现在统一在 `test/` 维护，恢复 Git 提交。前端样例只使用文档保留地址和合成标识；真实设备清单、配置、录音、截图输出和日志仍不提交。目录和完整运行说明见 [测试说明](test/README.md)。
+测试源码与合成素材统一在 `test/` 维护。样例只使用文档保留地址和合成标识；真实设备清单、配置、录音、截图输出和日志仍不提交。目录和完整运行说明见 [测试说明](test/README.md)。
 
-后端协议模拟入口在 `test/backend/`，前端协议入口为 `pnpm --dir airplay-frontend test:protocol`，真实模板自动交互为 `test:dom`，人工模拟界面为 `test:ui`。DOM 测试在 Windows 默认使用已安装 Edge，无需编译后端；浏览器选择、产物及运行边界见 [测试说明](test/README.md)。这些检查和编译通过都不能替代实机播放验证。音频修改请说明设备、来源、驱动、格式、提前量、Buffer、测试时长及实际听感；不要为了普通布局调整重复长测。
+后端协议模拟入口在 `test/backend/`，桌面界面逻辑测试在 `test/frontend/desktop/`，运行边界见 [测试说明](test/README.md)。这些检查和编译通过都不能替代实机播放验证。音频修改请说明设备、来源、驱动、格式、提前量、Buffer、测试时长及实际听感；不要为了普通布局调整重复长测。
 
 队列、缓冲或转换性能修改先保留 Release 合成基线，再运行相同入口比较；方法见 [性能基线](docs/performance-baseline.md)。慢速回绕检查为 `python test/backend/check_wrap.py`，约 9 分钟，不需要声卡；PTP 脚本串行执行。CI 暂未纳入本轮修改。
 

@@ -3,7 +3,7 @@
 use std::{env, fs, path::PathBuf};
 
 fn main() {
-    let icon = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../src-tauri/icons/icon.ico");
+    let icon = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("icons/icon.ico");
     println!("cargo:rerun-if-changed={}", icon.display());
     println!("cargo:rerun-if-changed=build.rs");
     let icon = icon.to_string_lossy().replace('\\', "\\\\");

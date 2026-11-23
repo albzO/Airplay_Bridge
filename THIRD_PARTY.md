@@ -55,13 +55,11 @@
 | [windows-rs](https://github.com/microsoft/windows-rs) | `windows 0.62.2` | WASAPI、COM 和 Windows API 绑定 | 该版本 Cargo 元数据：MIT OR Apache-2.0 |
 | [rubato](https://github.com/HEnquist/rubato) | `5.0.1` | 有状态 sinc 重采样 | 该版本 Cargo 元数据：MIT OR Apache-2.0 |
 | [audioadapter-buffers](https://github.com/HEnquist/audioadapter-buffers-rs) | `5.2.0` | 音频缓冲适配 | 该版本 Cargo 元数据：MIT OR Apache-2.0 |
-| GPUI、GPUI Component、tray-icon | `airplay-frontend/src-gpui/Cargo.lock` | 1.1 候选界面的原生窗口、界面组件和 Windows 托盘 | 版本、声明及源码包通知文件见发行包中的 `licenses/rust/DEPENDENCIES.tsv` |
+| tray-icon 等其他 Rust 依赖 | `airplay-frontend/src-ely/Cargo.lock` | Windows 托盘及界面依赖 | 版本、声明及源码包通知文件见发行包中的 `licenses/rust/DEPENDENCIES.tsv` |
 | [GPUI（gpui-pre、gpui-pre-platform）](https://github.com/zed-industries/zed) | `=0.3.11`，`airplay-frontend/src-ely/Cargo.lock` | 2.0 界面的窗口、渲染与平台层 | 该版本 Cargo 元数据：Apache-2.0 |
 | [Ely GPUI Components](https://github.com/ELY-Open-Source/Ely-GPUI-Components)（`ely-core`） | Git 固定提交 `69a62b10168eed5b011b978497c2fdca644cb81f` | 2.0 界面的主题、组件、布局、动效与窗口外壳 | 仓库 LICENSE：MIT |
 | Lucide 图标（随 Ely 打包） | 同上 | 界面图标，编译进程序 | Ely 所附 `icons/LICENSE`：ISC |
 | Inter、JetBrains Mono、IBM Plex Sans 字体（随 Ely 打包） | 同上 | 界面与等宽字体，编译进程序 | Ely 所附各字体 LICENSE：SIL Open Font License 1.1 |
-| Tauri、单实例插件、Vue、Vite 等 | `airplay-frontend/src-tauri/Cargo.lock` 和 `airplay-frontend/pnpm-lock.yaml` | 旧界面与回归对照 | 以各具体版本的许可证文件及元数据为准 |
-| [Playwright Test](https://github.com/microsoft/playwright) | `@playwright/test 1.64.0` 与对应锁文件 | 仅开发时的真实模板 DOM 回归，不在生产入口导入 | 该版本 npm 包元数据及所附 LICENSE：Apache-2.0 |
 
 Rust 精确版本与校验值见各 Cargo 包的 `Cargo.lock`。发行包的 Rust 依赖索引按已锁定的 Windows x64 普通依赖生成，并列出随包的文件。
 
@@ -69,7 +67,7 @@ Rust 精确版本与校验值见各 Cargo 包的 `Cargo.lock`。发行包的 Rus
 
 原生后端链接 MSYS2 UCRT64 的 OpenSSL Crypto 和 winpthreads，并依赖所需 GCC 运行时 DLL。当前构建脚本递归检查 DLL 导入并复制运行时；依赖集合随工具链安装版本变化，不使用上游自带 OpenSSL 的版本描述代替本机实际版本。
 
-已在当前构建环境核实：OpenSSL 所附 LICENSE 为 Apache-2.0 文本；winpthreads 附带自己的 COPYING。其他 DLL、GCC 运行时的许可证及例外条款应按实际打包版本核实。Python、CMake、Ninja、GCC/G++、Rust、Node.js 和 pnpm 是构建工具，不代表全部会被打包进应用。
+已在当前构建环境核实：OpenSSL 所附 LICENSE 为 Apache-2.0 文本；winpthreads 附带自己的 COPYING。其他 DLL、GCC 运行时的许可证及例外条款应按实际打包版本核实。Python、CMake、Ninja、GCC/G++ 和 Rust 是构建工具，不代表全部会被打包进应用。
 
 `scripts/build-backend.ps1` 复制原生依赖的部分许可证，`scripts/package-release.ps1` 另收集 Rust 源码包附带的许可和通知文件。剩余核对项目见 [许可证状态](docs/licensing.md)。
 

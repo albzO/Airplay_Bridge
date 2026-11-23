@@ -135,7 +135,7 @@ The UI calls the Rust libraries in `airplay-core/` through `airplay-desktop/`; t
 ## 📁 Repository layout
 
 ```text
-├── airplay-frontend/  Desktop UIs: src-ely (2.0), src-gpui (1.1 candidate), legacy Vue/Tauri reference
+├── airplay-frontend/  Desktop UI (src-ely: GPUI + Ely)
 ├── airplay-desktop/   Windows desktop services: settings, capture source, sessions, auth, keep-awake
 ├── airplay-core/      Shared Rust audio library and diagnostic CLI
 ├── airplay-backend/   C/C++ AirPlay backend and Windows adaptation

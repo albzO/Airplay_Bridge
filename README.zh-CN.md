@@ -135,7 +135,7 @@ AirPlay 接收端
 ## 📁 仓库结构
 
 ```text
-├── airplay-frontend/  桌面界面：src-ely（2.0）、src-gpui（1.1 候选）、旧 Vue/Tauri 对照
+├── airplay-frontend/  桌面界面（src-ely：GPUI + Ely）
 ├── airplay-desktop/   Windows 桌面服务：配置、采集源、会话、认证、唤醒
 ├── airplay-core/      共用 Rust 音频库及诊断 CLI
 ├── airplay-backend/   C/C++ AirPlay 后端与 Windows 适配

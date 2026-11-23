@@ -13,8 +13,8 @@ VIAddVersionKey "ProductName" "AirPlay Bridge"
 VIAddVersionKey "FileVersion" "${VERSION}"
 VIAddVersionKey "FileDescription" "AirPlay Bridge Setup"
 VIAddVersionKey "LegalCopyright" "See NOTICE"
-!define MUI_ICON "..\airplay-frontend\src-tauri\icons\icon.ico"
-!define MUI_UNICON "..\airplay-frontend\src-tauri\icons\icon.ico"
+!define MUI_ICON "..\airplay-frontend\src-ely\icons\icon.ico"
+!define MUI_UNICON "..\airplay-frontend\src-ely\icons\icon.ico"
 !define MUI_ABORTWARNING
 !insertmacro MUI_PAGE_WELCOME
 !insertmacro MUI_PAGE_DIRECTORY

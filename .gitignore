@@ -1,4 +1,4 @@
-# Build output and dependency caches (keep Cargo.lock and pnpm-lock.yaml)
+# Build output and dependency caches (keep Cargo.lock)
 /build/
 /environment-check/
 /dist/
@@ -7,10 +7,6 @@
 /snapshot-backups/
 /.local/
 target/
-node_modules/
-.pnpm-store/
-/airplay-frontend/dist/
-/airplay-frontend/src-tauri/gen/schemas/
 __pycache__/
 *.py[cod]
 .pytest_cache/
@@ -23,7 +19,6 @@ __pycache__/
 *.dll
 *.ilk
 *.exp
-*.tsbuildinfo
 /docs/code-complexity-audit.md
 
 # Local editor configuration and operating-system files
@@ -59,8 +54,6 @@ auth-policy.pending.json
 
 # Test sources are committed; generated artifacts and local runtime data are not.
 /test/.artifacts/
-!/test/frontend/fixtures/devices.json
-!/test/frontend/fixtures/inputs.json
 
 # Local environment secrets; allow documented examples
 .env

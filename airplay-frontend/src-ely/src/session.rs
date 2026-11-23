@@ -20,23 +20,6 @@ pub enum Phase {
     Failed,
 }
 
-impl Phase {
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Idle => "尚未连接",
-            Self::Connecting => "正在连接",
-            Self::Preparing => "等待采集稳定",
-            Self::Password => "需要 AirPlay 密码",
-            Self::Verifying => "正在验证密码",
-            Self::Ready => "正在启动音频",
-            Self::Playing => "串流中",
-            Self::Stopping => "正在停止",
-            Self::Stopped => "已停止",
-            Self::Failed => "串流失败",
-        }
-    }
-}
-
 #[derive(Default)]
 pub struct Session {
     pub id: Option<u64>,

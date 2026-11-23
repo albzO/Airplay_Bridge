@@ -8,8 +8,8 @@ This page records why the desktop UI changed technology three times, what 2.0.0 
 
 | Version | UI technology | Notes |
 |---|---|---|
-| 1.0.x | Vue 3 + Vite on a Tauri 2 WebView | `airplay-frontend/src/`, `src-tauri/`. The UI reaches the Rust backend over IPC and needs WebView2. |
-| 1.1.0 (release candidate, never published) | GPUI `0.2.2` + gpui-component `0.5.1` | `airplay-frontend/src-gpui/`. No WebView; the UI calls the desktop services in-process. Feature-complete, but its look and interaction fell short of release quality. |
+| 1.0.x | Vue 3 + Vite on a Tauri 2 WebView | Removed in 2.0; see Git history. The UI reached the Rust backend over IPC and needed WebView2. |
+| 1.1.0 (release candidate, never published) | GPUI `0.2.2` + gpui-component `0.5.1` | Removed in 2.0; see Git history. No WebView; the UI called the desktop services in-process. Feature-complete, but its look and interaction fell short of release quality. |
 | 2.0.0 (release candidate) | GPUI `gpui-pre 0.3.11` + Ely GPUI Components | `airplay-frontend/src-ely/`. A new UI on top of the services split out for 1.1.0. |
 
 All three share the Rust desktop services (`airplay-desktop`), the audio core (`airplay-core`) and the native backend (`airplay-backend`). Changing the UI layer does not change the audio pipeline, the protocol, the settings format or the data directory.
@@ -33,7 +33,7 @@ All three share the Rust desktop services (`airplay-desktop`), the audio core (`
 
 Ely depends on `gpui-pre 0.3.11` (Zed's pre-release GPUI), whose types are incompatible with the crates.io `gpui 0.2.2` used by 1.1.0, so components cannot be mixed. The new UI is therefore its own crate, `airplay-frontend/src-ely`, rather than a control-by-control replacement inside `src-gpui`.
 
-Modules that do not depend on gpui are shared as one source: `src-ely` includes `session.rs`, `inbox.rs`, `diagnostics.rs`, `volume.rs` and `desktop_job.rs` from `src-gpui/src/` with `#[path]`. Move them into `src-ely` before deleting `src-gpui`.
+The gpui-independent modules from 1.1 (`session.rs`, `inbox.rs`, `diagnostics.rs`, `volume.rs`, `desktop_job.rs`) now live in `src-ely`.
 
 The executable keeps the name `airplay-bridge-gpui.exe`; the desktop services treat that name as the preview build, with a startup entry and single-instance signal separate from the installed app.
 
@@ -65,12 +65,10 @@ Where Ely does not fit or cannot be customised, `src-ely` has its own code:
 - **Keep awake only while streaming**: the established phase of a session is the test; stopping, failing, quitting or a cleanup timeout releases the request. See [display-off capture](display-off-capture.md) (Chinese).
 - **Discovery is admitted on its own**: it excludes only starting a stream and can run while settings are saved or capture is switched, so the window no longer locks as a whole.
 
-Both live in `airplay-desktop`, so the older GPUI and WebView UIs get them too.
-
 ## Known trade-offs and to-dos
 
 - The custom picker has no arrow-key selection, Enter to confirm or Escape to close.
 - With scrolling handled by the view, moving focus with Tab to an off-screen control does not scroll it into view.
 - Motion runs at about 6 ms per frame in debug and release builds, verified on one display only.
-- The packaging scripts build `src-ely`; `build-gpui.ps1 -Legacy` still builds `src-gpui`. Ely's MIT license and the Lucide, Inter, JetBrains Mono and IBM Plex Sans licenses ship in `licenses/ely/`. User-facing versions drop a zero patch (2.0.0 is shown as 2.0); Cargo and the numeric Windows resource version keep all parts.
+- The packaging scripts build `src-ely`. Ely's MIT license and the Lucide, Inter, JetBrains Mono and IBM Plex Sans licenses ship in `licenses/ely/`. User-facing versions drop a zero patch (2.0.0 is shown as 2.0); Cargo and the numeric Windows resource version keep all parts.
 - Streaming, passwords, volume and stereo swapping against real receivers are verified on hardware by the maintainer.

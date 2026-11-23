@@ -92,7 +92,7 @@ Buffer 是发送端的 PCM 预读深度，与播放提前量不同。标注“�
 | `src-ely/src/view.rs`、`settings_view.rs` | 播放页、底部栏、标题栏与四个设置子页 |
 | `src-ely/src/panel.rs`、`elastic.rs`、`source_picker.rs` | 分组卡片、平滑与弹性滚动、来源下拉 |
 | `src-ely/src/visibility.rs`、`lang.rs` | 窗口可见性与空闲采集、界面语言 |
-| `src-gpui/src/inbox.rs`、`diagnostics.rs`、`session.rs` | 有界事件、诊断快照、会话状态（两套界面共用） |
+| `src-ely/src/inbox.rs`、`diagnostics.rs`、`session.rs` | 有界事件、诊断快照、会话状态 |
 | `../airplay-desktop/src/lib.rs` | 桌面服务、配置作业、会话事件和退出收尾 |
 | `../airplay-desktop/src/auth.rs`、`auth_memory.rs` | 密码管道和接收端认证方式记录 |
 | `../airplay-desktop/src/awake.rs` | Windows 系统与屏幕唤醒请求 |

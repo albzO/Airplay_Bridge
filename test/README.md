@@ -4,23 +4,21 @@
 
 Test sources are committed under root `test/`. Production modules retain attachment/diagnostic entry points; existing private-module access and ignored hardware checks are preserved.
 
-核心子模块测试归入 `core/unit/capture/`、`live/`、`source/`；后端定位测试为 `core/unit/backend.rs`。挂接统一位于生产模块尾部，前端脚本观察生产会话模块，不依赖 App 模板未使用的绑定。当前实现及资源边界见[架构](../docs/architecture.md)。
+核心子模块测试归入 `core/unit/capture/`、`live/`、`source/`；后端定位测试为 `core/unit/backend.rs`。挂接统一位于生产模块尾部。当前实现及资源边界见[架构](../docs/architecture.md)。
 
-会话测试覆盖阻塞准备时取消、迟到编号、配置互斥及真实设置写入的取消/失败；脚本与 DOM 检查编号确认前停止、卸载和旧事件隔离。停止测试覆盖 stderr 原始 Win32 错误、统一期限、本地进程/管道、资源保留和停止后的真实错误。
+会话测试覆盖阻塞准备时取消、迟到编号、配置互斥及真实设置写入的取消/失败；界面会话测试检查迟到事件隔离。停止测试覆盖 stderr 原始 Win32 错误、统一期限、本地进程/管道、资源保留和停止后的真实错误。
 
 Source/会话通知测试使用阻塞回调，检查最新快照、设备统计、控制和终态顺序，以及容量/字节限制、异常和超时保留。认证策略测试覆盖去重、慢写入、保存失败后重试和超时禁止新会话。
 
 Source 缓冲测试检查位值、所有权、扩容/回收上限、非法或超预算包及跨线程变长包/采样率。显式 Release 合成基线使用真实 send_audio 路径；方法与产物限制见[性能基线](../docs/performance-baseline.md)。
 
-保持唤醒测试检查系统/显示器请求顺序、失败撤销和实际句柄释放；它不等待真实熄屏。采集时间戳与设置交互分别有核心/DOM 回归，适用边界见[熄屏排查](../docs/display-off-capture.md)。
+保持唤醒测试检查系统/显示器请求顺序、失败撤销和实际句柄释放；它不等待真实熄屏。采集时间戳有核心回归，适用边界见[熄屏排查](../docs/display-off-capture.md)。
 
 本版实际执行结果见[交付简报](../docs/release-v1.0.3.md)。本页维护测试范围和运行方法，逐轮执行记录从 Git 历史查阅。
 
-`frontend/desktop/routing.rs` 的 2 项回归调用生产路由模块，在暂存设置文件路径创建目录触发真实写入失败，检查磁盘、内存和活动 Mutex/AtomicBool 不变，解除故障后可重试。它们没有创建 WASAPI Source 或完整 Tauri 会话。
+`frontend/desktop/routing.rs` 的 2 项回归调用生产路由模块，在暂存设置文件路径创建目录触发真实写入失败，检查磁盘、内存和活动 Mutex/AtomicBool 不变，解除故障后可重试。它们没有创建 WASAPI Source 或完整桌面会话。
 
 `core/unit/live/report.rs` 的 2 项回归调用生产结果选择/报告模块，以目录占用 JSON 目标路径，验证协议、采集、管道、传输/退出及仅报告失败的优先级；即使无法落盘仍收到包含 `report_write_error` 的内存报告。可写报告与 GUI 快照一致，已有故障仍保留；报告失败使用 `REPORT_WRITE_FAILED` 并保留操作和 OS 错误来源。
-
-DOM 新增来源失败/重试、等待预览、冷启动保存失败、映射回退以及两种日志模式；加强保持唤醒重复点击、跨标签禁用与互换等待。IPC 夹具仅在成功完成时应用保存/路由副作用，拒绝不会先修改模拟设置。脚本另外覆盖重复来源选择及卸载后的迟到保存成功/失败；这些边界模拟不等于实机播放验证。
 
 `core/unit/live/protocol.rs` 使用实际协议读线程和可注入 writer，分别阻塞/失败文件与控制台输出，验证队列溢出时就绪、认证错误及首个故障仍被处理、取消不等待日志、收尾超时后不输出积压，并检查详细/故障日志脱敏及密码提示。夹具在失败时也解除故意阻塞，无需声卡或接收设备。完整串流报告中的 `protocol_log_status` 单独表示日志健康；没有据此断言整个应用有严格停止上限。
 
@@ -30,13 +28,11 @@ DOM 新增来源失败/重试、等待预览、冷启动保存失败、映射回
 
 | 目录           | 内容                                                                            |
 | -------------- | ------------------------------------------------------------------------------- |
-| `frontend/`    | JSON 协议、会话脚本、真实模板 DOM、模拟 UI、合成设备样例和桌面 Rust 测试        |
+| `frontend/desktop/` | 桌面服务与 GPUI 界面逻辑的 Rust 测试                                       |
 | `backend/`     | 本机模拟接收端、认证、密码管道、立体声、延迟 SETUP 和原生 nonce 检查            |
 | `core/unit/`   | 采集解码/统计/时间线/健康状态、转换、漂移、来源生命周期、串流管线与脱敏单元测试 |
 | `core/checks/` | 已采集 WAV 与转换 PCM 的独立校验脚本                                            |
 | `.artifacts/`  | 截图、模拟 PCM 和检查输出；不提交 Git                                           |
-
-`frontend/diagnostics.test.mjs` 直接执行生产 `useDiagnostics.ts`，覆盖所有日志入口的数量/文本限制、结束摘要、报告大小、清空/重连、重复/部分/非法统计、设备淘汰及原型式键名。DOM 突发事件回归验证真实页面的 300/120 上限、截断、脱敏和清空范围。
 
 `frontend/desktop/gpui_diagnostics.rs` 直接调用 GPUI 的诊断批次和汇总，覆盖日志与摘要容量、UTF-16 截断、报告大小、迟到报告隔离、清空范围，以及设备统计跨会话累计。
 
@@ -46,27 +42,15 @@ DOM 新增来源失败/重试、等待预览、冷启动保存失败、映射回
 
 ## 运行 / Run
 
-以下命令在项目根目录执行。前端测试只需 `pnpm --dir airplay-frontend install --frozen-lockfile` 与相应浏览器，无需原生后端或声卡。原生/Python 协议检查先按 [构建指南](../docs/building.md) 构建后端；Python 另需 `backend/requirements.txt` 中的依赖。
+以下命令在项目根目录执行。Rust 测试无需原生后端或声卡。原生/Python 协议检查先按 [构建指南](../docs/building.md) 构建后端；Python 另需 `backend/requirements.txt` 中的依赖。
 
-Run commands from the project root. Frontend tests require frontend dependencies and, for DOM tests, a browser; native/Python receiver checks additionally require the backend and Python requirements.
+Run commands from the project root. Rust tests need no backend or audio hardware; native/Python receiver checks require the backend and Python requirements.
 
 ```powershell
 # Rust 单元测试 / Rust unit tests
 cargo test --manifest-path airplay-core/Cargo.toml --locked --offline --lib
 cargo test --manifest-path airplay-desktop/Cargo.toml --locked --offline
-cargo test --manifest-path airplay-frontend/src-gpui/Cargo.toml --locked --offline --release --target x86_64-pc-windows-msvc --target-dir build/gpui-migration-target
-# Tauri 入口嵌入生产产物，先构建前端再检查入口。
-# Build production assets before checking the Tauri entry point.
-pnpm --dir airplay-frontend build
-cargo check --manifest-path airplay-frontend/src-tauri/Cargo.toml --locked --offline
-
-# 前端协议及模拟页面 / Frontend protocol and mocked UI
-pnpm --dir airplay-frontend test:protocol
-pnpm --dir airplay-frontend test:session
-pnpm --dir airplay-frontend test:diagnostics
-pnpm --dir airplay-frontend test:dom
-pnpm --dir airplay-frontend test:ui
-pnpm --dir airplay-frontend test:ui:build
+cargo test --manifest-path airplay-frontend/src-ely/Cargo.toml --locked --offline
 
 # 本机模拟接收端 / Local mock receivers
 python -m pip install -r test/backend/requirements.txt
@@ -92,30 +76,6 @@ python test/core/checks/compare_performance.py test/.artifacts/core/performance-
 python test/core/checks/check_capture.py "path/to/capture.wav"
 python test/core/checks/check_conversion.py "path/to/capture.pcm"
 ```
-
-`test:session` 自动执行真实页面脚本和 `useStreamSession.ts`，覆盖命令返回前的事件、旧会话事件、密码重试、停止、启动失败、事件积压和卸载；替换桌面 IPC 与浏览器接口，不覆盖 DOM 点击、布局或真实 WebView。
-
-`test:session` executes the actual page script for early/stale events, password retries, stopping, startup failure, overflow and unmount. Desktop IPC/browser APIs are mocked; DOM clicks, layout and the real WebView are not covered.
-
-`test:dom` 使用固定版本 `@playwright/test 1.64.0`，加载生产 `main.ts`、`App.vue`、`SourcePicker.vue`、`DeviceCard.vue`、`GeneralSettings.vue`、`RuntimeStats.vue`、`TechnicalDetails.vue`、`LogView.vue` 和样式，模拟 Tauri IPC/事件，执行 27 项真实点击/输入回归：无来源、无设备、来源选择及 Escape、分组排序/外部关闭、单声道保存后预览、设备卡片互换成功/失败及单设备选择、自启/保持唤醒失败回退与重试、常规设置同步及映射、统计快照/累计计数、技术详情/Buffer/认证策略重检、日志开关/清空/报告/目录命令、连接/停止时控件禁用、Enter 密码重试与新会话归属、旧事件隔离、启动失败恢复、重复/迟到密码提交。未捕获浏览器异常也会失败。夹具没有定时协议事件，测试可暂停/完成/拒绝命令来确定异步顺序，不读取或改写组件内部状态。
-
-Windows 默认使用已安装 Edge 的无头模式，无需下载浏览器；已有 Chrome 可设置 `$env:AIRPLAY_TEST_BROWSER_CHANNEL = 'chrome'` 后运行，完成后 `Remove-Item Env:AIRPLAY_TEST_BROWSER_CHANNEL`。其他系统默认使用 Playwright Chromium，先运行 `pnpm --dir airplay-frontend exec playwright install chromium`。浏览器选择依据见 [Playwright 文档](https://playwright.dev/docs/browsers)。
-
-测试自己启动并回收 `127.0.0.1:4178` 的 Vite 服务与浏览器上下文，端口已占用则失败，不复用人工页面。每项最多 15 秒、整组最多 120 秒，不自动重试；失败截图/trace 和运行状态只写入忽略的 `test/.artifacts/frontend-dom/`，Vite 缓存位于 `.artifacts/frontend-vite-cache/`。`test:ui` 仍是人工模拟入口；`test:ui:build` 同时构建人工和 DOM 夹具页面。DOM 回归不等于真实 Tauri WebView、布局截图、IME、托盘或声卡/HomePod 测试。
-
-来源组件提取后 DOM 共 10 项：新增分组自然排序/外部点击关闭，以及单声道选择重置为 `[0, 0]`、保存完成后才启动预览的回归。测试通过真实 `App.vue` 与 `SourcePicker.vue` 的按钮操作，只在桌面 IPC 边界暂停/完成命令。
-
-设备卡片组件再新增 2 项，DOM 共 12 项：互换成功前保持原名称、成功后更新、失败保留顺序且不重启串流/改变输入映射；单设备只连接所选接收端、展示两个声道且没有互换按钮。点击经过真实 `DeviceCard.vue`，暂停/拒绝发生在 `set_speaker_order` IPC 边界。
-
-常规设置组件再新增 3 项，DOM 共 15 项：自启等待时禁用及失败回退/重试；保持唤醒保存失败回退并保留其他设置；关闭动作、提前量、主题和映射同步，以及连接期间提前量禁用而映射仍发送原有命令、不重启会话。测试仅模拟桌面 IPC，不修改 Windows 自启或电源策略。
-
-运行统计组件再新增 2 项，DOM 共 17 项：缺失/零值与精度、报告和下一会话快照重置；重复统计去重、切页保留、设备名称/地址回退、缺失列占位、重连后的累计值与旧事件隔离。会话脚本测试读取实际 `display.ts`，与页面使用相同数值格式化实现。
-
-技术详情组件再新增 2 项，DOM 共 19 项，并扩展无来源/无接收端检查：设备/WASAPI 格式、电平与设备能力、Buffer 保存/启动参数/忙碌禁用、协议展示；认证策略重检命令等待/失败/成功反馈及所选设备范围。`source-level` 从模拟桌面事件注入，不修改组件状态；重检只检查请求和反馈，不操作真实认证记录。
-
-日志组件再新增 3 项，DOM 共 22 项：开关独立保存/下次连接生效/忙碌禁用、打开目录失败/重试；脱敏文本、路径、报告展开、清空只影响诊断摘要、新摘要继续接收及切页保留；故障过滤、重连重置与旧日志/诊断/报告事件隔离。保留既有会话日志文件名收到新 `log_path` 后才更新的行为。`open_logs` 只模拟 IPC，不打开真实 Windows 目录或操作日志文件。
-
-`test:dom` mounts the actual production UI in headless Edge on Windows (Chromium elsewhere), mocks desktop boundaries and checks twenty-two click/keyboard/lifecycle scenarios, including source grouping/dismissal, save-before-monitor ordering, successful/failed speaker swaps, individual receiver selection, settings rollback, runtime mapping, snapshot resets, cumulative statistics, technical details, auth-policy reset requests, log controls, diagnostic clearing, expandable reports and stale log isolation. It owns its local server/browser, fails on uncaught browser errors and writes only ignored failure artifacts; it does not exercise native WebView or audio hardware or open real log folders.
 
 `test_upstream.py` 无需原生编译或声卡，需要 Python、Git 和固定子模块。7 项测试核对输出快照、三层提交、输入/补丁哈希、CRLF、只在临时副本应用补丁、上下文失败保留旧输出及函数选择边界；补丁和输入变更须先审查再更新清单，见 [上游适配变更](../docs/building.md#上游适配变更)。
 

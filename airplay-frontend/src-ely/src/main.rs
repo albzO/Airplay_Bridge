@@ -1,31 +1,19 @@
 #![windows_subsystem = "windows"]
 //! Ely GPUI 播放入口及 Windows 事件循环。
 //! Ely GPUI player entry point and Windows event loop.
-//!
-//! 会话、事件收件箱、诊断、音量和后台作业与 src-gpui 共用同一份源码；它们不依赖 gpui。
-//! Session, inbox, diagnostics, volume and worker jobs share one source with src-gpui; none of
-//! them depends on gpui.
-#[path = "../../src-gpui/src/desktop_job.rs"]
 mod desktop_job;
-#[path = "../../src-gpui/src/diagnostics.rs"]
 mod diagnostics;
 mod elastic;
-#[path = "../../src-gpui/src/inbox.rs"]
 mod inbox;
 mod lang;
 mod panel;
 mod player;
-// Phase::label 只有 src-gpui 使用；这里按当前语言另取文字。
-// Only src-gpui uses Phase::label; this UI picks the text for the current language itself.
-#[allow(dead_code)]
-#[path = "../../src-gpui/src/session.rs"]
 mod session;
 mod settings_view;
 mod shell;
 mod source_picker;
 mod view;
 mod visibility;
-#[path = "../../src-gpui/src/volume.rs"]
 mod volume;
 
 use airplay_desktop::Engine;

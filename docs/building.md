@@ -10,7 +10,7 @@
 | Python 3 | 生成固定上游源码的编译视图与发行包 Rust 许可清单 |
 | Git | 获取固定子模块、校验提交并应用上下文补丁；构建期间也需要可执行文件 |
 
-将 Cargo 和 Python 加入 PATH。后端构建默认使用 `C:\msys64`。旧 Vue/Tauri 对照入口的构建和测试使用 Node.js、pnpm 与 WebView2。
+将 Cargo 和 Python 加入 PATH。后端构建默认使用 `C:\msys64`。
 
 ### 获取源码
 
@@ -80,7 +80,7 @@ cargo build --manifest-path airplay-frontend/src-ely/Cargo.toml --release
 
 可执行文件为 `airplay-frontend/src-ely/target/release/airplay-bridge-gpui.exe`。调试构建在可执行文件旁找不到 `runtime/` 时回退到 `dist/runtime`。在可执行文件旁放空的 `portable.flag` 可使用独立的 `data/` 目录。
 
-`build-desktop.ps1`、`build-gpui.ps1` 和 `package-release.ps1` 构建 2.0 界面 `src-ely`，输出改名为 `airplay-bridge.exe` 作为正式版；`build-gpui.ps1 -Legacy` 构建旧的 `src-gpui`。Ely 及其随包字体、图标的许可证复制到 `licenses/ely/`。
+`build-desktop.ps1`、`build-gpui.ps1` 和 `package-release.ps1` 构建 2.0 界面 `src-ely`，输出改名为 `airplay-bridge.exe` 作为正式版。旧的 Vue/Tauri 与 1.1 GPUI 界面已在 2.0 删除，需要时从 Git 历史查阅。Ely 及其随包字体、图标的许可证复制到 `licenses/ely/`。
 
 ### 自定义后端工具路径
 

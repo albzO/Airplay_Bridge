@@ -29,7 +29,7 @@ cargo run
 | `src/visibility.rs` | 窗口可见性：托盘、最小化、显示器熄灭，据此暂停和恢复空闲采集 |
 | `src/lang.rs` | 界面语言：系统默认、保存的选择、`t` 与 `tf!` |
 
-会话状态机、事件收件箱、诊断、音量解析和后台作业直接引用 `../src-gpui/src/` 下的同名文件（`session.rs`、`inbox.rs`、`diagnostics.rs`、`volume.rs`、`desktop_job.rs`）。这些文件不依赖 gpui，两套界面共用一份。删除 `src-gpui` 前需要先把它们移过来。
+会话状态机、事件收件箱、诊断、音量解析和后台作业（`session.rs`、`inbox.rs`、`diagnostics.rs`、`volume.rs`、`desktop_job.rs`）来自 1.1 的 `src-gpui`，不依赖 gpui。程序图标在 `icons/`。
 
 ## 空闲时的采集
 

@@ -21,6 +21,8 @@ The 1.1.0 release candidate was never published; its changes are part of this re
   Settings and the data directory carry over from 1.x with no migration.
 - 技术：界面改用 GPUI（gpui-pre 0.3.11）与 Ely GPUI Components，位于 `airplay-frontend/src-ely`；选型与约束见 docs/tech-stack.zh-CN.md。
   Stack: the UI moves to GPUI (gpui-pre 0.3.11) and Ely GPUI Components in `airplay-frontend/src-ely`; see docs/tech-stack.md.
+- 移除旧的 Vue/Tauri 界面、1.1 GPUI 界面及其浏览器测试；构建不再需要 Node.js、pnpm 或 WebView2，旧代码可从 Git 历史查阅。
+  Removed the old Vue/Tauri UI, the 1.1 GPUI UI and their browser tests; building no longer needs Node.js, pnpm or WebView2. The old code remains in Git history.
 
 ## 1.0.3 — 2026-10-14
 

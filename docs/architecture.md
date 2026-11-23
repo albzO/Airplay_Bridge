@@ -7,8 +7,6 @@
 | 目录                        | 职责                                                               |
 | --------------------------- | ------------------------------------------------------------------ |
 | airplay-frontend/src-ely/   | 2.0 界面：GPUI（gpui-pre）+ Ely 组件、托盘、单实例、空闲采集、语言 |
-| airplay-frontend/src-gpui/  | 1.1 候选界面；其会话、事件、诊断模块由 src-ely 共用                 |
-| airplay-frontend/src/、src-tauri/ | 旧 Vue/Tauri 界面和 IPC 回归对照                             |
 | airplay-desktop/            | 桌面配置、Source 管理、会话准备、认证和退出收尾                    |
 | airplay-core/src/           | WASAPI、持续 Source、转换/漂移、传输、诊断及 CLI                   |
 | airplay-backend/            | 原生后端、上游补丁及 Windows 兼容层                                |
@@ -30,7 +28,7 @@ capture 下的 decode、timeline、metrics、health、diagnostics、clock 和 li
 
 ## 状态与所有权
 
-`airplay-desktop` 可独立编译。`Engine` 预留会话和配置操作，调用方将 `DesktopJob` 交给后台执行。服务通过 `EventSink` 交付电平和会话事件。Tauri 的 `commands.rs` 保留原有 IPC 字段和事件名，并负责后台调度。
+`airplay-desktop` 可独立编译。`Engine` 预留会话和配置操作，调用方将 `DesktopJob` 交给后台执行。服务通过 `EventSink` 交付电平和会话事件，界面与服务同进程调用。
 
 GPUI 在独立线程执行阻塞桌面作业，让 WASAPI 自行初始化 STA，再将结果送回界面线程。设备枚举与输入声道映射都走这个入口。
 
@@ -110,7 +108,7 @@ stderr 的 reading/eof/failed/cancelled 独立于协议、认证及日志状态�
 
 ## 界面数据与当前边界
 
-App.vue 组合来源、设备及设置视图；useStreamSession 管理会话，useDiagnostics 管理有界日志/摘要和应用累计统计。子视图通过 props/事件连接，不修改发现结果或直接控制音频；设置共用确认快照，失败回退。清空诊断仅清展示摘要，不清设备累计、路径或报告。
+`player.rs` 的 `Player` 持有来源、设备、会话和设置状态；`session.rs` 隔离迟到事件，`diagnostics.rs` 管理有界日志/摘要和应用累计统计。`view.rs`、`settings_view.rs` 只读状态绘制界面，控件回调交回 `Player`，不修改发现结果或直接控制音频；设置保存成功后才更新已确认值，失败回退。清空诊断仅清展示摘要，不清设备累计、路径或报告。
 
 portable.flag 选择程序目录下 data/，安装版使用 %APPDATA%/AirPlay Hub；CLI 有独立数据子目录，见[使用说明](ui.md)。keepAwake 在串流建立后同时持有 SystemRequired / DisplayRequired，收尾完成即释放，不覆盖预览和托盘空闲；它避免串流中自动熄屏，不提供完整睡眠/恢复支持。
 

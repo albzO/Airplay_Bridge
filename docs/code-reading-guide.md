@@ -8,39 +8,39 @@
 
 | 顺序 | 文件                                                                            | 阅读时要解决的问题                                                             |
 | ---- | ------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
-| 1    | `airplay-frontend/src/types.ts`                                                 | 页面接收什么数据？哪些数值是帧、毫秒、Hz 或 ppm？                              |
-| 2    | `airplay-frontend/src/protocol.ts`                                              | 桌面 JSON 怎样从 `unknown` 变成可读取的数据？缺失或错误字段如何处理？          |
-| 3    | `airplay-frontend/src/useStreamSession.ts`、`useDiagnostics.ts`、`App.vue`      | 会话控制怎样独立于设备视图？事件怎样改变页面状态？                             |
+| 1    | `airplay-frontend/src-ely/src/player.rs`                                     | 界面持有哪些状态？后台作业、设备发现和采集怎样调度？                           |
+| 2    | `session.rs`、`inbox.rs`、`diagnostics.rs`（同目录）                            | 会话编号怎样隔离迟到事件？后台事件怎样合并、限量后进入界面？                   |
+| 3    | `view.rs`、`settings_view.rs`、`panel.rs`（同目录）                             | 播放页和设置页怎样由状态绘制？控件事件交回 `Player` 的哪个方法？               |
 | 4    | 桌面 `main.rs`、`session.rs`、`stream_start.rs`、`configuration.rs`             | 怎样预留会话、后台准备、取消与发布？配置如何互斥？                             |
 | 5    | `airplay-core/src/source.rs`                                                    | 谁持有持续采集线程？预览与串流如何共用它？                                     |
 | 6    | `airplay-core/src/live.rs`                                                      | 采集、转换、管道、协议日志和最终报告怎样连接？                                 |
 | 7    | `capture.rs`、`convert.rs`、`drift.rs`                                          | 音频格式、资源释放、重采样状态和时钟校正为什么这样实现？                       |
-| 8    | 桌面的 `auth.rs`、`settings.rs`、`routing.rs`、`window.rs`，核心的 `privacy.rs` | 密码、配置、运行路由、退出和日志的边界在哪里？                                 |
+| 8    | 桌面的 `auth.rs`、`settings.rs`、`routing.rs`，界面的 `shell.rs`，核心的 `privacy.rs` | 密码、配置、运行路由、退出和日志的边界在哪里？                                 |
 | 9    | `airplay-backend/patches/README.md`、`upstream_guard.py`、`select_upstream.py`  | 固定源码怎样校验、在临时副本应用补丁并选择编译？平台实现与协议修改分别在哪里？ |
 
 ## 从点击播放到实际串流
 
-1. `useStreamSession/start` 调用页面快照重置，设置 `busy`，发送 `start_stream`。设置中的 `latency` 是播放提前量，`buffer` 是后端预缓冲时长；两者单位都是 ms。`mapping` 是来源声道下标，从 0 开始。
+1. `Player::start` 重置本次诊断快照，在后台作业中调用桌面 `start_stream`。设置中的 `latency` 是播放提前量，`buffer` 是后端预缓冲时长；两者单位都是 ms。`mapping` 是来源声道下标，从 0 开始。
 2. 桌面 `start_stream` 在短锁内预留会话编号并返回；后台检查设备名称、立体声关系、端点及声道，再保存偏好、创建密码服务。Preparing 使用 15 秒预算；慢步骤前后核对取消，超时保留占用，见[启动取消与提交](architecture.md#启动取消与设置提交)。
 3. 工作线程先发 `preparing_source`。`ensure_source` 复用同端点的健康采集线程；来源改变时先结束旧线程。新建 Source 先由本次准备持有，调用 `wait_ready` 后核对取消，再发布 Source/密码通道和 Active 阶段。连续采集至少稳定 500 ms、至少收到 3 包、最近一包不超过 250 ms 才算就绪；故障或长间隔会重置窗口，最长等待 8 秒。静音也可就绪。
-4. `live::run_gui` 启动原生后端进行协议连接。`PCM_READY` 表示握手完成，页面进入启动采集阶段；遥测到达后才置 `playing` 并显示串流中。
+4. `live::run_gui` 启动原生后端进行协议连接。`PCM_READY` 表示握手完成，会话进入 `Ready`；遥测到达后才进入 `Playing` 并显示串流中。
 5. `Source::consume` 挂接一个订阅者，交付交错 float32 立体声。`Converter` 跨音频包保存滤波器历史，转换为 44.1 kHz 的 i16。写管道线程将 PCM 发送给后端。
 6. 遥测约每 250 ms 更新一次。控制器以实际启动水位为基准，按水位偏差调整转换比例。`correction_ppm` 是采样率微调量：水位偏高时减慢输出，不能用它表示音量。
-7. 工作线程收尾生成脱敏报告、关闭密码管道、释放会话占用，最后发 `finished`；前端据此结束忙碌状态，并保留本次诊断数据。
+7. 工作线程收尾生成脱敏报告、关闭密码管道、释放会话占用，最后发 `finished`；界面据此结束忙碌状态，并保留本次诊断数据。
 
-命令返回和事件是独立异步通道，事件可能先于命令返回。每条串流事件带 `session_id`；页面先暂存最多 512 条事件，等启动命令返回确认本次编号后，按顺序处理匹配编号的事件。不能从第一条事件认领编号，否则旧事件可能冒充新会话。超量时明确请求停止并保留收尾事件；启动失败或卸载时丢弃暂存。`finished` 后不再处理该会话的迟到事件，停止期间不再打开密码框或更新播放状态。停止命令携带 sessionId；编号返回前记住意图并在确认后补发，卸载后迟到编号也单独取消，避免旧请求影响新会话。
+界面与桌面服务同进程，`start_stream` 同步返回本次会话编号，`Session::start` 先记下编号再处理事件。每条串流事件带 `session_id`，`Session::accept` 只接受当前编号；`finished` 后迟到的同编号事件也被丢弃，停止期间不再打开密码框或更新播放状态。`inbox.rs` 合并高频电平与遥测，只保留最新快照；控制事件队列上限为 32 条，并为收尾事件保留独立位置。
 
 播放端点另有原始音频启动检查：仅在首次稳定之前，端点电平大于 0.01、确认未静音且音量非零，但全部原始声道持续全零时，暂停就绪判定；矛盾持续 500 ms 后释放旧 WASAPI 客户端，再创建新客户端。尚未挂接串流时最多重建三次，每次重置采集计数与稳定窗口，并在 `source-startup.jsonl` 记录 `loopback_reopen`。连续 500 ms 无矛盾后，当前客户端永久结束这项启动检查，后续暂停/恢复不重新开启；电平和原始包不一致不能单独证明运行中的回环失败。正常安静来源也可完成检查。挂接订阅前仍核对就绪；已有串流不自动重建或重置时钟。
 
 左侧采集开关关闭时会停止并等待旧 Source 退出，释放音频客户端、采集服务和事件句柄；开启时创建新 Source，重新初始化 WASAPI、包时间线和稳定窗口。同一端点的普通选择可以复用现有 Source，所以两种操作的效果并不相同。此健康检查把有证据的异常初始化恢复放到来源线程内，保持正常情况下的持续采集复用。
 
-冷启动时页面开关和桌面的 `capture_enabled` 均为关闭，`Source` 尚未创建。页面先注册事件、读取设置并提交界面状态，再通过两次动画帧回调跨过首次绘制，通知 `ui_ready`，最后用与手动开启相同的 `set_capture_enabled(true)` 创建采集来源。没有有效来源时保持关闭，首次选择有效来源后再自动开启一次；此后手动关闭的状态在切换设备时保持。开启失败时允许手动重试；组件已卸载时取消自动开启。已运行的页面重新挂载会读取桌面真实状态，不会强制关闭现有采集。此顺序用于验证初始化时序假设，尚不能保证消除驱动或 WASAPI 回环异常。
+冷启动时 `Player::initialize` 读取设置后同时开始设备发现和来源预览。发现期间只锁定设备卡片和开始串流按钮，其他控件照常可用。没有串流时，窗口隐藏到托盘、最小化或显示器熄灭会停止采集，窗口重新可见后由 `resume_capture` 重建，最多重试 3 次、间隔 2 秒；串流中不受影响。判断逻辑见 `visibility.rs/next_step`。
 
-设置操作先看 `App.vue/commitSettings`：它保存独立快照并持有保存锁，成功更新已确认值，失败恢复该值；保持唤醒不再反转当前布尔值。来源切换还持有跨保存/预览的锁，只有保存成功且页面仍存在才启动后续命令。桌面 `routing.rs` 保证候选设置保存成功后才更新运行路由，不能只从页面 IPC 拒绝测试推断桌面没有副作用。冷启动保存失败不自动采集，自动发现成功仍保留初始化错误。
+设置保存在后台作业中执行，成功后才更新界面持有的已确认值，失败时恢复。桌面 `routing.rs` 保证候选设置保存成功后才更新运行路由。
 
 保持唤醒的 Windows 实现见 `awake.rs/activate` 与 `Awake::set`：SystemRequired 后再获取 DisplayRequired，失败撤销，关闭请求对象时释放两类请求。采集时间戳问题从 `capture/timeline.rs/validate_packet_timestamp` 跟到 `capture/diagnostics.rs/Trace::fault` 和 Source 的诊断回调；后者把终止故障提交到有界异步日志，即使未开逐包诊断也能留下出错包数值。
 
-`useDiagnostics.ts` 统一管理快照、300 条日志/120 条摘要、单条文本截断、1 MiB 报告显示限制及路径；结束摘要也计入上限。全部落盘规则见 [日志保留限制](log-retention.md)。
+`diagnostics.rs` 统一管理快照、300 条日志/120 条摘要、单条文本 4096 字符截断、1 MiB 报告显示限制及路径；结束摘要也计入上限，设备累计统计最多 128 项。全部落盘规则见 [日志保留限制](log-retention.md)。
 
 日志路径由初始化 `dataMode` 生成脱敏根目录。便携模式使用 `[程序目录]/data/logs`，安装模式使用 `%APPDATA%/AirPlay Hub/logs`；文件事件只附加文件名，空路径保持空值。实际打开目录仍使用桌面的 `Engine.root/logs`。
 
@@ -80,37 +80,25 @@
 
 `test/core/unit/live/` 中的单元测试覆盖队列满/断开时的计数回滚、已入队 PCM 在 EOF 前排空、断管报错、不同音频包大小下的声道与重采样总时长，以及协议状态与日志脱敏。执行 `cargo test --manifest-path airplay-core/Cargo.toml --locked --offline --lib`；需要声卡或真实接收设备的测试仍单独忽略，编译和这些单元测试不能代替实机听感验证。
 
-## 页面状态与密码重试
+## 界面状态与密码重试
 
-`useStreamSession.ts` 持有会话命令、事件暂存、编号确认、停止和密码重试。`App.vue` 通过回调重置或渲染展示快照，不从展示日志认领会话；页面卸载时 composable 使未完成命令失效并清空密码。
+界面只有一个状态持有者 `Player`（`airplay-frontend/src-ely/src/player.rs`）。`view.rs` 和 `settings_view.rs` 是只读状态的绘制函数，控件回调调用 `Player` 的方法，例如 `choose_receiver`、`select_source`、`swap_speakers`、`save_settings`、`set_mapping`、`change_autostart`、`reset_auth`。耗时操作都通过 `run_job` 交给后台作业线程，完成后在界面线程更新状态。
 
-来源选择视图从 `SourcePicker.vue` 阅读：分组/排序和弹窗展示在组件内，`select` 事件交回 `App/selectSource`。页面设置 endpoint、关闭弹窗，随后 `sourceChanged` 重置声道映射、保存设置并启动预览；组件不拥有桌面状态。`open` 是页面控制的状态，因此切页、连接和密码请求仍可统一关闭弹窗，遮罩层级与既有样式保留。
+| 状态（`session::Phase`） | 进入条件                           | 离开条件                                       |
+| ------------------------ | ---------------------------------- | ---------------------------------------------- |
+| `Connecting`、`Preparing` | 用户开始串流                       | 握手完成、需要密码、失败或停止                 |
+| `Password`、`Verifying`  | `password_required` / 提交密码     | 验证完成、停止或收尾；密码失败时可重试         |
+| `Ready`                  | 原生行出现 `PCM_READY`             | 收到遥测或收尾                                 |
+| `Playing`                | 本次会话收到遥测                   | 停止或 `finished`                              |
+| `Stopping`               | 用户请求停止                       | `finished`；期间忽略遥测                       |
 
-设备卡片从 `DeviceCard.vue` 阅读：组件接收 `DeviceCardData` 及选中/展开/禁用/连接等展示值，选择事件交给 `App/choose`，互换事件交给 `App/swap`。分组、选择与会话仍由页面管理；`set_speaker_order` 成功后才更新 `speakersSwapped`，失败显示错误并保留现有左右名称。单设备展示两个声道但没有互换按钮；立体声卡片保留原有互换功能，不改音频处理。
+密码提交后立即清空输入。认证失败后旧会话已经结束，重试先创建新会话，等待它再次发出 `password_required` 后发送密码。桌面管道只接受本次设备地址，`Reply` 销毁时清理其持有的密码字节；这不能保证清除系统内全部副本。
 
-常规设置从 `GeneralSettings.vue` 阅读：控件先通过 `update:*` 事件更新页面持有的设置/自启/主题，再发送保存、自启、唤醒或映射操作事件。设置字段与二元映射生成新对象/数组，不直接修改 props；`App/startupChanged` 和 `awakeChanged` 保留失败回退，主题 watcher 保留样式与 localStorage 同步。连接期间播放提前量禁用，声道映射仍调用 `set_mapping`，不重新启动会话。
-
-运行统计从 `RuntimeStats.vue` 阅读：组件只读遥测、报告、累计计数与名称，`display.ts/num` 统一数值格式。`App/renderSessionEvent` 把已验证且归属本次会话的事件交给 `useDiagnostics/accept`；后者从原始 `PACKET_STATS` 解析累计值，与每设备会话基线比较后将非负增量加到 `stats`。缺失/非法/负值不覆盖有效基线，设备历史最多 128 项。`resetSessionView` 只清空本次基线及遥测/报告，累计 `stats` 保留；切换标签不改变数据。事件仍由 `useStreamSession` 校验归属，因此旧会话计数不能进入当前统计。
-
-技术详情从 `TechnicalDetails.vue` 阅读：格式和电平使用 `display.ts/formatAudioFormat`、`level`，与底部来源栏/设备卡片共用；Buffer 先发更新事件，保存事件交给 `App/persist`。重检事件交给 `App/resetAuth`，页面把当前 `selection` 传给 `forget_auth_policy`；命令成功后才显示已清除通知，失败进入原有错误提示。没有所选设备或会话忙碌时按钮禁用，组件不修改设备、认证记录或音频。
-
-日志视图从 `LogView.vue` 阅读：开关先发 `update:*` 更新页面设置，再发送保存事件，配置下次连接；当前会话的详细日志/诊断状态由独立快照决定。打开目录事件交给 `App/call('open_logs')`，“清空显示”事件只将 `diagnosticLogs` 置空；日志、路径及报告保留，后续诊断继续接收。完整报告在 `report.device` 存在时显示可展开 JSON。组件不拥有日志数组、IPC 或会话生命周期；页面和 `useStreamSession` 过滤事件及会话归属；`useDiagnostics` 统一截断、汇总和重连快照重置。
-
-| 状态        | 设置条件                           | 清除条件                                       |
-| ----------- | ---------------------------------- | ---------------------------------------------- |
-| `busy`      | 用户请求开始连接                   | 启动命令失败或 `finished`                      |
-| `connected` | 原生行出现 `PCM_READY`             | 新会话开始或 `finished`                        |
-| `playing`   | 本次会话收到遥测                   | `finished`                                     |
-| `stopping`  | 用户请求停止                       | `finished`；期间忽略遥测                       |
-| `pending`   | `password_required` 提供待认证主机 | 提交完成、停止或收尾；密码失败时可恢复重试目标 |
-
-密码提交后立即清空响应式输入。认证失败后旧会话已经结束，重试必须先创建新会话，等待它再次发出 `password_required`，然后发送密码。桌面管道只接受本次设备地址，`Reply` 销毁时清理其持有的密码字节；这不能保证清除 WebView、IPC 或系统内全部副本。
-
-`test/frontend/dom/session.spec.mjs` 通过 `test:dom` 在真实浏览器挂载生产入口和模板，模拟 Tauri 边界，检查按钮 disabled、点击、Enter/Escape、密码重试与旧会话隔离。`ui/dom.mjs` 只提供命令记录、暂停/完成/拒绝命令和事件注入，不访问组件状态；现有脚本级 10 项会话回归继续覆盖事件积压、卸载等竞态。DOM 测试配置、浏览器和失败产物见 [测试说明](../test/README.md)。
+`test/frontend/desktop/gpui_session.rs`、`gpui_inbox.rs`、`gpui_diagnostics.rs` 直接调用上述模块，覆盖迟到事件、事件合并与上限、诊断截断和累计统计。
 
 ## 停止、关闭采集与退出的区别
 
-- **停止播放**：设置串流停止标志、解除订阅并关闭后端，保留持续采集线程，页面继续显示音量预览。
+- **停止播放**：设置串流停止标志、解除订阅并关闭后端，保留持续采集线程，界面继续显示音量预览。
 - **关闭采集 / 切换来源**：桌面端结束来源线程；有活动会话时拒绝关闭采集或更换来源。声道映射变更可以通过独立控制命令处理。
 - **隐藏到托盘**：只隐藏窗口，按当前设置继续运行。
 - **退出应用**：只进入一次退出流程；停止串流、解除防休眠、结束采集，等待会话清理后退出。
@@ -121,38 +109,27 @@
 
 | 修改目标           | 主要入口                                                                                                       | 需要同步检查                                                    |
 | ------------------ | -------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
-| 新增设置           | `types.ts`、`protocol.ts`、桌面 `settings.rs`、页面控件                                                        | 默认值、单位、范围、旧文件缺字段时的行为                        |
-| 新增桌面事件       | Rust 事件发送点、`types.ts/StreamEvent`、`protocol.ts`、`useStreamSession/event`、`App.vue/renderSessionEvent` | 会话编号、必填字段、已知事件损坏时的报错、协议测试              |
-| 新增报告字段       | `live.rs`、`privacy.rs`；页面显示字段补充类型及校验                                                            | 日志脱敏、扩展 JSON 保留、数值单位                              |
-| 修改来源预览       | `source.rs`、桌面 `ensure_source`、页面 `source-level` 监听                                                    | 端点过滤、静音就绪、取消、线程复用                              |
+| 新增设置           | 桌面 `settings.rs`、`Player` 的保存方法、`settings_view.rs` 控件                                               | 默认值、单位、范围、旧文件缺字段时的行为                        |
+| 新增桌面事件       | Rust 事件发送点、`inbox.rs` 的事件解析、`Player::accept_stream`                                                | 会话编号、必填字段、已知事件损坏时的报错、收件箱测试            |
+| 新增报告字段       | `live.rs`、`privacy.rs`；界面展示字段同步 `diagnostics.rs`                                                            | 日志脱敏、扩展 JSON 保留、数值单位                              |
+| 修改来源预览       | `source.rs`、桌面 `ensure_source`、`Player::preview` 与电平快照                                                | 端点过滤、静音就绪、取消、线程复用                              |
 | 修改采样或水位控制 | `capture.rs`、`convert.rs`、`drift.rs`、`live/pipeline.rs`                                                     | 帧与采样区别、包边界、尾帧、缓冲积压及实机听感                  |
 | 修改日志           | `privacy.rs` 和各落盘入口                                                                                      | 保留内部控制原值，只展示/保存脱敏副本                           |
 | 修改原生协议       | `airplay-backend/patches/`、本地入口 `.inc`                                                                    | 补丁上下文与顺序、固定提交、输入/补丁哈希、生成差异及接收端模拟 |
 | 修改 Windows 兼容  | `windows_port.c/.h`、`windows_io.inc`、`windows_audio.inc`、`probe_context.inc`                                | socket 宽度、错误来源、超时与关闭；不要把源码替换放回 Python    |
 
-`protocol.ts` 接收 `unknown`，验证有限数值、整数计数、左右两个声道、设置范围和事件所需字段。报告可保留扩展 JSON，页面消费的字段继续检查；未知事件忽略，已知事件格式错误会显示字段路径，避免打印输入内容。此处负责格式，不替代 Rust 的设备和权限校验。
-
-报告使用 `shallowRef` 并整份替换，不修改内部字段，避免为可扩展 JSON 创建深层响应式代理。新增交互字段需要单独状态，不要直接修改报告。
-
-## TypeScript 版本选择（2026-10-09）
-
-此前 5.9 来自旧锁文件，上一轮维护没有完成升级核查。TypeScript 7.0.2 已发布，但不能仅凭版本号直接替换 Vue 的编译工具链。
-
-在独立目录安装 `typescript@7.0.2` 和当前锁定的 `vue-tsc@3.3.12`，对项目配置执行类型检查，得到 `ERR_PACKAGE_PATH_NOT_EXPORTED`：`typescript/lib/tsc` 不再导出。当前 Vue 检查器依赖编译器接口，而 TypeScript 7 的原生编译器尚未提供对应 API。微软为这类集成推荐 TypeScript 6 兼容包，见 [官方 TypeScript 7 发布说明](https://devblogs.microsoft.com/typescript/announcing-typescript-7-0/)。
-
-维护分支采用 `typescript: npm:@typescript/typescript6@^6.0.2`，锁文件固定兼容包 6.0.2 及其实际编译器 6.0.3。当前 Vue 类型检查、生产构建和数据边界测试已经通过。后续升级 7 时先验证 `.vue` 模板和脚本检查、编译器 API 使用及生产构建，再更新锁文件；单独执行原生 `tsc` 不能代替 Vue 模板检查。
+`inbox.rs/StreamUpdate::decode` 只取界面需要的字段；未知事件或缺少必填字段的事件不进入会话状态，诊断内容另由 `diagnostics::decode` 提取。控制事件超过 32 条时记下溢出会话，由界面停止该会话；`finished` 单独保存，不会因队列满而丢失。此处负责格式，不替代 Rust 的设备和权限校验。
 
 ## 验证
 
 在仓库根目录执行：
 
 ```powershell
-pnpm --dir airplay-frontend test:protocol
-pnpm --dir airplay-frontend build
-pnpm --dir airplay-frontend format:check
+cargo test --manifest-path airplay-frontend/src-ely/Cargo.toml --locked --offline
+cargo fmt --manifest-path airplay-frontend/src-ely/Cargo.toml --check
 ```
 
-协议测试覆盖现有页面样例、已知事件、异常字段和数值、可空报告、扩展字段、嵌套限制和错误信息不泄露输入值。它不替代实机采集和 AirPlay 播放验证；其他检查见 [贡献指南](../CONTRIBUTING.md)。
+这些测试覆盖会话、事件、诊断、音量、滚动和窗口可见性逻辑，不替代实机采集和 AirPlay 播放验证；其他检查见 [贡献指南](../CONTRIBUTING.md)。
 
 ## Source 缓冲与状态阅读入口
 

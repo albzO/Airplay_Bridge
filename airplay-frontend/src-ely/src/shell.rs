@@ -32,8 +32,8 @@ use windows::{
 /// 正式版与预览版（airplay-bridge-gpui.exe）各用一个唤醒信号，可以并存。
 /// The release and the preview (airplay-bridge-gpui.exe) use separate wake signals and can coexist.
 fn wake_event() -> PCWSTR {
-    let preview = std::env::current_exe()
-        .is_ok_and(|exe| airplay_desktop::is_preview_executable(&exe));
+    let preview =
+        std::env::current_exe().is_ok_and(|exe| airplay_desktop::is_preview_executable(&exe));
     if preview {
         w!("Local\\AirPlayBridge.GPUI.Preview.Reveal.v1")
     } else {
@@ -133,7 +133,8 @@ pub fn attach<T: 'static>(
     thread::Builder::new()
         .name("gpui-instance-wake".into())
         .spawn(move || {
-            let Ok(event) = (unsafe { OpenEventW(SYNCHRONIZATION_SYNCHRONIZE, false, wake_event()) })
+            let Ok(event) =
+                (unsafe { OpenEventW(SYNCHRONIZATION_SYNCHRONIZE, false, wake_event()) })
             else {
                 return;
             };
@@ -190,7 +191,7 @@ fn tray_icon() -> Result<Icon> {
     if let Ok(icon) = Icon::from_resource(1, Some(size)) {
         return Ok(icon);
     }
-    let png = image::load_from_memory(include_bytes!("../../src-tauri/icons/icon.png"))?;
+    let png = image::load_from_memory(include_bytes!("../icons/icon.png"))?;
     let small = image::imageops::resize(
         &png.into_rgba8(),
         size.0,
