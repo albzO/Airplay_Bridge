@@ -4,7 +4,7 @@
 
 **English** · [简体中文](README.zh-CN.md)
 
-**Send the sound on your Windows PC to HomePod.**
+**Send the sound on your Windows PC to AirPlay devices.**
 
 Pick any recording device, or the output a device is already playing, and stream it over AirPlay 2 to a HomePod, a HomePod stereo pair or another receiver.
 

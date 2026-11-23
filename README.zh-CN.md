@@ -4,7 +4,7 @@
 
 [English](README.md) · **简体中文**
 
-**把 Windows 上的声音送到 HomePod。**
+**把 Windows 上的声音送到 AirPlay 设备。**
 
 选择任意录音设备或正在播放的输出设备，通过 AirPlay 2 发送到 HomePod、HomePod 立体声对等接收端。
 
