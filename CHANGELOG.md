@@ -1,10 +1,26 @@
 # 更新日志
 
-## 1.1.0（发行候选）
+## 2.0.0（发行候选）
 
-- 将 Windows 桌面界面迁移到 GPUI。播放、设置和诊断通过 Rust 桌面服务调用音频核心。
-- 保留 Inno Setup 升级身份，提供便携 ZIP。GUI 版本和文件资源由 GPUI Cargo 包生成。
-- 发行构建使用原生窗口和 Rust 工具链。旧 Vue/Tauri 入口作为回归和回退参考。
+1.1.0 发行候选未正式发布，其内容并入本版本。
+The 1.1.0 release candidate was never published; its changes are part of this release.
+
+- 全新桌面界面：基于 GPUI 与 Ely 组件库重做，窗口按钮画在窗口内，支持浅色 / 深色与缩放。
+  A new desktop UI on GPUI and the Ely components, with in-window controls, light and dark themes and resizing.
+- 中英双语：默认跟随 Windows 显示语言，可在设置中更改；安装程序把所选安装语言传给应用。
+  Chinese and English: follows the Windows display language, can be changed in Settings, and takes the installer's language.
+- 保持系统唤醒改为仅在串流期间生效，停止串流后恢复系统睡眠与熄屏设置。
+  Keep awake now applies only while streaming; sleep and display-off return once it stops.
+- 未串流时，窗口收进托盘、最小化或熄屏会停止采集，恢复可见后自动重新采集。
+  While idle, capture stops when the window is hidden, minimized or the display is off, and resumes when it is seen again.
+- 发现设备不再锁住整个界面，只暂停设备选择和开始串流。
+  Device discovery no longer locks the whole window, only device selection and starting a stream.
+- 播放、设置和诊断通过 Rust 桌面服务调用音频核心；保留 Inno Setup 升级身份，提供便携 ZIP。
+  Playback, settings and diagnostics reach the audio core through the Rust desktop services; the Inno Setup identity and portable ZIP are kept.
+- 设置与数据目录沿用 1.x，升级无需迁移。
+  Settings and the data directory carry over from 1.x with no migration.
+- 技术：界面改用 GPUI（gpui-pre 0.3.11）与 Ely GPUI Components，位于 `airplay-frontend/src-ely`；选型与约束见 docs/tech-stack.zh-CN.md。
+  Stack: the UI moves to GPUI (gpui-pre 0.3.11) and Ely GPUI Components in `airplay-frontend/src-ely`; see docs/tech-stack.md.
 
 ## 1.0.3 — 2026-10-14
 

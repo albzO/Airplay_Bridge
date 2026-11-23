@@ -26,6 +26,17 @@ v1.0.3 两份发行文件通过 SHA256 核对。预研用 GPUI `0.2.2`、GPUI Co
 
 从仓库根目录运行 `.\scripts\build-gpui.ps1 -Offline` 构建预览版。脚本从 `dist/runtime` 取现有后端，输出 `build/gpui-preview/airplay-bridge-gpui.exe`。预览版使用自己的 `portable.flag`、`data/` 和 `AirPlay Bridge GPUI Preview` 开机自启项。真机串流、托盘和输入体验的验收仍按后续清单执行。
 
+## P2.5 · 2.0 界面（Ely）
+
+1.1 候选界面经评审未达发布要求，2.0 在同一服务层上用 `gpui-pre 0.3.11` + Ely GPUI Components 重做，原因见[技术路线](tech-stack.zh-CN.md)。
+
+- [x] **独立 crate 与共用模块。** `airplay-frontend/src-ely` 接入 `Engine`、托盘、单实例与退出收尾，以 `#[path]` 共用 `src-gpui` 的会话、事件、诊断、音量和作业模块。
+- [x] **界面与交互。** 窗口内标题栏、8 px 网格分组卡片、底部固定栏、设备卡片展开、设置四个子页、过渡动画、平滑与弹性滚动、自写来源下拉。
+- [x] **双语与安装语言。** 中英文案、跟随系统或手动选择；NSIS 与 Inno Setup 写入安装语言。
+- [x] **服务层调整。** 保持唤醒只在串流中生效；发现设备只与开始串流互斥；空闲时窗口不可见即暂停采集。桌面服务 25 项、2.0 界面 15 项、1.1 界面 9 项、旧前端逻辑 29 项与 DOM 29 项通过。
+- [ ] **切换打包入口。** `build-desktop.ps1`、`package-release.ps1` 改为构建 `src-ely`，依赖通知包含 Ely、随包字体与图标，版本取自 `src-ely/Cargo.toml`。
+- [ ] **实机验收。** 真实接收端的串流、密码、音量、立体声交换、熄屏后恢复采集，以及安装语言传递。
+
 ## P3 · 回归通过后切换发行入口
 
 - [x] **完成本机自动回归。** 核心 119 项、桌面服务 21 项、GPUI 9 项、旧前端逻辑 29 项和 DOM 29 项通过。模拟接收端覆盖认证、密码管道及重试、立体声和慢启动。GPUI 增加 COM 作业线程回归。

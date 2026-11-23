@@ -70,6 +70,18 @@ python test/backend/test_upstream.py
 
 保留完整 `dist/` 目录，包括 `runtime/airplay-backend.exe` 和同目录的所需 DLL；仅复制 GUI exe 无法完成音频串流。
 
+### 2.0 界面
+
+2.0 界面位于 `airplay-frontend/src-ely`，依赖 Ely GPUI Components（Git 固定提交）和 `gpui-pre 0.3.11`，需要 Rust 1.98 及以上。先构建一次后端以生成 `dist/runtime`，再编译界面：
+
+```powershell
+cargo build --manifest-path airplay-frontend/src-ely/Cargo.toml --release
+```
+
+可执行文件为 `airplay-frontend/src-ely/target/release/airplay-bridge-gpui.exe`。调试构建在可执行文件旁找不到 `runtime/` 时回退到 `dist/runtime`。在可执行文件旁放空的 `portable.flag` 可使用独立的 `data/` 目录。
+
+`build-desktop.ps1`、`build-gpui.ps1` 和 `package-release.ps1` 目前仍构建 1.1 候选界面 `src-gpui`；发布 2.0.0 前需切换到 `src-ely`，并让 Rust 依赖通知包含 Ely、随包字体和图标。
+
 ### 自定义后端工具路径
 
 `scripts/build-desktop.ps1` 默认调用同目录的 `build-backend.ps1`。若 MSYS2 或 Python 位于其他位置，先单独构建后端，再跳过该步骤构建界面：
@@ -94,7 +106,7 @@ Maintain native changes in `airplay-backend/patches/` and local C adapters; Pyth
 
 ## 版本更新与发行 / Version updates and distribution
 
-桌面版本取自 `airplay-frontend/src-gpui/Cargo.toml`，同时用于程序文件资源、安装包和便携包。发行脚本在 `releases/v<版本>/` 输出沿用既有 AppId 的 Inno Setup 安装包、便携 ZIP 和 `SHA256SUMS.txt`。通过 `-Iscc` 可指定 Inno Setup 编译器。
+打包脚本的桌面版本目前取自 `airplay-frontend/src-gpui/Cargo.toml`（1.1.0），同时用于程序文件资源、安装包和便携包；2.0 界面的版本在 `airplay-frontend/src-ely/Cargo.toml`（2.0.0），切换打包入口时一并改为读取它。安装程序会把安装语言写入用户数据目录的 `language` 文件。发行脚本在 `releases/v<版本>/` 输出沿用既有 AppId 的 Inno Setup 安装包、便携 ZIP 和 `SHA256SUMS.txt`。通过 `-Iscc` 可指定 Inno Setup 编译器。
 
 发行版 GUI 和诊断 CLI 静态链接 MSVC C 运行库。原生 AirPlay 后端所需的 DLL 随 `runtime/` 一起分发。
 

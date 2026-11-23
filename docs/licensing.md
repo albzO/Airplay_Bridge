@@ -41,6 +41,8 @@ Apache-2.0 允许商业使用、修改、再分发和闭源集成，但要求遵
 
 GPUI 候选包在 `licenses/rust/DEPENDENCIES.tsv` 中记录 Windows x64 Rust 依赖声明及随包文件。原生依赖的审查范围和待办见上表。
 
+2.0 界面把 Ely 的字体（Inter、JetBrains Mono、IBM Plex Sans，SIL OFL 1.1）和 Lucide 图标（ISC）编译进程序。OFL 要求随字体分发许可证文本；发布 2.0.0 时，依赖通知收集需从 `src-ely` 的锁文件生成，并另附这些字体与图标的许可证。
+
 ## 规范参考
 
 - [GitHub：Licensing a repository](https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/licensing-a-repository)

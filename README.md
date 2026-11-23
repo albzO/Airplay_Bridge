@@ -1,147 +1,212 @@
+<div align="center">
+
 # AirPlay Hub
 
-Windows 上的 AirPlay 2 音频发送工具。通过桌面界面选择录音或播放设备，将音频发送到 HomePod 等 AirPlay 接收端。
+**English** · [简体中文](README.zh-CN.md)
 
-本分支准备 **1.1.0 GPUI 发行候选**。v1.0.3 是升级和回退的对照版本。测试范围与剩余实机验收见 [迁移清单](docs/gpui-migration-checklist.md)，版本和授权信息见 [更新日志](CHANGELOG.md) 与 [许可证说明](docs/licensing.md)。
+**Send the sound on your Windows PC to HomePod.**
 
-## AI 辅助开发声明
+Pick any recording device, or the output a device is already playing, and stream it over AirPlay 2 to a HomePod, a HomePod stereo pair or another receiver.
 
-本项目在 OpenAI Codex 的协助下开发。AI 参与了架构方案讨论、代码生成与修改、问题分析和文档编写；项目维护者负责需求与功能方向、开发决策、真实设备测试和发布管理。本项目不声称全部代码由维护者独立手写。
+![Windows x64](https://img.shields.io/badge/Windows-x64-0078D4?logo=windows&logoColor=white)
+![Version](https://img.shields.io/badge/version-2.0.0--rc-2F7D4F)
+![Rust](https://img.shields.io/badge/Rust-1.98%2B-B7410E?logo=rust&logoColor=white)
+![UI](https://img.shields.io/badge/UI-GPUI%20%2B%20Ely-444)
+![License](https://img.shields.io/badge/license-Apache--2.0-blue)
 
-AirPlay 协议基础及部分组件来自第三方开源项目，其归属和许可证见 [THIRD_PARTY.md](THIRD_PARTY.md)。AI 辅助开发不改变这些第三方声明。生成的代码仍可能存在缺陷，实际验证范围与当前限制在下文说明。
+[Quick start](#-quick-start) · [Features](#-features) · [Technical route](#-technical-route-and-choices) · [Docs](#-documentation) · [Changelog](CHANGELOG.md)
 
-## 功能
+</div>
 
-- WASAPI 录音与 Playback loopback 采集，实时来源电平。
-- 局域网设备发现、按需密码认证、单设备及 HomePod 立体声对。
-- 左右输入映射、扬声器位置交换、音量与 HomePod 按钮同步。
-- 44100 Hz 重采样、16-bit PCM 量化、ALAC 帧封装与加密传输。
-- 可调播放提前量、Buffer、长期时钟漂移校正。
-- 托盘、单实例、开机自启、跟随系统的深浅色模式、系统唤醒、统计与诊断日志。
+<table>
+  <tr>
+    <td width="50%"><img src="docs/images/playback-light-en.png" alt="Playback page, light"></td>
+    <td width="50%"><img src="docs/images/settings-dark-en.png" alt="Settings, dark"></td>
+  </tr>
+  <tr>
+    <td align="center">Playback · light</td>
+    <td align="center">Settings · dark</td>
+  </tr>
+</table>
 
-## 快速开始
+> [!NOTE]
+> This branch prepares the **2.0.0 release candidate**: the desktop UI is rebuilt on GPUI and the Ely component library, and the unpublished 1.1.0 release candidate is folded into it. v1.0.3 is the reference for upgrades and rollback. Test coverage and the remaining hardware checks are in the [migration checklist](docs/gpui-migration-checklist.md) (Chinese). The devices in the screenshots are made up.
 
-使用安装包：先从托盘退出正在运行的应用，再运行安装程序。现有 Inno Setup 安装版可直接升级，沿用原目录并保留配置；不要先卸载。
+## ✨ Features
 
-使用便携包：在 Windows x64 上将完整目录解压到可写位置，启动 `airplay-bridge.exe`。保留 `runtime/` 中的后端和 DLL。便携版数据位于程序目录的 `data/`，安装版位于 `%APPDATA%\AirPlay Hub`。
+**Audio**
 
-从源码构建需要 Git、Rust MSVC、Visual Studio C++ Build Tools / Windows SDK、MSYS2 UCRT64 和 Python。原生后端在固定子模块源码的临时副本应用已审查补丁，再选择所需代码编译。具体依赖与适配维护步骤见 [构建指南](docs/building.md)。
+- WASAPI recording and Playback loopback capture with live left / right levels.
+- Resampling to 44100 Hz, 16-bit PCM, ALAC framing and encrypted transport.
+- Adjustable playback lead, buffer and long-term clock drift correction.
 
-生产代码分为 `airplay-frontend/`、`airplay-desktop/`、`airplay-backend/` 和 `airplay-core/`。测试源码集中在根目录 `test/frontend/`、`test/backend/`、`test/core/`，随 Git 提交；目录和运行入口见 [测试说明](test/README.md)。源码构建需保留完整的 `test/`，截图、日志、录音与本机配置仍不提交或打包。
+**Devices**
 
-GPUI 自动回归覆盖会话隔离、音量回报和诊断保留。旧版 DOM 对照测试仍可用 `pnpm --dir airplay-frontend test:dom` 运行。
+- Automatic discovery on the local network, passwords only when asked, single receivers and HomePod stereo pairs.
+- Left / right input mapping, speaker swapping, and volume kept in sync with the HomePod's own buttons.
 
-在仓库根目录运行：
+**Desktop**
+
+- A native window with no WebView; light and dark follow the system, and the window resizes freely.
+- Chinese and English, following the Windows display language by default; the installer's language carries into the app.
+- Smooth scrolling, elastic edges and page transitions, switched off when Windows asks for reduced motion.
+- Tray icon, single instance and start at sign-in.
+
+**Power and stability**
+
+- Keeps the system and display awake only while streaming, then restores your sleep settings.
+- While idle, hiding the window to the tray, minimising it or a sleeping display releases the audio device; capture resumes when the window is seen again.
+- Searching for devices no longer locks the window; source and settings stay usable.
+- Runtime statistics, technical details, redacted logs and per-packet diagnostics.
+
+## 🚀 Quick start
+
+### Installer
+
+Quit the running app from the tray first, then run the installer. An existing Inno Setup installation upgrades in place and keeps its folder and settings; do not uninstall first.
+
+### Portable
+
+Unpack the whole folder to a writable place on Windows x64 and start `airplay-bridge.exe`, keeping the backend and DLLs in `runtime/`. Portable data lives in `data/` next to the program; the installed app uses `%APPDATA%\AirPlay Hub`.
+
+### Build from source
+
+You need Git, Rust MSVC (1.98 or later), the Visual Studio C++ Build Tools / Windows SDK, MSYS2 UCRT64 and Python. The native backend applies reviewed patches to a temporary copy of the pinned submodule sources before compiling; see the [build guide](docs/building.md) (Chinese).
 
 ```powershell
-# 获取固定版本的第三方源码；只初始化本项目所需依赖
+# Fetch the pinned third-party sources; only what this project needs
 git submodule update --init -- upstream/airplay-cli
 git -C upstream/airplay-cli submodule update --init -- libraop
 git -C upstream/airplay-cli/libraop submodule update --init -- crosstools
 
-# 构建全部组件；桌面应用使用 release 配置
+# Build the native backend, the diagnostic CLI and the 1.1 candidate UI
+# (packaging has not switched to the 2.0 UI yet)
 .\scripts\build-desktop.ps1 -Release
 
-# 已下载全部依赖后离线构建
-.\scripts\build-desktop.ps1 -Release -Offline
-
-# 启动；保留整个 dist 文件夹中的后端及 DLL
-.\dist\airplay-bridge.exe
+# Build the 2.0 UI
+cargo build --manifest-path airplay-frontend/src-ely/Cargo.toml --release
 ```
 
-选择音频来源、刷新并选择设备，点击开始串流。需要密码时在底部音频来源区上方的密码浮层中输入。立体声对需先在 Apple 家庭 App 中组成。
+Add `-Offline` once dependencies are downloaded. At run time keep the backend and DLLs that live in `dist/`.
 
-底部提供音频来源、采集与串流操作。点击右上角“设置”查看常规、运行统计、技术详情和日志。默认关闭窗口收起到托盘，托盘右键“退出”关闭应用。保持唤醒默认开启，在运行期间同时阻止自动睡眠和自动熄屏。
+## 🎧 Using it
 
-构建入口位于 `scripts/`，后端、依赖获取和自定义工具路径见 [构建指南](docs/building.md)。
+1. Under **Audio source**, choose a recording or playback device; the level meters start moving.
+2. Under **AirPlay devices**, choose a receiver or a stereo pair, then click **Start streaming** at the bottom.
+3. If the receiver asks for a password, a field appears above the bottom bar. The password is used for this connection only and never saved.
 
-## 软件架构
+Stereo pairs must be made in Apple's Home app first. The gear at the top right opens settings: General, Statistics, Technical and Logs. Closing the window hides it to the tray by default; choose **Quit** from the tray menu to exit. The full guide is in [UI and settings](docs/ui.md) (Chinese).
+
+## 🧭 Technical route and choices
+
+| Version | UI | Highlights |
+|---|---|---|
+| 1.0.x | Vue 3 + Tauri 2 WebView | Needs WebView2; the UI calls the Rust backend over IPC |
+| 1.1.0 candidate (unpublished) | GPUI `0.2.2` + gpui-component | No WebView; the UI calls the desktop services in-process |
+| **2.0.0 candidate** | **GPUI `gpui-pre 0.3.11` + Ely GPUI Components** | A rebuilt UI and interaction on the same service layer |
+
+- **Why GPUI**: no WebView2; the UI and the Rust desktop services share a process with typed calls; the build needs only Rust and the native-backend toolchain.
+- **Why Ely**: consistent theme tokens, light and dark, complete form and layout components, a window shell and motion parts that respect reduced motion; MIT licensed.
+- **Why a separate crate**: Ely's `gpui-pre` is type-incompatible with `gpui 0.2.2`, so the 2.0 UI lives in `airplay-frontend/src-ely` and shares the gpui-free session, event and diagnostics modules with the 1.1 UI. Ely is pinned at commit `69a62b1`.
+- **Built in-house**: 8 px-grid grouped cards, smooth and elastic scrolling, a source picker that scrolls smoothly, window-visibility detection, and paired Chinese / English strings.
+- **Service changes to match**: keep awake only while streaming; discovery excludes only starting a stream.
+
+Reasons, constraints, trade-offs and to-dos are in [Technical route](docs/tech-stack.md).
+
+## 🏗️ Architecture
 
 ```text
-GPUI 原生窗口
-        ↓ Rust 桌面服务与有界事件
-Rust 桌面管理与音频核心
-  WASAPI 采集 → 声道映射 → rubato 重采样 → 16-bit PCM
-        ↓ 有界队列和进程管道
-C/C++ 原生后端
-  认证与控制会话 → ALAC 帧封装 → 加密 RTP、时钟与重传
-        ↓ 局域网
-AirPlay 接收端
+GPUI native window (gpui-pre + Ely components)
+        ↓ Rust desktop services and bounded events
+Rust desktop management and audio core
+  WASAPI capture → channel mapping → rubato resampling → 16-bit PCM
+        ↓ bounded queues and a process pipe
+C/C++ native backend
+  authentication and control session → ALAC framing → encrypted RTP, clock and retransmission
+        ↓ local network
+AirPlay receiver
 ```
 
-GUI 通过 `airplay-desktop/` 调用 `airplay-core/` 中的 Rust 库，协议后端为独立的 `airplay-backend.exe`。`homepod-test.exe` 是使用同一核心模块的诊断工具。Python 在构建阶段生成上游适配源码。模块和生命周期说明见 [架构文档](docs/architecture.md)。
+The UI calls the Rust libraries in `airplay-core/` through `airplay-desktop/`; the protocol backend is the separate `airplay-backend.exe`. `homepod-test.exe` is a diagnostic tool built on the same core, and Python is used only at build time to generate the upstream adaptation. Modules and lifecycles are in [Architecture](docs/architecture.md) (Chinese).
 
-## 仓库结构
+## 📁 Repository layout
 
 ```text
-├── airplay-frontend/  GPUI 桌面应用与旧 Vue/Tauri 对照入口
-├── airplay-desktop/   Windows 桌面服务
-├── airplay-core/      共用 Rust 音频库及诊断 CLI
-├── airplay-backend/   C/C++ AirPlay 后端与 Windows 适配
-├── test/             按 frontend/backend/core 分类的测试源码和合成素材
-├── upstream/         第三方子模块（仅提交地址与固定版本引用）
-├── scripts/          构建与打包脚本
-├── docs/             当前版本的使用、构建、架构与排查文档
-├── .github/          问题与 PR 模板
-├── CONTRIBUTING.md   开发与贡献约定
-├── LICENSE           Apache-2.0 完整许可文本
-├── NOTICE            项目版权及第三方归属说明
-└── THIRD_PARTY.md    第三方来源和许可证记录
+├── airplay-frontend/  Desktop UIs: src-ely (2.0), src-gpui (1.1 candidate), legacy Vue/Tauri reference
+├── airplay-desktop/   Windows desktop services: settings, capture source, sessions, auth, keep-awake
+├── airplay-core/      Shared Rust audio library and diagnostic CLI
+├── airplay-backend/   C/C++ AirPlay backend and Windows adaptation
+├── test/              Tests and synthetic fixtures by frontend / backend / core
+├── upstream/          Third-party submodules (URL and pinned commit only)
+├── scripts/           Build and packaging scripts
+├── docs/              Usage, build, architecture, technical route and troubleshooting
+├── .github/           Issue and PR templates
+├── CONTRIBUTING.md    Development and contribution conventions
+├── LICENSE            Full Apache-2.0 text
+├── NOTICE             Project copyright and third-party attribution
+└── THIRD_PARTY.md     Third-party sources and licences
 ```
 
-`build/`、`dist/`、`releases/`、`target/`、`node_modules/`、`test/.artifacts/` 和 `.local/` 是本地生成或个人资料目录，不提交 Git。旧环境练习和备份保存在 `.local/`；不能把其中的配置备份、工具或发行包都当成临时缓存删除。目录用途见[架构](docs/architecture.md)。
+`build/`, `dist/`, `releases/`, `target/`, `node_modules/`, `test/.artifacts/` and `.local/` hold local output or personal material and are not committed. `.local/` keeps earlier environment trials and backups; do not delete it as a cache. Test folders and entry points are in the [test guide](test/README.md) (Chinese).
 
-第三方源码由原作者仓库提供，本仓库通过 `.gitmodules` 和固定提交引用依赖。首次获取所需子模块的命令见 [构建指南](docs/building.md)。GitHub 自动生成的源码 ZIP 不包含子模块内容。
+Third-party sources are referenced through `.gitmodules` at pinned commits; GitHub's automatic source ZIP does not include submodule contents.
 
-## 文档
+## 📚 Documentation
 
-- [更新日志](CHANGELOG.md)
-- [构建指南](docs/building.md)
-- [界面与设置](docs/ui.md)
-- [CLI 诊断](docs/cli.md)
-- [架构](docs/architecture.md)
-- [当前文档导航](docs/README.md)
-- [贡献指南](CONTRIBUTING.md)
-- [第三方依赖与来源](THIRD_PARTY.md)
-- [许可证状态](docs/licensing.md)
+Most documents are in Chinese; the README and the technical route have English versions.
 
-## 运行数据
+| Using | Developing | Releases and licences |
+|---|---|---|
+| [UI and settings](docs/ui.md) | [Technical route](docs/tech-stack.md) | [Changelog](CHANGELOG.md) |
+| [CLI diagnostics](docs/cli.md) | [Architecture](docs/architecture.md) | [Third-party sources](THIRD_PARTY.md) |
+| [Error codes](docs/error-codes.md) | [Build guide](docs/building.md) | [Licence status](docs/licensing.md) |
+| [Display-off capture](docs/display-off-capture.md) | [Test guide](test/README.md) | [Contributing](CONTRIBUTING.md) |
+| [Log retention](docs/log-retention.md) | [Migration checklist](docs/gpui-migration-checklist.md) | [Docs index](docs/README.md) |
 
-GUI 配置与日志位于 `%APPDATA%\AirPlay Hub`；CLI 设备清单、日志和录音诊断位于 `%APPDATA%\AirPlay Hub\cli`。密码不持久保存，也不作为进程参数传递。
+## 🔒 Data and privacy
 
-日志默认隐藏设备名称、IP、用户目录、公钥、MAC 和 UUID，并过滤密码、令牌及凭据字段，保留格式、时序与统计数据。设备使用本次清单内的编号关联，不使用永久 UUID。历史日志不会自动改写，分享旧日志前仍需检查。额外逐包诊断不保存原始音频；四段滚动限制只适用于该诊断文件，不适用于所有日志。
+- GUI settings and logs live in `%APPDATA%\AirPlay Hub`; the CLI's device list, logs and recording diagnostics live in its `cli` subfolder.
+- Passwords are never stored and never passed as process arguments.
+- Logs hide device names, IP addresses, user folders, public keys, MAC addresses and UUIDs by default and filter passwords, tokens and credentials, keeping formats, timing and counts. Devices are linked by an index within the current list, not a permanent UUID.
+- Older logs are not rewritten, so check them before sharing. Per-packet diagnostics never store raw audio; the four-segment rotation applies only to that diagnostic file.
 
-日志文件与展示历史的保留范围见[日志限制](docs/log-retention.md)。
+Retention is described in [Log retention](docs/log-retention.md) and synthetic measurements in [Performance baseline](docs/performance-baseline.md) (both Chinese).
 
-当前实现与资源边界见[架构](docs/architecture.md)，本版更改见[更新日志](CHANGELOG.md)，合成测量见[性能基线](docs/performance-baseline.md)。已完成的优化、审查过程保存在 Git 历史；CI 暂缓。
+## ⚠️ Current limits
 
-## 当前限制
+- Windows only; the send format is fixed at 44100 Hz, 16-bit, stereo.
+- Stereo targets existing HomePod stereo pairs; general multi-room grouping is not implemented.
+- A virtual playback endpoint occasionally yields silent or torn audio on first open; the cause is still under investigation.
+- The latency estimate excludes the time apps and speakers take to produce sound, and does not sync lyrics or video in other players.
+- Errors returned by the service layer and the native backend are in Chinese only.
+- Builds, simulated checks and successful sends do not replace playback checks on real receivers.
 
-- 仅支持 Windows；发送格式固定为 44100 Hz、16-bit、双声道。
-- 立体声面向已有的 HomePod 立体声对，尚未实现通用多房间组网。
-- 虚拟播放端点 Playback 首次打开偶尔出现全零片段与撕裂，原因仍在排查。
-- 编译、模拟检查及发送成功不能代替实际接收端播放验证。
-- 延迟估计不包含应用和扬声器实际发声耗时，不会同步外部播放器的歌词或视频。
+## 🗺️ Roadmap
 
-## TODO
+- [ ] Switch packaging to the 2.0 UI and release 2.0.0 after hardware checks.
+- [ ] Per-app capture: stream the audio of one application.
+- [ ] Multi-device groups: play to several AirPlay receivers in sync.
 
-- [ ] 添加软件捕获：采集指定应用的音频。
-- [ ] 多设备编组：多个 AirPlay 接收端同步播放。
+## 🤖 AI-assisted development
 
-## 第三方代码与致谢
+This project is developed with help from OpenAI Codex and Anthropic Claude. AI took part in architecture discussions, writing and changing code, UI design, problem analysis and documentation; the maintainer owns the requirements and direction, development decisions, testing on real devices and release management. The project does not claim that all code was written by hand by the maintainer.
 
-协议后端基于 Music Assistant airplay-cli，使用 libraop 的 bplist 读写及 crosstools 的接口声明。Rust 音频处理使用 rubato，界面使用 GPUI 和 GPUI Component。参见 [第三方依赖与来源](THIRD_PARTY.md)。
+The AirPlay protocol basis and some components come from third-party open-source projects; their attribution and licences are in [THIRD_PARTY.md](THIRD_PARTY.md). AI assistance does not change those notices. Generated code may still contain defects; what has actually been verified and the current limits are stated above.
 
-第三方代码属于原作者；本项目提供 Windows 适配、桌面应用和音频流水线。固定版本、使用文件、本地修改、包依赖及协议参考资料分别记录在 [THIRD_PARTY.md](THIRD_PARTY.md)。子模块引用不改变第三方授权条件。
+## 🙏 Third-party code and thanks
 
-## 许可证
+The protocol backend is based on Music Assistant's airplay-cli and uses libraop's bplist reader / writer and crosstools' interface declarations. Audio resampling uses rubato; the UI uses GPUI and Ely GPUI Components (the 1.1 candidate uses GPUI Component) and ships the Inter, JetBrains Mono and IBM Plex Sans fonts and Lucide icons.
 
-本项目自有代码及文档采用 **Apache License 2.0**，完整条款见 [LICENSE](LICENSE)，归属说明见 [NOTICE](NOTICE)。除另有声明的内容外，该许可适用于本项目的原创贡献和可授权的本地修改，不覆盖或替换第三方的原有许可。
+Third-party code belongs to its authors; this project provides the Windows adaptation, the desktop app and the audio pipeline. Pinned versions, files used, local changes, package dependencies and protocol references are in [THIRD_PARTY.md](THIRD_PARTY.md). Referencing submodules does not change third-party licence terms.
 
-Apache-2.0 允许商业使用、修改和分发，无需单独取得本项目的商业授权，但需遵守保留许可与相关声明、标明修改等条件；软件按原样提供，不附带保证。第三方组件仍须遵守各自许可。
+## 📄 License
 
-目前明确待确认的是固定版本 libraop 的 `bplist.cpp` / `bplist.h` 授权依据：该历史提交缺少引用的许可证，当前上游已提供 MIT 声明，尚需确认对所用版本的适用范围。实际发行包的依赖通知材料也尚未完整汇总。详细依据见 [许可证状态](docs/licensing.md)，不把这些事项笼统描述为所有依赖许可证不明。
+The project's own code and documentation are licensed under the **Apache License 2.0**; see [LICENSE](LICENSE) for the full terms and [NOTICE](NOTICE) for attribution. Unless stated otherwise it covers the project's original contributions and licensable local changes, and does not replace third-party licences.
 
-## 贡献与问题反馈
+Apache-2.0 allows commercial use, modification and distribution without a separate commercial licence from this project, provided you keep the licence and notices and mark changes; the software is provided as is, without warranty. Third-party components keep their own licences.
 
-问题和改动请说明复现步骤、预期与实际行为、相关版本及验证范围。分享日志前移除个人设备、地址、端点与路径信息。开发约定和检查方式见 [贡献指南](CONTRIBUTING.md)。
+One item is still open: the licensing basis of `bplist.cpp` / `bplist.h` in the pinned libraop version. That historical commit lacks the licence it refers to; upstream now carries an MIT notice, but whether it covers the version used still needs confirming. The dependency notices for release packages are also not yet complete. See [Licence status](docs/licensing.md) (Chinese).
+
+## 💬 Contributing and feedback
+
+When reporting a problem or proposing a change, include the steps to reproduce, the expected and actual behaviour, the versions involved and what you verified. Remove personal device names, addresses, endpoints and paths before sharing logs. Conventions and checks are in [Contributing](CONTRIBUTING.md) (Chinese).

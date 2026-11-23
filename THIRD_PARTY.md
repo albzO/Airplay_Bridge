@@ -55,7 +55,11 @@
 | [windows-rs](https://github.com/microsoft/windows-rs) | `windows 0.62.2` | WASAPI、COM 和 Windows API 绑定 | 该版本 Cargo 元数据：MIT OR Apache-2.0 |
 | [rubato](https://github.com/HEnquist/rubato) | `5.0.1` | 有状态 sinc 重采样 | 该版本 Cargo 元数据：MIT OR Apache-2.0 |
 | [audioadapter-buffers](https://github.com/HEnquist/audioadapter-buffers-rs) | `5.2.0` | 音频缓冲适配 | 该版本 Cargo 元数据：MIT OR Apache-2.0 |
-| GPUI、GPUI Component、tray-icon | `airplay-frontend/src-gpui/Cargo.lock` | 原生窗口、界面组件和 Windows 托盘 | 版本、声明及源码包通知文件见发行包中的 `licenses/rust/DEPENDENCIES.tsv` |
+| GPUI、GPUI Component、tray-icon | `airplay-frontend/src-gpui/Cargo.lock` | 1.1 候选界面的原生窗口、界面组件和 Windows 托盘 | 版本、声明及源码包通知文件见发行包中的 `licenses/rust/DEPENDENCIES.tsv` |
+| [GPUI（gpui-pre、gpui-pre-platform）](https://github.com/zed-industries/zed) | `=0.3.11`，`airplay-frontend/src-ely/Cargo.lock` | 2.0 界面的窗口、渲染与平台层 | 该版本 Cargo 元数据：Apache-2.0 |
+| [Ely GPUI Components](https://github.com/ELY-Open-Source/Ely-GPUI-Components)（`ely-core`） | Git 固定提交 `69a62b10168eed5b011b978497c2fdca644cb81f` | 2.0 界面的主题、组件、布局、动效与窗口外壳 | 仓库 LICENSE：MIT |
+| Lucide 图标（随 Ely 打包） | 同上 | 界面图标，编译进程序 | Ely 所附 `icons/LICENSE`：ISC |
+| Inter、JetBrains Mono、IBM Plex Sans 字体（随 Ely 打包） | 同上 | 界面与等宽字体，编译进程序 | Ely 所附各字体 LICENSE：SIL Open Font License 1.1 |
 | Tauri、单实例插件、Vue、Vite 等 | `airplay-frontend/src-tauri/Cargo.lock` 和 `airplay-frontend/pnpm-lock.yaml` | 旧界面与回归对照 | 以各具体版本的许可证文件及元数据为准 |
 | [Playwright Test](https://github.com/microsoft/playwright) | `@playwright/test 1.64.0` 与对应锁文件 | 仅开发时的真实模板 DOM 回归，不在生产入口导入 | 该版本 npm 包元数据及所附 LICENSE：Apache-2.0 |
 
