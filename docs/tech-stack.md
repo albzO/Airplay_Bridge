@@ -72,5 +72,5 @@ Both live in `airplay-desktop`, so the older GPUI and WebView UIs get them too.
 - The custom picker has no arrow-key selection, Enter to confirm or Escape to close.
 - With scrolling handled by the view, moving focus with Tab to an off-screen control does not scroll it into view.
 - Motion runs at about 6 ms per frame in debug and release builds, verified on one display only.
-- The packaging scripts (`build-gpui.ps1`, `package-release.ps1`) still build `src-gpui`. Before releasing 2.0.0 they must switch to `src-ely`, and the dependency-notice collection must include Ely, its fonts and its icons.
+- The packaging scripts build `src-ely`; `build-gpui.ps1 -Legacy` still builds `src-gpui`. Ely's MIT license and the Lucide, Inter, JetBrains Mono and IBM Plex Sans licenses ship in `licenses/ely/`. User-facing versions drop a zero patch (2.0.0 is shown as 2.0); Cargo and the numeric Windows resource version keep all parts.
 - Streaming, passwords, volume and stereo swapping against real receivers are verified on hardware by the maintainer.

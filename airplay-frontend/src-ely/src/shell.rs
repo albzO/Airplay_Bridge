@@ -29,9 +29,17 @@ use windows::{
     core::{Owned, PCWSTR, w},
 };
 
-/// 与 src-gpui 预览版共用同一个信号：两者是同一程序的两套界面，不同时运行。
-/// Shares the src-gpui preview's signal: both are one app with two UIs and never run together.
-const WAKE_EVENT: PCWSTR = w!("Local\\AirPlayBridge.GPUI.Preview.Reveal.v1");
+/// 正式版与预览版（airplay-bridge-gpui.exe）各用一个唤醒信号，可以并存。
+/// The release and the preview (airplay-bridge-gpui.exe) use separate wake signals and can coexist.
+fn wake_event() -> PCWSTR {
+    let preview = std::env::current_exe()
+        .is_ok_and(|exe| airplay_desktop::is_preview_executable(&exe));
+    if preview {
+        w!("Local\\AirPlayBridge.GPUI.Preview.Reveal.v1")
+    } else {
+        w!("Local\\AirPlayBridge.GPUI.Reveal.v1")
+    }
+}
 
 pub const TITLE: &str = "AirPlay Hub";
 
@@ -45,7 +53,7 @@ enum Action {
 pub fn primary_instance() -> Result<Option<Owned<HANDLE>>> {
     let (event, already_running) = unsafe {
         SetLastError(ERROR_SUCCESS);
-        let event = CreateEventW(None, false, false, WAKE_EVENT)?;
+        let event = CreateEventW(None, false, false, wake_event())?;
         (event, GetLastError() == ERROR_ALREADY_EXISTS)
     };
     let event = unsafe { Owned::new(event) };
@@ -125,7 +133,7 @@ pub fn attach<T: 'static>(
     thread::Builder::new()
         .name("gpui-instance-wake".into())
         .spawn(move || {
-            let Ok(event) = (unsafe { OpenEventW(SYNCHRONIZATION_SYNCHRONIZE, false, WAKE_EVENT) })
+            let Ok(event) = (unsafe { OpenEventW(SYNCHRONIZATION_SYNCHRONIZE, false, wake_event()) })
             else {
                 return;
             };

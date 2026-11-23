@@ -10,7 +10,12 @@ fn main() {
     let major = env!("CARGO_PKG_VERSION_MAJOR");
     let minor = env!("CARGO_PKG_VERSION_MINOR");
     let patch = env!("CARGO_PKG_VERSION_PATCH");
-    let version = env!("CARGO_PKG_VERSION");
+    // 补丁号为 0 时显示两段版本（2.0），数字资源版本仍为四段。
+    // Show a two-part version (2.0) when the patch is 0; the numeric resource version stays four-part.
+    let version = match patch {
+        "0" => format!("{major}.{minor}"),
+        _ => env!("CARGO_PKG_VERSION").to_owned(),
+    };
     let resource = PathBuf::from(env::var_os("OUT_DIR").unwrap()).join("airplay-bridge.rc");
     fs::write(
         &resource,

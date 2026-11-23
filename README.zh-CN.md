@@ -79,11 +79,11 @@ git submodule update --init -- upstream/airplay-cli
 git -C upstream/airplay-cli submodule update --init -- libraop
 git -C upstream/airplay-cli/libraop submodule update --init -- crosstools
 
-# 构建原生后端、诊断 CLI 与 1.1 候选界面（打包入口尚未切换到 2.0 界面）
+# 构建原生后端、诊断 CLI 与 2.0 界面，输出到 dist/
 .\scripts\build-desktop.ps1 -Release
 
-# 构建 2.0 界面
-cargo build --manifest-path airplay-frontend/src-ely/Cargo.toml --release
+# 构建并打包到 releases/v2.0（安装包、便携 ZIP、SHA256SUMS）
+.\scripts\package-release.ps1
 ```
 
 依赖下载完成后可加 `-Offline` 离线构建。运行时保留整个 `dist/` 目录中的后端与 DLL。
@@ -180,7 +180,8 @@ AirPlay 接收端
 
 ## 🗺️ 路线图
 
-- [ ] 打包入口切换到 2.0 界面，完成实机验收后发布 2.0.0。
+- [x] 打包入口切换到 2.0 界面。
+- [ ] 完成实机验收后发布 2.0。
 - [ ] 软件捕获：只采集指定应用的音频。
 - [ ] 多设备编组：多个 AirPlay 接收端同步播放。
 

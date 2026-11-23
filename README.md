@@ -79,12 +79,11 @@ git submodule update --init -- upstream/airplay-cli
 git -C upstream/airplay-cli submodule update --init -- libraop
 git -C upstream/airplay-cli/libraop submodule update --init -- crosstools
 
-# Build the native backend, the diagnostic CLI and the 1.1 candidate UI
-# (packaging has not switched to the 2.0 UI yet)
+# Build the native backend, the diagnostic CLI and the 2.0 UI into dist/
 .\scripts\build-desktop.ps1 -Release
 
-# Build the 2.0 UI
-cargo build --manifest-path airplay-frontend/src-ely/Cargo.toml --release
+# Build and package releases/v2.0 (installer, portable ZIP, SHA256SUMS)
+.\scripts\package-release.ps1
 ```
 
 Add `-Offline` once dependencies are downloaded. At run time keep the backend and DLLs that live in `dist/`.
@@ -183,7 +182,8 @@ Retention is described in [Log retention](docs/log-retention.md) and synthetic m
 
 ## 🗺️ Roadmap
 
-- [ ] Switch packaging to the 2.0 UI and release 2.0.0 after hardware checks.
+- [x] Switch packaging to the 2.0 UI.
+- [ ] Release 2.0 after hardware checks.
 - [ ] Per-app capture: stream the audio of one application.
 - [ ] Multi-device groups: play to several AirPlay receivers in sync.
 

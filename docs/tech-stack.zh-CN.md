@@ -72,5 +72,5 @@ Ely 不满足需求或无法定制的地方，在 `src-ely` 内自行实现：
 - 自写下拉没有键盘上下选择、回车确认和 Esc 关闭。
 - 自管滚动后，Tab 移动焦点到屏幕外的控件时页面不会自动滚动。
 - 动效在 debug 与 release 构建下帧间隔均约 6 ms，但只在本机一台显示器上验证。
-- 打包脚本（`build-gpui.ps1`、`package-release.ps1`）仍构建 `src-gpui`；发布 2.0.0 前需切换到 `src-ely`，并让依赖通知收集包含 Ely、字体和图标。
+- 打包脚本已改为构建 `src-ely`，`build-gpui.ps1 -Legacy` 仍可构建 `src-gpui`。Ely 的 MIT 许可证以及 Lucide、Inter、JetBrains Mono、IBM Plex Sans 的许可证随包放在 `licenses/ely/`。对外版本在补丁号为 0 时省略（2.0.0 显示为 2.0），Cargo 和 Windows 资源的数字版本保留完整各段。
 - 真实接收端的串流、密码、音量和立体声交换由维护者实机验收。

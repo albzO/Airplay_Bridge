@@ -8,7 +8,7 @@ InstallDir "$LOCALAPPDATA\Programs\AirPlay Bridge"
 InstallDirRegKey HKCU "Software\AirPlay Bridge" "InstallDir"
 RequestExecutionLevel user
 SetCompressor /SOLID lzma
-VIProductVersion "${VERSION}.0"
+VIProductVersion "${FULL_VERSION}.0"
 VIAddVersionKey "ProductName" "AirPlay Bridge"
 VIAddVersionKey "FileVersion" "${VERSION}"
 VIAddVersionKey "FileDescription" "AirPlay Bridge Setup"

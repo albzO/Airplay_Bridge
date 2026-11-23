@@ -12,7 +12,7 @@ $projectRoot = Split-Path -Parent $PSScriptRoot
 Push-Location -LiteralPath $projectRoot
 try {
     if (!$SkipBuild) { & "$PSScriptRoot/build-desktop.ps1" -Release -Offline:$Offline }
-    $metadataArguments = @('metadata', '--manifest-path', 'airplay-frontend/src-gpui/Cargo.toml', '--format-version', '1', '--filter-platform', 'x86_64-pc-windows-msvc', '--locked')
+    $metadataArguments = @('metadata', '--manifest-path', 'airplay-frontend/src-ely/Cargo.toml', '--format-version', '1', '--filter-platform', 'x86_64-pc-windows-msvc', '--locked')
     if ($Offline) { $metadataArguments += '--offline' }
     else { $metadataArguments += @('--config', 'net.offline=false') }
     $metadataJson = (& cargo @metadataArguments) -join "`n"
@@ -20,6 +20,10 @@ try {
     $metadata = $metadataJson | ConvertFrom-Json
     $version = ($metadata.packages | Where-Object id -eq $metadata.resolve.root).version
     if ($version -notmatch '^\d+\.\d+\.\d+$') { throw 'Expected a numeric release version.' }
+    # 补丁号为 0 时对外只用两段版本（2.0.0 → 2.0）。
+    # User-facing names drop a zero patch (2.0.0 -> 2.0).
+    $fullVersion = $version
+    $version = $version -replace '\.0$', ''
     if ((Get-Item -LiteralPath 'dist/airplay-bridge.exe').VersionInfo.FileVersion -ne $version) {
         throw "dist/airplay-bridge.exe does not match Cargo version $version. Rebuild before packaging."
     }
@@ -52,10 +56,11 @@ try {
     foreach ($file in @('README.md', 'release-notes.md', 'playback-loopback.md', 'licensing.md', 'error-codes.md', 'THIRD_PARTY.md')) {
         Copy-Item -LiteralPath "dist/docs/$file" -Destination "$payload/docs"
     }
-    foreach ($file in @('airplay-cli-LICENSE', 'crosstools-LICENSE', 'openssl/LICENSE', 'winpthreads/COPYING', 'libwinpthread/COPYING')) {
+    $elyLicenses = @('ely-LICENSE', 'lucide-icons-LICENSE', 'Inter-LICENSE.txt', 'JetBrainsMono-LICENSE.txt', 'IBMPlexSans-LICENSE.txt') | ForEach-Object { "ely/$_" }
+    foreach ($file in @('airplay-cli-LICENSE', 'crosstools-LICENSE', 'openssl/LICENSE', 'winpthreads/COPYING', 'libwinpthread/COPYING') + $elyLicenses) {
         $source = Join-Path $projectRoot "dist/licenses/$file"
         if (!(Test-Path -LiteralPath $source -PathType Leaf)) {
-            if ($file -in @('airplay-cli-LICENSE', 'crosstools-LICENSE', 'openssl/LICENSE')) {
+            if ($file -in @('airplay-cli-LICENSE', 'crosstools-LICENSE', 'openssl/LICENSE') + $elyLicenses) {
                 throw "Missing distribution license: $file"
             }
             continue
@@ -87,7 +92,7 @@ try {
         $manifest = Join-Path $stage 'uninstall-files.nsh'
         [IO.File]::WriteAllLines($manifest, [string[]]$deleteLines, [Text.UTF8Encoding]::new($false))
         $nsis = Join-Path $output "AirPlay-Bridge-$version-windows-x64-nsis-setup.exe"
-        & $Makensis /V2 "/DVERSION=$version" "/DPAYLOAD=$payload" "/DOUTPUT=$nsis" "/DUNINSTALL_FILES=$manifest" "$PSScriptRoot/installer.nsi"
+        & $Makensis /V2 "/DVERSION=$version" "/DFULL_VERSION=$fullVersion" "/DPAYLOAD=$payload" "/DOUTPUT=$nsis" "/DUNINSTALL_FILES=$manifest" "$PSScriptRoot/installer.nsi"
         if ($LASTEXITCODE) { throw 'NSIS compilation failed.' }
         $artifacts += $nsis
     }

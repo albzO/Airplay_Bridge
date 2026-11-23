@@ -14,7 +14,7 @@ cargo run
 
 配置默认读写 `%APPDATA%\AirPlay Hub`，与已安装版本共用。想用独立数据目录，在可执行文件旁放一个空的 `portable.flag`，数据会写到同目录的 `data/`。
 
-`scripts/build-gpui.ps1` 仍然构建 `src-gpui`，还没有改为打包本目录。
+`scripts/build-gpui.ps1 -Production` 构建本目录并复制为 `dist/airplay-bridge.exe`。改名后不再是预览版：使用正式的开机自启项和单实例唤醒信号。
 
 ## 代码结构
 
