@@ -1,0 +1,38 @@
+[package]
+name = "airplay-bridge-ely"
+version = "2.0.0"
+edition = "2024"
+publish = false
+description = "AirPlay Bridge desktop UI on Ely GPUI components."
+
+# 可执行文件沿用预览版名称：桌面服务据此使用独立的开机自启项和单实例信号。
+# The binary keeps the preview name, which the desktop services use to pick a separate
+# autostart entry and single-instance signal.
+[[bin]]
+name = "airplay-bridge-gpui"
+path = "src/main.rs"
+
+[dependencies]
+airplay-desktop = { path = "../../airplay-desktop" }
+homepod-test = { path = "../../airplay-core" }
+anyhow = "1"
+async-channel = "2"
+ely-core = { git = "https://github.com/ELY-Open-Source/Ely-GPUI-Components", rev = "69a62b10168eed5b011b978497c2fdca644cb81f", features = ["platform"] }
+gpui = { package = "gpui-pre", version = "=0.3.11", default-features = false }
+gpui_platform = { package = "gpui-pre-platform", version = "=0.3.11", features = ["font-kit"] }
+image = { version = "0.25", default-features = false, features = ["png"] }
+raw-window-handle = "0.6"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+smallvec = "1"
+tray-icon = "=0.25.1"
+windows = { version = "=0.62.2", features = ["Win32_Foundation", "Win32_Globalization", "Win32_Security", "Win32_System_Power", "Win32_System_SystemServices", "Win32_System_Threading", "Win32_UI_WindowsAndMessaging"] }
+
+[build-dependencies]
+embed-resource = "=3.0.12"
+
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3
