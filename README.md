@@ -199,7 +199,27 @@ The AirPlay protocol basis and some components come from third-party open-source
 
 ## 🙏 Third-party code and thanks
 
-The protocol backend is based on Music Assistant's airplay-cli and uses libraop's bplist reader / writer and crosstools' interface declarations. Audio resampling uses rubato; the UI uses GPUI and Ely GPUI Components (the 1.1 candidate uses GPUI Component) and ships the Inter, JetBrains Mono and IBM Plex Sans fonts and Lucide icons.
+The protocol backend is based on Music Assistant's airplay-cli and uses libraop's bplist reader / writer and crosstools' interface declarations. Audio resampling uses rubato; the UI uses GPUI and Ely GPUI Components and ships the Inter, JetBrains Mono and IBM Plex Sans fonts and Lucide icons.
+
+Thanks to these projects:
+
+| Project | Used for |
+| --- | --- |
+| [Music Assistant airplay-cli](https://github.com/music-assistant/airplay-cli) | AirPlay 2 protocol backend |
+| [libraop](https://github.com/philippe44/libraop) | Binary plist reader / writer |
+| [crosstools](https://github.com/philippe44/crosstools) | Platform and logging interfaces |
+| [GPUI (Zed)](https://github.com/zed-industries/zed) | Window, rendering and platform layer |
+| [Ely GPUI Components](https://github.com/ELY-Open-Source/Ely-GPUI-Components) | Themes, components and motion |
+| [rubato](https://github.com/HEnquist/rubato) | Sinc resampling |
+| [mdns-sd](https://github.com/keepsimple1/mdns-sd) | mDNS device discovery |
+| [windows-rs](https://github.com/microsoft/windows-rs) | WASAPI and Windows API bindings |
+| [tray-icon](https://github.com/tauri-apps/tray-icon) | Windows tray icon |
+| [Lucide](https://github.com/lucide-icons/lucide) | Icons |
+| [Inter](https://github.com/rsms/inter) | UI font |
+| [JetBrains Mono](https://github.com/JetBrains/JetBrainsMono) | Monospaced font |
+| [IBM Plex](https://github.com/IBM/plex) | UI font |
+| [pyatv](https://github.com/postlund/pyatv) | Protocol reference for pairing and events |
+| [Shairport Sync](https://github.com/mikebrady/shairport-sync) | Protocol reference for the audio stream |
 
 Third-party code belongs to its authors; this project provides the Windows adaptation, the desktop app and the audio pipeline. Pinned versions, files used, local changes, package dependencies and protocol references are in [THIRD_PARTY.md](THIRD_PARTY.md). Referencing submodules does not change third-party licence terms.
 

@@ -197,7 +197,27 @@ AirPlay 协议基础及部分组件来自第三方开源项目，其归属和许
 
 ## 🙏 第三方代码与致谢
 
-协议后端基于 Music Assistant airplay-cli，使用 libraop 的 bplist 读写及 crosstools 的接口声明。Rust 音频处理使用 rubato；界面使用 GPUI 与 Ely GPUI Components（1.1 候选版使用 GPUI Component），随附 Inter、JetBrains Mono、IBM Plex Sans 字体与 Lucide 图标。
+协议后端基于 Music Assistant airplay-cli，使用 libraop 的 bplist 读写及 crosstools 的接口声明。Rust 音频处理使用 rubato；界面使用 GPUI 与 Ely GPUI Components，随附 Inter、JetBrains Mono、IBM Plex Sans 字体与 Lucide 图标。
+
+感谢以下项目：
+
+| 项目 | 用途 |
+| --- | --- |
+| [Music Assistant airplay-cli](https://github.com/music-assistant/airplay-cli) | AirPlay 2 协议后端 |
+| [libraop](https://github.com/philippe44/libraop) | 二进制 plist 读写 |
+| [crosstools](https://github.com/philippe44/crosstools) | 平台与日志接口声明 |
+| [GPUI (Zed)](https://github.com/zed-industries/zed) | 窗口、渲染与平台层 |
+| [Ely GPUI Components](https://github.com/ELY-Open-Source/Ely-GPUI-Components) | 主题、组件与动效 |
+| [rubato](https://github.com/HEnquist/rubato) | sinc 重采样 |
+| [mdns-sd](https://github.com/keepsimple1/mdns-sd) | mDNS 设备发现 |
+| [windows-rs](https://github.com/microsoft/windows-rs) | WASAPI 与 Windows API 绑定 |
+| [tray-icon](https://github.com/tauri-apps/tray-icon) | Windows 托盘图标 |
+| [Lucide](https://github.com/lucide-icons/lucide) | 图标 |
+| [Inter](https://github.com/rsms/inter) | 界面字体 |
+| [JetBrains Mono](https://github.com/JetBrains/JetBrainsMono) | 等宽字体 |
+| [IBM Plex](https://github.com/IBM/plex) | 界面字体 |
+| [pyatv](https://github.com/postlund/pyatv) | 配对与事件通道的协议参考 |
+| [Shairport Sync](https://github.com/mikebrady/shairport-sync) | 音频传输的协议参考 |
 
 第三方代码属于原作者；本项目提供 Windows 适配、桌面应用和音频流水线。固定版本、使用文件、本地修改、包依赖及协议参考资料见 [THIRD_PARTY.md](THIRD_PARTY.md)。子模块引用不改变第三方授权条件。
 
